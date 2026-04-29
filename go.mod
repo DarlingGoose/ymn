@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	gioui.org v0.9.0
-	github.com/Seann-Moser/bare v0.0.3
+	github.com/Seann-Moser/bare v0.0.4
 	github.com/Seann-Moser/jpndict v0.0.1
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0

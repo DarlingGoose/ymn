@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -40,7 +41,6 @@ const (
 	guiPageTranscript = "transcript"
 	guiPageFlashcards = "flashcards"
 	guiPageGame       = "game"
-	guiPageNewGame    = "new-game"
 	guiPageSettings   = "settings"
 )
 
@@ -105,6 +105,9 @@ type gamePathPreview struct {
 	IconPath     string
 	ImagePath    string
 	Name         string
+	Runner       string
+	SteamAppID   string
+	Verified     bool
 	Error        string
 }
 
@@ -132,6 +135,7 @@ type transcriptGUI struct {
 	messageModal          bareui.Modal
 	browseModal           bareui.Modal
 	transcriptView        widget.Selectable
+	transcriptList        widget.List
 	flashcardList         widget.List
 	browseList            widget.List
 
@@ -194,20 +198,22 @@ type transcriptGUI struct {
 	selectedNewGameRunner      string
 	newGamePreview             gamePathPreview
 	browseUpButton             widget.Clickable
-	browseSelectButton         widget.Clickable
+	browseUseCurrentButton     widget.Clickable
 	browseEntryClicks          map[string]*widget.Clickable
 	browseCurrentPath          string
+	browseEntries              []browseEntry
 	browseError                string
 	lookupStatus               string
 	lookupResult               *dictionaryLookup
 
-	mu                sync.Mutex
-	rawTranscript     string
-	displayTranscript string
-	displayDirty      bool
-	offset            int64
-	watcherCancel     context.CancelFunc
-	watcherGeneration int
+	mu                  sync.Mutex
+	rawTranscript       string
+	displayTranscript   string
+	displayDirty        bool
+	transcriptResetView bool
+	offset              int64
+	watcherCancel       context.CancelFunc
+	watcherGeneration   int
 }
 
 func newTranscriptGUI(configs []GameConfig, selectedName string, printExisting bool, pollInterval time.Duration) *transcriptGUI {
@@ -220,7 +226,6 @@ func newTranscriptGUI(configs []GameConfig, selectedName string, printExisting b
 		{ID: guiPageTranscript, Label: "Transcript", Icon: "mdi:text-box-outline"},
 		{ID: guiPageFlashcards, Label: "Flashcards", Icon: "mdi:cards-outline"},
 		{ID: guiPageGame, Label: "Game", Icon: "mdi:puzzle-outline"},
-		{ID: guiPageNewGame, Label: "New Game", Icon: "mdi:plus-box-outline"},
 		{ID: guiPageSettings, Label: "Settings", Icon: "mdi:cog-outline"},
 	}, guiPageTranscript)
 	pageTabs.Axis = layout.Vertical
@@ -266,6 +271,8 @@ func newTranscriptGUI(configs []GameConfig, selectedName string, printExisting b
 	gui.newGameSteamAppIDEditor.SingleLine = true
 	gui.newGameIconPathEditor.SingleLine = true
 	gui.newGameImagePathEditor.SingleLine = true
+	gui.transcriptList.Axis = layout.Vertical
+	gui.transcriptList.ScrollToEnd = true
 	gui.flashcardList.Axis = layout.Vertical
 	gui.browseList.Axis = layout.Vertical
 	gui.gameDropdown.Width = unit.Dp(260)
@@ -299,6 +306,7 @@ func newTranscriptGUI(configs []GameConfig, selectedName string, printExisting b
 	gui.newGameRunnerOptions = newGUINewGameRunnerOptions()
 	gui.applySavedSettings()
 	gui.applyTheme()
+	gui.initializeBrowsePath("")
 	gui.refreshCurrentGameHookStatus()
 	return gui
 }
@@ -484,6 +492,14 @@ func (g *transcriptGUI) handleGlobalEvents(gtx layout.Context, ctx context.Conte
 		}
 	}
 
+	for i := range g.newGameRunnerOptions {
+		opt := &g.newGameRunnerOptions[i]
+		for opt.Clickable.Clicked(gtx) {
+			g.selectedNewGameRunner = opt.Label
+			g.newGameRunnerDropdown.Close()
+		}
+	}
+
 	for g.syncAnkiButton.Clicked(gtx) {
 		g.syncCurrentGameToAnki()
 	}
@@ -541,6 +557,23 @@ func (g *transcriptGUI) handleGlobalEvents(gtx layout.Context, ctx context.Conte
 	for g.newGameSaveButton.Clicked(gtx) {
 		g.saveNewGame(ctx, w)
 	}
+	for g.newGameAnalyzeButton.Clicked(gtx) {
+		g.analyzeNewGamePath()
+	}
+	for g.newGameBrowseButton.Clicked(gtx) {
+		g.initializeBrowsePath(strings.TrimSpace(g.newGamePathEditor.Text()))
+	}
+	for g.browseUpButton.Clicked(gtx) {
+		g.browseUp()
+	}
+	for g.browseUseCurrentButton.Clicked(gtx) {
+		g.selectCurrentBrowsePath()
+	}
+	for entryPath, click := range g.browseEntryClicks {
+		for click.Clicked(gtx) {
+			g.handleBrowseSelection(entryPath)
+		}
+	}
 }
 
 func (g *transcriptGUI) layoutLeftSidebar(gtx layout.Context) layout.Dimensions {
@@ -593,8 +626,6 @@ func (g *transcriptGUI) layoutMain(gtx layout.Context) layout.Dimensions {
 					return g.layoutFlashcardsPage(gtx)
 				case guiPageGame:
 					return g.layoutGamePage(gtx)
-				case guiPageNewGame:
-					return g.layoutNewGamePage(gtx)
 				case guiPageSettings:
 					return g.layoutSettingsPage(gtx)
 				default:
@@ -612,8 +643,6 @@ func (g *transcriptGUI) layoutTopNav(gtx layout.Context) layout.Dimensions {
 		title = "Flashcard Deck"
 	case guiPageGame:
 		title = "Game Tools"
-	case guiPageNewGame:
-		title = "New Game"
 	case guiPageSettings:
 		title = "Settings"
 	}
@@ -769,19 +798,21 @@ func (g *transcriptGUI) layoutTranscriptActions(gtx layout.Context) layout.Dimen
 }
 
 func (g *transcriptGUI) layoutTranscriptEditor(gtx layout.Context) layout.Dimensions {
-	return layout.Stack{}.Layout(gtx,
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			label := material.Body1(g.theme.Gio(), g.displayTranscript)
-			label.Color = g.theme.Color.Text
-			label.TextSize = g.transcriptTextSize
-			label.State = &g.transcriptView
-			return label.Layout(gtx)
-		}),
-		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			g.paintTranscriptHighlights(gtx)
-			return layout.Dimensions{}
-		}),
-	)
+	return material.List(g.theme.Gio(), &g.transcriptList).Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+		return layout.Stack{}.Layout(gtx,
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				label := material.Body1(g.theme.Gio(), g.displayTranscript)
+				label.Color = g.theme.Color.Text
+				label.TextSize = g.transcriptTextSize
+				label.State = &g.transcriptView
+				return label.Layout(gtx)
+			}),
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				g.paintTranscriptHighlights(gtx)
+				return layout.Dimensions{}
+			}),
+		)
+	})
 }
 
 func (g *transcriptGUI) layoutFlashcardComposer(gtx layout.Context) layout.Dimensions {
@@ -1127,31 +1158,67 @@ func (g *transcriptGUI) layoutGamePage(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.H5(g.theme.Gio(), "Text Hook")
+					lbl := material.H5(g.theme.Gio(), "Game Tools")
 					lbl.Color = g.theme.Color.Text
 					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body1(g.theme.Gio(), g.gameHookSummaryText())
+					lbl := material.Body1(g.theme.Gio(), "Install the RPG Maker text hook and add or update game configs from the same page.")
 					lbl.Color = g.theme.Color.TextMuted
 					return lbl.Layout(gtx)
 				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(16))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				layout.Rigid(bareutils.SpacerH(unit.Dp(18))),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return installButton.Layout(gtx, g.theme, g.iconify)
+						layout.Flexed(0.6, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return bareutils.Panel(gtx, g.theme.Color.SurfaceAlt, unit.Dp(g.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+										return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													lbl := material.H6(g.theme.Gio(), "Text Hook")
+													lbl.Color = g.theme.Color.Text
+													return lbl.Layout(gtx)
+												}),
+												layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													lbl := material.Body1(g.theme.Gio(), g.gameHookSummaryText())
+													lbl.Color = g.theme.Color.TextMuted
+													return lbl.Layout(gtx)
+												}),
+												layout.Rigid(bareutils.SpacerH(unit.Dp(16))),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+														layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+															return installButton.Layout(gtx, g.theme, g.iconify)
+														}),
+														layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+														layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+															return refreshButton.Layout(gtx, g.theme, g.iconify)
+														}),
+													)
+												}),
+												layout.Rigid(bareutils.SpacerH(unit.Dp(18))),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													return g.layoutGameHookDetails(gtx)
+												}),
+											)
+										})
+									})
+								}),
+								layout.Rigid(bareutils.SpacerH(unit.Dp(18))),
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									return g.layoutGameConfigPanel(gtx)
+								}),
+							)
 						}),
-						layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return refreshButton.Layout(gtx, g.theme, g.iconify)
+						layout.Rigid(bareutils.SpacerW(unit.Dp(18))),
+						layout.Flexed(0.4, func(gtx layout.Context) layout.Dimensions {
+							return g.layoutBrowsePanel(gtx)
 						}),
 					)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(18))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return g.layoutGameHookStatusCard(gtx)
 				}),
 			)
 		})
@@ -1197,7 +1264,7 @@ func (g *transcriptGUI) layoutGameHookDetails(gtx layout.Context) layout.Dimensi
 	return lbl.Layout(gtx)
 }
 
-func (g *transcriptGUI) layoutNewGamePage(gtx layout.Context) layout.Dimensions {
+func (g *transcriptGUI) layoutGameConfigPanel(gtx layout.Context) layout.Dimensions {
 	pathEditor := material.Editor(g.theme.Gio(), &g.newGamePathEditor, "Path to game directory or executable")
 	pathEditor.Color = g.theme.Color.Text
 	pathEditor.HintColor = g.theme.Color.TextMuted
@@ -1220,12 +1287,24 @@ func (g *transcriptGUI) layoutNewGamePage(gtx layout.Context) layout.Dimensions 
 		Prefix:    "mdi:content-save-outline",
 		Variant:   bareui.ButtonPrimary,
 	}
+	analyzeButton := bareui.Button{
+		Clickable: &g.newGameAnalyzeButton,
+		Text:      "Analyze Path",
+		Prefix:    "mdi:magnify-scan",
+		Variant:   bareui.ButtonSecondary,
+	}
+	browseButton := bareui.Button{
+		Clickable: &g.newGameBrowseButton,
+		Text:      "Browse Current Path",
+		Prefix:    "mdi:folder-search-outline",
+		Variant:   bareui.ButtonGhost,
+	}
 
-	return bareutils.Panel(gtx, g.theme.Color.Surface, unit.Dp(g.theme.Radius.LG), func(gtx layout.Context) layout.Dimensions {
+	return bareutils.Panel(gtx, g.theme.Color.SurfaceAlt, unit.Dp(g.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.H5(g.theme.Gio(), "Add a New Game")
+					lbl := material.H6(g.theme.Gio(), "Add or Update Game")
 					lbl.Color = g.theme.Color.Text
 					return lbl.Layout(gtx)
 				}),
@@ -1237,6 +1316,18 @@ func (g *transcriptGUI) layoutNewGamePage(gtx layout.Context) layout.Dimensions 
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(16))),
 				layout.Rigid(pathEditor.Layout),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return analyzeButton.Layout(gtx, g.theme, g.iconify)
+						}),
+						layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return browseButton.Layout(gtx, g.theme, g.iconify)
+						}),
+					)
+				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return g.newGameRunnerDropdown.Layout(gtx, g.theme, g.iconify, g.selectedNewGameRunner, g.layoutNewGameRunnerDropdownMenu)
@@ -1253,6 +1344,10 @@ func (g *transcriptGUI) layoutNewGamePage(gtx layout.Context) layout.Dimensions 
 				layout.Rigid(iconPathEditor.Layout),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
 				layout.Rigid(imagePathEditor.Layout),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(16))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return g.layoutGamePreview(gtx)
+				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(16))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return saveButton.Layout(gtx, g.theme, g.iconify)
@@ -1461,6 +1556,34 @@ func (g *transcriptGUI) layoutTranscriptFlashcardPopup(gtx layout.Context, card 
 }
 
 func (g *transcriptGUI) layoutBrowseModalContent(gtx layout.Context) layout.Dimensions {
+	return g.layoutBrowsePanelContents(gtx, true)
+}
+
+func (g *transcriptGUI) layoutBrowsePanel(gtx layout.Context) layout.Dimensions {
+	return bareutils.Panel(gtx, g.theme.Color.SurfaceAlt, unit.Dp(g.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.H6(g.theme.Gio(), "File Browser")
+					lbl.Color = g.theme.Color.Text
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(g.theme.Gio(), "Pick a game folder or select a specific `.exe` directly.")
+					lbl.Color = g.theme.Color.TextMuted
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return g.layoutBrowsePanelContents(gtx, false)
+				}),
+			)
+		})
+	})
+}
+
+func (g *transcriptGUI) layoutBrowsePanelContents(gtx layout.Context, showTitle bool) layout.Dimensions {
 	upButton := bareui.Button{
 		Clickable: &g.browseUpButton,
 		Text:      "Up",
@@ -1468,19 +1591,29 @@ func (g *transcriptGUI) layoutBrowseModalContent(gtx layout.Context) layout.Dime
 		Variant:   bareui.ButtonSecondary,
 	}
 	selectButton := bareui.Button{
-		Clickable: &g.browseSelectButton,
+		Clickable: &g.browseUseCurrentButton,
 		Text:      "Use This Folder",
 		Prefix:    "mdi:check-bold",
 		Variant:   bareui.ButtonPrimary,
 	}
 
-	//entries := g.currentBrowseEntries()
 	pathLabel := material.Body1(g.theme.Gio(), firstNonEmpty(g.browseCurrentPath, "No directory loaded"))
 	pathLabel.Color = g.theme.Color.Text
 
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(pathLabel.Layout),
-		layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+	children := []layout.FlexChild{}
+	if showTitle {
+		children = append(children,
+			layout.Rigid(pathLabel.Layout),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+		)
+	} else {
+		children = append(children,
+			layout.Rigid(pathLabel.Layout),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+		)
+	}
+
+	children = append(children,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1502,28 +1635,208 @@ func (g *transcriptGUI) layoutBrowseModalContent(gtx layout.Context) layout.Dime
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
-		//layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-		//	if len(entries) == 0 {
-		//		return g.layoutEmptyState(gtx, "No folders or .exe files found here.")
-		//	}
-		//	return material.List(g.theme.Gio(), &g.browseList).Layout(gtx, len(entries), func(gtx layout.Context, index int) layout.Dimensions {
-		//		entry := entries[index]
-		//		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		//			return g.layoutBrowseEntry(gtx, entry)
-		//		})
-		//	})
-		//}),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if len(g.browseEntries) == 0 {
+				return g.layoutEmptyState(gtx, "No folders or `.exe` files found here.")
+			}
+			return material.List(g.theme.Gio(), &g.browseList).Layout(gtx, len(g.browseEntries), func(gtx layout.Context, index int) layout.Dimensions {
+				entry := g.browseEntries[index]
+				return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return g.layoutBrowseEntry(gtx, entry)
+				})
+			})
+		}),
 	)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
 func (g *transcriptGUI) layoutBrowseEntry(gtx layout.Context, entry browseEntry) layout.Dimensions {
 	btn := bareui.Button{
-		//	Clickable: g.browseEntryClickable(entry.Path),
-		Text: entry.Name,
-		//	Prefix:    browseEntryIcon(entry),
-		Variant: bareui.ButtonSecondary,
+		Clickable: g.browseEntryClickable(entry.Path),
+		Text:      entry.Name,
+		Prefix:    browseEntryIcon(entry),
+		Variant:   bareui.ButtonSecondary,
 	}
 	return btn.Layout(gtx, g.theme, g.iconify)
+}
+
+func (g *transcriptGUI) layoutGamePreview(gtx layout.Context) layout.Dimensions {
+	preview := g.newGamePreview
+	lines := []string{}
+	switch {
+	case strings.TrimSpace(preview.Error) != "":
+		lines = append(lines, "Error: "+preview.Error)
+	case strings.TrimSpace(preview.Name) == "":
+		lines = append(lines, "Analyze a path to preview the detected executable, assets, and runner.")
+	default:
+		lines = append(lines, "Name: "+preview.Name)
+		lines = append(lines, "Resolved Path: "+firstNonEmpty(preview.ResolvedPath, "Unavailable"))
+		lines = append(lines, "Executable: "+firstNonEmpty(preview.Executable, "Unavailable"))
+		lines = append(lines, "Working Dir: "+firstNonEmpty(preview.WorkingDir, "Unavailable"))
+		lines = append(lines, "Runner: "+firstNonEmpty(preview.Runner, "Unavailable"))
+		if strings.TrimSpace(preview.SteamAppID) != "" {
+			lines = append(lines, "Steam App ID: "+preview.SteamAppID)
+		}
+		if strings.TrimSpace(preview.IconPath) != "" {
+			lines = append(lines, "Icon: "+preview.IconPath)
+		}
+		if strings.TrimSpace(preview.ImagePath) != "" {
+			lines = append(lines, "Image: "+preview.ImagePath)
+		}
+		if preview.Verified {
+			lines = append(lines, "Verification: passed")
+		}
+	}
+
+	return bareutils.Panel(gtx, g.theme.Color.Background, unit.Dp(g.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(g.theme.Gio(), "Preview")
+					lbl.Color = g.theme.Color.TextMuted
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(g.theme.Gio(), strings.Join(lines, "\n"))
+					lbl.Color = g.theme.Color.Text
+					return lbl.Layout(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (g *transcriptGUI) browseEntryClickable(path string) *widget.Clickable {
+	if g.browseEntryClicks[path] == nil {
+		g.browseEntryClicks[path] = new(widget.Clickable)
+	}
+	return g.browseEntryClicks[path]
+}
+
+func browseEntryIcon(entry browseEntry) string {
+	if entry.IsDir {
+		return "mdi:folder-outline"
+	}
+	return "mdi:application-outline"
+}
+
+func (g *transcriptGUI) initializeBrowsePath(input string) {
+	target := strings.TrimSpace(input)
+	if target == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			target = home
+		}
+	}
+	if target == "" {
+		target = "."
+	}
+	g.loadBrowseEntries(target)
+}
+
+func (g *transcriptGUI) loadBrowseEntries(input string) {
+	resolved, err := filepath.Abs(strings.TrimSpace(input))
+	if err != nil {
+		g.browseError = err.Error()
+		return
+	}
+
+	info, err := os.Stat(resolved)
+	if err != nil {
+		g.browseError = err.Error()
+		return
+	}
+
+	targetDir := resolved
+	if !info.IsDir() {
+		targetDir = filepath.Dir(resolved)
+	}
+
+	entries, err := os.ReadDir(targetDir)
+	if err != nil {
+		g.browseError = err.Error()
+		return
+	}
+
+	results := make([]browseEntry, 0, len(entries))
+	for _, entry := range entries {
+		fullPath := filepath.Join(targetDir, entry.Name())
+		if entry.IsDir() {
+			results = append(results, browseEntry{
+				Name:  entry.Name(),
+				Path:  fullPath,
+				IsDir: true,
+			})
+			continue
+		}
+		if isExeFile(fullPath) {
+			results = append(results, browseEntry{
+				Name:  entry.Name(),
+				Path:  fullPath,
+				IsDir: false,
+			})
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].IsDir != results[j].IsDir {
+			return results[i].IsDir
+		}
+		return strings.ToLower(results[i].Name) < strings.ToLower(results[j].Name)
+	})
+
+	g.browseCurrentPath = targetDir
+	g.browseEntries = results
+	g.browseError = ""
+
+	valid := make(map[string]struct{}, len(results))
+	for _, entry := range results {
+		valid[entry.Path] = struct{}{}
+		if g.browseEntryClicks[entry.Path] == nil {
+			g.browseEntryClicks[entry.Path] = new(widget.Clickable)
+		}
+	}
+	for path := range g.browseEntryClicks {
+		if _, ok := valid[path]; !ok {
+			delete(g.browseEntryClicks, path)
+		}
+	}
+}
+
+func (g *transcriptGUI) browseUp() {
+	current := strings.TrimSpace(g.browseCurrentPath)
+	if current == "" {
+		g.initializeBrowsePath("")
+		return
+	}
+	parent := filepath.Dir(current)
+	g.loadBrowseEntries(parent)
+}
+
+func (g *transcriptGUI) selectCurrentBrowsePath() {
+	if strings.TrimSpace(g.browseCurrentPath) == "" {
+		g.newGameStatus = "Browse to a folder before selecting it."
+		return
+	}
+	g.newGamePathEditor.SetText(g.browseCurrentPath)
+	g.newGameStatus = "Selected folder from browser."
+	g.analyzeNewGamePath()
+}
+
+func (g *transcriptGUI) handleBrowseSelection(path string) {
+	for _, entry := range g.browseEntries {
+		if entry.Path != path {
+			continue
+		}
+		if entry.IsDir {
+			g.loadBrowseEntries(entry.Path)
+			return
+		}
+		g.newGamePathEditor.SetText(entry.Path)
+		g.newGameStatus = "Selected executable from browser."
+		g.analyzeNewGamePath()
+		return
+	}
 }
 
 func (g *transcriptGUI) reloadFlashcards() {
@@ -1618,29 +1931,26 @@ func (g *transcriptGUI) installCurrentGameTextHook() {
 }
 
 func (g *transcriptGUI) saveNewGame(ctx context.Context, w *app.Window) {
-	inputPath := strings.TrimSpace(g.newGamePathEditor.Text())
-	if inputPath == "" {
-		g.newGameStatus = "Game path is required."
-		g.showMessage("Save Game Failed", "Path to the game directory or executable is required.")
+	cfg, err := g.buildNewGameConfig()
+	if err != nil {
+		g.newGameStatus = err.Error()
+		g.newGamePreview.Error = err.Error()
+		g.showMessage("Save Game Failed", err.Error())
 		return
 	}
 
-	cfg, err := buildGameConfig(
-		inputPath,
-		g.selectedNewGameRunner,
-		g.newGameRequiresSteam.Value,
-		strings.TrimSpace(g.newGameSteamAppIDEditor.Text()),
-		strings.TrimSpace(g.newGameIconPathEditor.Text()),
-		strings.TrimSpace(g.newGameImagePathEditor.Text()),
-	)
+	g.newGameStatus = "Verifying launch settings..."
+	verifiedCfg, err := verifyAndAutofixGameConfig(cfg)
 	if err != nil {
+		g.newGamePreview = g.previewFromConfig(cfg, err)
 		g.newGameStatus = err.Error()
 		g.showMessage("Save Game Failed", err.Error())
 		return
 	}
 
-	if _, err := saveGameConfig(cfg); err != nil {
+	if _, err := saveGameConfig(verifiedCfg); err != nil {
 		g.newGameStatus = err.Error()
+		g.newGamePreview.Error = err.Error()
 		g.showMessage("Save Game Failed", err.Error())
 		return
 	}
@@ -1662,16 +1972,70 @@ func (g *transcriptGUI) saveNewGame(ctx context.Context, w *app.Window) {
 		}
 	}
 
-	g.newGameStatus = fmt.Sprintf("Saved %q. Switched to the game.", cfg.Name)
+	g.newGamePreview = g.previewFromConfig(verifiedCfg, nil)
+	g.newGamePreview.Verified = true
+	g.newGameStatus = fmt.Sprintf("Saved %q. Switched to the game.", verifiedCfg.Name)
 	g.pageTabs.Active = guiPageTranscript
-	g.startWatching(ctx, cfg.Name, w)
+	g.startWatching(ctx, verifiedCfg.Name, w)
+	g.resetNewGameForm()
+	g.showMessage("Game Saved", fmt.Sprintf("Saved %q and added it to the game list.", verifiedCfg.Name))
+}
+
+func (g *transcriptGUI) analyzeNewGamePath() {
+	cfg, err := g.buildNewGameConfig()
+	if err != nil {
+		g.newGamePreview = gamePathPreview{Error: err.Error()}
+		g.newGameStatus = err.Error()
+		return
+	}
+	g.newGamePreview = g.previewFromConfig(cfg, nil)
+	g.newGameStatus = fmt.Sprintf("Ready to save %q.", cfg.Name)
+}
+
+func (g *transcriptGUI) buildNewGameConfig() (GameConfig, error) {
+	inputPath := strings.TrimSpace(g.newGamePathEditor.Text())
+	if inputPath == "" {
+		return GameConfig{}, errors.New("game path is required")
+	}
+	return buildGameConfig(
+		inputPath,
+		g.selectedNewGameRunner,
+		g.newGameRequiresSteam.Value,
+		strings.TrimSpace(g.newGameSteamAppIDEditor.Text()),
+		strings.TrimSpace(g.newGameIconPathEditor.Text()),
+		strings.TrimSpace(g.newGameImagePathEditor.Text()),
+	)
+}
+
+func (g *transcriptGUI) previewFromConfig(cfg GameConfig, err error) gamePathPreview {
+	preview := gamePathPreview{
+		ResolvedPath: cfg.GamePath,
+		Executable:   cfg.Executable,
+		WorkingDir:   cfg.WorkingDir,
+		IconPath:     cfg.IconPath,
+		ImagePath:    cfg.ImagePath,
+		Name:         cfg.Name,
+		Runner:       string(cfg.Runner),
+		SteamAppID:   cfg.SteamAppID,
+		Verified:     cfg.Verification.Verified,
+	}
+	if err != nil {
+		preview.Error = err.Error()
+	}
+	return preview
+}
+
+func (g *transcriptGUI) resetNewGameForm() {
 	g.newGamePathEditor.SetText("")
 	g.newGameSteamAppIDEditor.SetText("")
 	g.newGameIconPathEditor.SetText("")
 	g.newGameImagePathEditor.SetText("")
 	g.newGameRequiresSteam.Value = false
 	g.selectedNewGameRunner = "auto"
-	g.showMessage("Game Saved", fmt.Sprintf("Saved %q and added it to the game list.", cfg.Name))
+	g.newGamePreview = gamePathPreview{}
+	if home, err := os.UserHomeDir(); err == nil {
+		g.loadBrowseEntries(home)
+	}
 }
 
 func (g *transcriptGUI) syncFlashcardRowState() {
@@ -2025,6 +2389,7 @@ func (g *transcriptGUI) clearTranscript() {
 	g.rawTranscript = ""
 	g.displayTranscript = ""
 	g.displayDirty = true
+	g.transcriptResetView = true
 
 	if info, err := os.Stat(g.logPath); err == nil {
 		g.offset = info.Size()
@@ -2068,8 +2433,12 @@ func (g *transcriptGUI) syncTranscriptEditor() {
 	}
 
 	g.transcriptView.SetText(g.displayTranscript)
-	runes := len([]rune(g.displayTranscript))
-	g.transcriptView.SetCaret(runes, runes)
+	if g.transcriptResetView {
+		g.transcriptList.Position = layout.Position{}
+		runes := len([]rune(g.displayTranscript))
+		g.transcriptView.SetCaret(runes, runes)
+		g.transcriptResetView = false
+	}
 	g.displayDirty = false
 }
 
@@ -2094,6 +2463,7 @@ func (g *transcriptGUI) startWatching(parent context.Context, gameName string, w
 		g.rawTranscript = ""
 		g.displayTranscript = ""
 		g.displayDirty = true
+		g.transcriptResetView = true
 		g.offset = 0
 		g.mu.Unlock()
 		if w != nil {
@@ -2117,6 +2487,7 @@ func (g *transcriptGUI) startWatching(parent context.Context, gameName string, w
 	raw, offset, status := initializeTranscriptState(logPath, g.printExisting)
 	g.rawTranscript = raw
 	g.updateDisplayTranscriptLocked()
+	g.transcriptResetView = true
 	g.offset = offset
 	if status != "" {
 		g.statusText = status
@@ -2147,6 +2518,7 @@ func (g *transcriptGUI) setFailedGameState(gameName string, err error) {
 	g.rawTranscript = ""
 	g.displayTranscript = ""
 	g.displayDirty = true
+	g.transcriptResetView = true
 	g.offset = 0
 	g.mu.Unlock()
 }
