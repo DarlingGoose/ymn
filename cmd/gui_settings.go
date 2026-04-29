@@ -8,10 +8,11 @@ import (
 )
 
 type guiSettings struct {
-	ThemeMode          string `json:"theme_mode,omitempty"`
-	ThemePalette       string `json:"theme_palette,omitempty"`
-	TranscriptTextSize string `json:"transcript_text_size,omitempty"`
-	VisibleTranscript  string `json:"visible_transcript,omitempty"`
+	ThemeMode                   string `json:"theme_mode,omitempty"`
+	ThemePalette                string `json:"theme_palette,omitempty"`
+	TranscriptTextSize          string `json:"transcript_text_size,omitempty"`
+	VisibleTranscript           string `json:"visible_transcript,omitempty"`
+	AutoPlayHighlightPopupAudio bool   `json:"auto_play_highlight_popup_audio,omitempty"`
 }
 
 func guiSettingsPath() string {

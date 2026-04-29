@@ -347,22 +347,9 @@ func mergeGameConfig(existing GameConfig, incoming GameConfig) GameConfig {
 }
 
 func launchGame(cfg GameConfig) error {
-	if cfg.Runner != RunnerSteam {
-		if err := os.MkdirAll(cfg.PrefixPath, 0o755); err != nil {
-			return fmt.Errorf("create prefix path: %w", err)
-		}
-		if _, err := os.Stat(cfg.Executable); err != nil {
-			return fmt.Errorf("game executable is unavailable: %w", err)
-		}
-	}
-
-	cmd, err := buildLaunchCommand(context.Background(), cfg)
+	cmd, err := prepareLaunchCommand(cfg)
 	if err != nil {
 		return err
-	}
-
-	if cfg.Runner != RunnerSteam {
-		cmd.Dir = cfg.WorkingDir
 	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -372,6 +359,44 @@ func launchGame(cfg GameConfig) error {
 		return fmt.Errorf("launch %s: %w", cfg.Name, err)
 	}
 	return nil
+}
+
+func launchGameInBackground(cfg GameConfig) error {
+	cmd, err := prepareLaunchCommand(cfg)
+	if err != nil {
+		return err
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("launch %s: %w", cfg.Name, err)
+	}
+	go func() {
+		_ = cmd.Wait()
+	}()
+	return nil
+}
+
+func prepareLaunchCommand(cfg GameConfig) (*exec.Cmd, error) {
+	if cfg.Runner != RunnerSteam {
+		if err := os.MkdirAll(cfg.PrefixPath, 0o755); err != nil {
+			return nil, fmt.Errorf("create prefix path: %w", err)
+		}
+		if _, err := os.Stat(cfg.Executable); err != nil {
+			return nil, fmt.Errorf("game executable is unavailable: %w", err)
+		}
+	}
+
+	cmd, err := buildLaunchCommand(context.Background(), cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.Runner != RunnerSteam {
+		cmd.Dir = cfg.WorkingDir
+	}
+	return cmd, nil
 }
 
 func verifyAndAutofixGameConfig(cfg GameConfig) (GameConfig, error) {

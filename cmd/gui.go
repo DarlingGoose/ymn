@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -43,6 +44,8 @@ const (
 	guiPageGame       = "game"
 	guiPageSettings   = "settings"
 )
+
+const guiGameRunningCheckInterval = 2 * time.Second
 
 var guiCmd = &cobra.Command{
 	Use:   "gui [game-name]",
@@ -166,6 +169,7 @@ type transcriptGUI struct {
 	meaningEditor              widget.Editor
 	searchWordButton           widget.Clickable
 	playAudioButton            widget.Clickable
+	launchGameButton           widget.Clickable
 	exitButton                 widget.Clickable
 	syncAnkiButton             widget.Clickable
 	clearButton                widget.Clickable
@@ -191,6 +195,7 @@ type transcriptGUI struct {
 	newGameIconPathEditor      widget.Editor
 	newGameImagePathEditor     widget.Editor
 	newGameRequiresSteam       widget.Bool
+	autoPlayHighlightAudio     widget.Bool
 	newGameSaveButton          widget.Clickable
 	newGameAnalyzeButton       widget.Clickable
 	newGameBrowseButton        widget.Clickable
@@ -205,6 +210,9 @@ type transcriptGUI struct {
 	browseError                string
 	lookupStatus               string
 	lookupResult               *dictionaryLookup
+	gameRunning                bool
+	gameRunningPID             int
+	lastGameRunningCheck       time.Time
 
 	mu                  sync.Mutex
 	rawTranscript       string
@@ -442,11 +450,15 @@ func (g *transcriptGUI) layout(gtx layout.Context, ctx context.Context, w *app.W
 }
 
 func (g *transcriptGUI) handleGlobalEvents(gtx layout.Context, ctx context.Context, w *app.Window) {
+	g.refreshCurrentGameRunningState(false)
 	g.gameDropdown.Update(gtx)
 	g.modeDropdown.Update(gtx)
 	g.paletteDropdown.Update(gtx)
 	g.textSizeDropdown.Update(gtx)
 	g.recentLinesDropdown.Update(gtx)
+	if g.autoPlayHighlightAudio.Update(gtx) {
+		g.persistSettings()
+	}
 
 	for gameName, click := range g.gameOptionClicks {
 		for click.Clicked(gtx) {
@@ -524,6 +536,9 @@ func (g *transcriptGUI) handleGlobalEvents(gtx layout.Context, ctx context.Conte
 	}
 	for g.playAudioButton.Clicked(gtx) {
 		g.playCurrentLookupAudio()
+	}
+	for g.launchGameButton.Clicked(gtx) {
+		g.launchCurrentGameInBackground()
 	}
 	for g.exitButton.Clicked(gtx) {
 		w.Perform(system.ActionClose)
@@ -784,6 +799,12 @@ func (g *transcriptGUI) layoutTranscriptMeta(gtx layout.Context) layout.Dimensio
 }
 
 func (g *transcriptGUI) layoutTranscriptActions(gtx layout.Context) layout.Dimensions {
+	launchButton := bareui.Button{
+		Clickable: &g.launchGameButton,
+		Text:      g.transcriptLaunchButtonLabel(),
+		Prefix:    g.transcriptLaunchButtonIcon(),
+		Variant:   g.transcriptLaunchButtonVariant(),
+	}
 	syncButton := bareui.Button{
 		Clickable: &g.syncAnkiButton,
 		Text:      "Sync Anki",
@@ -801,9 +822,22 @@ func (g *transcriptGUI) layoutTranscriptActions(gtx layout.Context) layout.Dimen
 		Axis:      layout.Horizontal,
 		Alignment: layout.Middle,
 	}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if g.gameRunning {
+				return launchButton.Layout(gtx.Disabled(), g.theme, g.iconify)
+			}
+			return launchButton.Layout(gtx, g.theme, g.iconify)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return syncButton.Layout(gtx, g.theme, g.iconify) }),
 		layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return clearButton.Layout(gtx, g.theme, g.iconify) }),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body1(g.theme.Gio(), g.transcriptRunningStatusText())
+			lbl.Color = g.theme.Color.TextMuted
+			return lbl.Layout(gtx)
+		}),
 	)
 }
 
@@ -1406,9 +1440,17 @@ func (g *transcriptGUI) layoutSettingsPage(gtx layout.Context) layout.Dimensions
 						return g.recentLinesDropdown.Layout(gtx, g.theme, g.iconify, g.selectedRecentLinesName, g.layoutRecentLinesDropdownMenu)
 					})
 				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return g.layoutSettingRow(gtx, "Highlight Audio", boolSettingLabel(g.autoPlayHighlightAudio.Value), func(gtx layout.Context) layout.Dimensions {
+						check := material.CheckBox(g.theme.Gio(), &g.autoPlayHighlightAudio, "Auto-play audio when a highlighted word is clicked")
+						check.Color = g.theme.Color.Text
+						return check.Layout(gtx)
+					})
+				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(18))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body1(g.theme.Gio(), "Mode and palette are independent now, and transcript rendering can be tuned without changing the watcher logic.")
+					lbl := material.Body1(g.theme.Gio(), "Mode, transcript rendering, and highlight click behavior can be tuned without changing the watcher logic.")
 					lbl.Color = g.theme.Color.TextMuted
 					return lbl.Layout(gtx)
 				}),
@@ -1940,6 +1982,30 @@ func (g *transcriptGUI) installCurrentGameTextHook() {
 	g.showMessage("Text Hook Installed", "Installed the clipboard text hook plugin for this game.")
 }
 
+func (g *transcriptGUI) launchCurrentGameInBackground() {
+	if strings.TrimSpace(g.activeGameName) == "" {
+		g.showMessage("Launch Failed", "Select a game before launching it.")
+		return
+	}
+	if strings.TrimSpace(g.currentConfig.Name) == "" {
+		g.showMessage("Launch Failed", "The selected game configuration is not loaded yet.")
+		return
+	}
+	g.refreshCurrentGameRunningState(true)
+	if g.gameRunning {
+		g.statusText = g.transcriptRunningStatusText()
+		return
+	}
+	if err := launchGameInBackground(g.currentConfig); err != nil {
+		g.statusText = err.Error()
+		g.showMessage("Launch Failed", err.Error())
+		return
+	}
+	g.statusText = fmt.Sprintf("Launching %s in the background.", g.currentConfig.Name)
+	g.lastGameRunningCheck = time.Time{}
+	g.refreshCurrentGameRunningState(true)
+}
+
 func (g *transcriptGUI) saveNewGame(ctx context.Context, w *app.Window) {
 	cfg, err := g.buildNewGameConfig()
 	if err != nil {
@@ -2425,11 +2491,21 @@ func (g *transcriptGUI) showFlashcardPopup(card Flashcard) {
 }
 
 func (g *transcriptGUI) playPopupFlashcardAudio() {
-	if g.popupFlashcard == nil || !isExistingFile(g.popupFlashcard.AudioPath) {
-		g.showMessage("Audio Playback Failed", "No audio is available for this flashcard.")
+	if g.popupFlashcard == nil {
+		g.showMessage("Audio Playback Failed", "No flashcard is selected.")
 		return
 	}
-	if err := playAudioFile(g.popupFlashcard.AudioPath); err != nil {
+	g.playFlashcardAudio(*g.popupFlashcard, true)
+}
+
+func (g *transcriptGUI) playFlashcardAudio(card Flashcard, notifyMissing bool) {
+	if !isExistingFile(card.AudioPath) {
+		if notifyMissing {
+			g.showMessage("Audio Playback Failed", "No audio is available for this flashcard.")
+		}
+		return
+	}
+	if err := playAudioFile(card.AudioPath); err != nil {
 		g.showMessage("Audio Playback Failed", err.Error())
 	}
 }
@@ -2468,6 +2544,8 @@ func (g *transcriptGUI) startWatching(parent context.Context, gameName string, w
 		g.currentConfig = cfg
 		g.logPath = ""
 		g.statusText = err.Error()
+		g.lastGameRunningCheck = time.Time{}
+		g.refreshCurrentGameRunningState(true)
 		g.refreshCurrentGameHookStatus()
 		g.mu.Lock()
 		g.rawTranscript = ""
@@ -2490,6 +2568,8 @@ func (g *transcriptGUI) startWatching(parent context.Context, gameName string, w
 	g.currentConfig = cfg
 	g.logPath = logPath
 	g.statusText = "Watching transcript."
+	g.lastGameRunningCheck = time.Time{}
+	g.refreshCurrentGameRunningState(true)
 	g.reloadFlashcards()
 	g.refreshCurrentGameHookStatus()
 
@@ -2522,6 +2602,9 @@ func (g *transcriptGUI) setFailedGameState(gameName string, err error) {
 	g.currentConfig = GameConfig{Name: gameName}
 	g.logPath = ""
 	g.statusText = err.Error()
+	g.gameRunning = false
+	g.gameRunningPID = 0
+	g.lastGameRunningCheck = time.Time{}
 	g.flashcards = nil
 	g.gameHookStatus = textHookStatus{Message: err.Error()}
 	g.mu.Lock()
@@ -2591,6 +2674,7 @@ func (g *transcriptGUI) watchLoop(ctx context.Context, generation int, logPath s
 }
 
 func (g *transcriptGUI) pollTranscript(generation int, logPath string) {
+	g.refreshCurrentGameRunningState(false)
 	g.mu.Lock()
 	if generation != g.watcherGeneration {
 		g.mu.Unlock()
@@ -2676,14 +2760,17 @@ func (g *transcriptGUI) applySavedSettings() {
 			break
 		}
 	}
+
+	g.autoPlayHighlightAudio.Value = settings.AutoPlayHighlightPopupAudio
 }
 
 func (g *transcriptGUI) persistSettings() {
 	_ = saveGUISettings(guiSettings{
-		ThemeMode:          g.selectedModeName,
-		ThemePalette:       g.selectedPaletteName,
-		TranscriptTextSize: g.selectedTextSizeName,
-		VisibleTranscript:  g.selectedRecentLinesName,
+		ThemeMode:                   g.selectedModeName,
+		ThemePalette:                g.selectedPaletteName,
+		TranscriptTextSize:          g.selectedTextSizeName,
+		VisibleTranscript:           g.selectedRecentLinesName,
+		AutoPlayHighlightPopupAudio: g.autoPlayHighlightAudio.Value,
 	})
 }
 
@@ -2747,7 +2834,7 @@ func (g *transcriptGUI) transcriptHighlights() []transcriptMatch {
 		seen[word] = card
 		words = append(words, word)
 	}
-	sort.Slice(words, func(i, j int) bool {
+	sort.SliceStable(words, func(i, j int) bool {
 		return len([]rune(words[i])) > len([]rune(words[j]))
 	})
 
@@ -2772,36 +2859,46 @@ func findTranscriptMatches(text string, words []string) []transcriptMatch {
 		return nil
 	}
 
-	byteToRune := make([]int, len(text)+1)
-	runeIndex := 0
-	for i := range text {
-		byteToRune[i] = runeIndex
-		runeIndex++
-	}
-	byteToRune[len(text)] = runeIndex
-
+	textRunes := []rune(text)
+	occupied := make([]bool, len(textRunes))
 	matches := make([]transcriptMatch, 0)
 	for _, word := range words {
 		if word == "" {
 			continue
 		}
-		searchFrom := 0
-		for {
-			idx := strings.Index(text[searchFrom:], word)
-			if idx < 0 {
-				break
+		wordRunes := []rune(word)
+		if len(wordRunes) == 0 || len(wordRunes) > len(textRunes) {
+			continue
+		}
+		for start := 0; start <= len(textRunes)-len(wordRunes); start++ {
+			end := start + len(wordRunes)
+			if transcriptRunesOccupied(occupied, start, end) {
+				continue
 			}
-			startByte := searchFrom + idx
-			endByte := startByte + len(word)
+			if !slices.Equal(textRunes[start:end], wordRunes) {
+				continue
+			}
+
 			matches = append(matches, transcriptMatch{
 				Word:      word,
-				StartRune: byteToRune[startByte],
-				EndRune:   byteToRune[endByte],
+				StartRune: start,
+				EndRune:   end,
 			})
-			searchFrom = endByte
+			for i := start; i < end; i++ {
+				occupied[i] = true
+			}
 		}
 	}
 	return matches
+}
+
+func transcriptRunesOccupied(occupied []bool, start, end int) bool {
+	for i := start; i < end; i++ {
+		if occupied[i] {
+			return true
+		}
+	}
+	return false
 }
 
 func transcriptHighlightColor(base color.NRGBA) color.NRGBA {
@@ -2817,6 +2914,9 @@ func (g *transcriptGUI) openTranscriptHighlightPopup(key string) {
 	for _, match := range g.transcriptHighlights() {
 		if match.Key == key {
 			g.showFlashcardPopup(match.Card)
+			if g.autoPlayHighlightAudio.Value {
+				g.playFlashcardAudio(match.Card, false)
+			}
 			return
 		}
 	}
@@ -2846,12 +2946,80 @@ func (g *transcriptGUI) statusColor() color.NRGBA {
 	}
 }
 
+func (g *transcriptGUI) refreshCurrentGameRunningState(force bool) {
+	if !force && !g.lastGameRunningCheck.IsZero() && time.Since(g.lastGameRunningCheck) < guiGameRunningCheckInterval {
+		return
+	}
+	g.lastGameRunningCheck = time.Now()
+
+	if strings.TrimSpace(g.currentConfig.Name) == "" {
+		g.gameRunning = false
+		g.gameRunningPID = 0
+		return
+	}
+
+	processes, err := listProcesses()
+	if err != nil {
+		g.gameRunning = false
+		g.gameRunningPID = 0
+		return
+	}
+
+	matches := rankProcessMatches(g.currentConfig, processes)
+	if len(matches) == 0 {
+		g.gameRunning = false
+		g.gameRunningPID = 0
+		return
+	}
+
+	g.gameRunning = true
+	g.gameRunningPID = matches[0].PID
+}
+
+func (g *transcriptGUI) transcriptLaunchButtonLabel() string {
+	if g.gameRunning {
+		return "Game Running"
+	}
+	return "Launch Game"
+}
+
+func (g *transcriptGUI) transcriptLaunchButtonIcon() string {
+	if g.gameRunning {
+		return "mdi:check-circle-outline"
+	}
+	return "mdi:play-box-outline"
+}
+
+func (g *transcriptGUI) transcriptLaunchButtonVariant() bareui.ButtonVariant {
+	if g.gameRunning {
+		return bareui.ButtonSecondary
+	}
+	return bareui.ButtonPrimary
+}
+
+func (g *transcriptGUI) transcriptRunningStatusText() string {
+	if g.gameRunning {
+		if g.gameRunningPID > 0 {
+			return fmt.Sprintf("Detected running game process (pid %d).", g.gameRunningPID)
+		}
+		return "Detected running game process."
+	}
+	return "Game process not detected."
+}
+
 func normalizeGUISelectionText(text string) string {
 	fields := strings.Fields(strings.ReplaceAll(text, "\x00", " "))
 	if len(fields) == 0 {
 		return ""
 	}
 	return strings.Join(fields, " ")
+}
+
+func boolSettingLabel(value bool) string {
+	if value {
+		return "On"
+	}
+	return "Off"
 }
 
 func findFlashcardSourceLine(displayBuffer, selectedText string) string {
