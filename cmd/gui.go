@@ -327,6 +327,16 @@ func newGUIPaletteOptions() []guiDropdownOption {
 		{Label: "Blush", Icon: "mdi:flower-outline", Palette: barethemes.PaletteBlush, Clickable: new(widget.Clickable)},
 		{Label: "Sunset", Icon: "mdi:weather-sunset", Palette: barethemes.PaletteSunset, Clickable: new(widget.Clickable)},
 		{Label: "Pastel", Icon: "mdi:palette-swatch-outline", Palette: barethemes.PalettePastel, Clickable: new(widget.Clickable)},
+		{Label: "Warm Earth", Icon: "mdi:terrain", Palette: barethemes.PaletteWarmEarth, Clickable: new(widget.Clickable)},
+		{Label: "Soft Neutral", Icon: "mdi:circle-outline", Palette: barethemes.PaletteSoftNeutral, Clickable: new(widget.Clickable)},
+		{Label: "Lavender", Icon: "mdi:flower", Palette: barethemes.PaletteLavender, Clickable: new(widget.Clickable)},
+		{Label: "Harvest", Icon: "mdi:corn", Palette: barethemes.PaletteHarvest, Clickable: new(widget.Clickable)},
+		{Label: "Candy", Icon: "mdi:candy", Palette: barethemes.PaletteCandy, Clickable: new(widget.Clickable)},
+		{Label: "Creamy Pop", Icon: "mdi:ice-cream", Palette: barethemes.PaletteCreamyPop, Clickable: new(widget.Clickable)},
+		{Label: "Violet", Icon: "mdi:palette", Palette: barethemes.PaletteViolet, Clickable: new(widget.Clickable)},
+		{Label: "Forest Pop", Icon: "mdi:pine-tree", Palette: barethemes.PaletteForestPop, Clickable: new(widget.Clickable)},
+		{Label: "Dark Accent", Icon: "mdi:weather-night", Palette: barethemes.PaletteDarkAccent, Clickable: new(widget.Clickable)},
+		{Label: "Retro", Icon: "mdi:record-circle-outline", Palette: barethemes.PaletteRetro, Clickable: new(widget.Clickable)},
 	}
 }
 
@@ -351,7 +361,7 @@ func newGUIRecentLineOptions() []guiDropdownOption {
 func newGUINewGameRunnerOptions() []guiDropdownOption {
 	return []guiDropdownOption{
 		{Label: "auto", Icon: "mdi:magic-staff", Clickable: new(widget.Clickable)},
-		{Label: "wine", Icon: "mdi:glass-wine", Clickable: new(widget.Clickable)},
+		{Label: "wine", Icon: "mdi:glass-wine", Clickable: new(widget.Clickable)}uset
 		{Label: "proton", Icon: "mdi:flask-outline", Clickable: new(widget.Clickable)},
 		{Label: "steam", Icon: "mdi:steam", Clickable: new(widget.Clickable)},
 	}
