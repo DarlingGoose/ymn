@@ -361,7 +361,7 @@ func newGUIRecentLineOptions() []guiDropdownOption {
 func newGUINewGameRunnerOptions() []guiDropdownOption {
 	return []guiDropdownOption{
 		{Label: "auto", Icon: "mdi:magic-staff", Clickable: new(widget.Clickable)},
-		{Label: "wine", Icon: "mdi:glass-wine", Clickable: new(widget.Clickable)}uset
+		{Label: "wine", Icon: "mdi:glass-wine", Clickable: new(widget.Clickable)},
 		{Label: "proton", Icon: "mdi:flask-outline", Clickable: new(widget.Clickable)},
 		{Label: "steam", Icon: "mdi:steam", Clickable: new(widget.Clickable)},
 	}
