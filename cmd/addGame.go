@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Seann-Moser/wgl/pkg/game/gameconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +21,7 @@ var addGameCmd = &cobra.Command{
 	Short:   "Create a launcher config for a Windows game",
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := buildGameConfig(
+		cfg, err := gameconfig.BuildGameConfig(
 			args[0],
 			addGameRunner,
 			addGameRequiresSteam,
@@ -33,7 +34,7 @@ var addGameCmd = &cobra.Command{
 		}
 
 		if !addGameSkipVerify {
-			fmt.Fprintln(cmd.OutOrStdout(), "verifying game launch...")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "verifying game launch...")
 			cfg, err = verifyAndAutofixGameConfig(cfg)
 			if err != nil {
 				printVerificationAttempts(cmd, cfg.Verification.Attempts)
@@ -47,20 +48,29 @@ var addGameCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "saved config: %s\n", configPath)
-		fmt.Fprintf(cmd.OutOrStdout(), "game: %s\n", cfg.Name)
-		fmt.Fprintf(cmd.OutOrStdout(), "runner: %s\n", cfg.Runner)
-		fmt.Fprintf(cmd.OutOrStdout(), "requires steam: %t\n", cfg.RequiresSteam)
-		if strings.TrimSpace(cfg.SteamAppID) != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), "steam app id: %s\n", cfg.SteamAppID)
+		out := cmd.OutOrStdout()
+
+		_, _ = fmt.Fprintf(out, "\nGame Config\n")
+		_, _ = fmt.Fprintf(out, "------------\n")
+
+		_, _ = fmt.Fprintf(out, "%-16s %s\n", "Name:", cfg.Name)
+		_, _ = fmt.Fprintf(out, "%-16s %s\n", "Runner:", cfg.Runner)
+		_, _ = fmt.Fprintf(out, "%-16s %t\n", "Requires Steam:", cfg.RequiresSteam)
+
+		if cfg.SteamAppID != "" {
+			_, _ = fmt.Fprintf(out, "%-16s %s\n", "Steam App ID:", cfg.SteamAppID)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "executable: %s\n", cfg.Executable)
-		if strings.TrimSpace(cfg.IconPath) != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), "icon: %s\n", cfg.IconPath)
+
+		_, _ = fmt.Fprintf(out, "%-16s %s\n", "Executable:", cfg.Executable)
+
+		if cfg.IconPath != "" {
+			_, _ = fmt.Fprintf(out, "%-16s %s\n", "Icon:", cfg.IconPath)
 		}
-		if strings.TrimSpace(cfg.ImagePath) != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), "image: %s\n", cfg.ImagePath)
+		if cfg.ImagePath != "" {
+			_, _ = fmt.Fprintf(out, "%-16s %s\n", "Image:", cfg.ImagePath)
 		}
+
+		_, _ = fmt.Fprintf(out, "\nSaved to: %s\n", configPath)
 		return nil
 	},
 }
@@ -75,13 +85,13 @@ func init() {
 	addGameCmd.Flags().StringVar(&addGameImagePath, "image", "", "path to a game image/cover file (defaults to auto-discovery)")
 }
 
-func printVerificationAttempts(cmd *cobra.Command, attempts []VerificationAttempt) {
+func printVerificationAttempts(cmd *cobra.Command, attempts []gameconfig.VerificationAttempt) {
 	for _, attempt := range attempts {
 		status := "failed"
 		if attempt.Success {
 			status = "ok"
 		}
-		fmt.Fprintf(
+		_, _ = fmt.Fprintf(
 			cmd.OutOrStdout(),
 			"verification [%s:%s] %s: %s",
 			attempt.Runner,
@@ -90,8 +100,8 @@ func printVerificationAttempts(cmd *cobra.Command, attempts []VerificationAttemp
 			attempt.Message,
 		)
 		if strings.TrimSpace(attempt.LogPath) != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), " (log: %s)", attempt.LogPath)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), " (log: %s)", attempt.LogPath)
 		}
-		fmt.Fprintln(cmd.OutOrStdout())
+		_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	}
 }

@@ -9,8 +9,8 @@ github.com/PuerkitoBio/goquery v1.12.0 h1:pAcL4g3WRXekcB9AU/y1mbKez2dbY2AajVhtkO
 github.com/PuerkitoBio/goquery v1.12.0/go.mod h1:802ej+gV2y7bbIhOIoPY5sT183ZW0YFofScC4q/hIpQ=
 github.com/Seann-Moser/bare v0.0.4 h1:kx2ia34OXJfN90o4WY2Uye1PUTLcc9FU/NjX/qLmtQY=
 github.com/Seann-Moser/bare v0.0.4/go.mod h1:Q49gMlE10O/EXYC8jHH+0j5COf1Uykn5DuCICM9fxCk=
-github.com/Seann-Moser/jpndict v0.0.1 h1:qQeHU2D/EIren2PKwTdOOgLSRIbk5rk0JgIQGAw/z/o=
-github.com/Seann-Moser/jpndict v0.0.1/go.mod h1:BH3wOll7WmqXZV3jtGP/CRP/S2D0dO8ufrnoSTrpojE=
+github.com/Seann-Moser/jpndict v0.0.2 h1:vQ8LzvbtplGeGXtcR6DSNZDvfY+xhLOf2g5TAgtV91Y=
+github.com/Seann-Moser/jpndict v0.0.2/go.mod h1:BH3wOll7WmqXZV3jtGP/CRP/S2D0dO8ufrnoSTrpojE=
 github.com/andybalholm/cascadia v1.3.3 h1:AG2YHrzJIm4BZ19iwJ/DAua6Btl3IwJX+VI4kktS1LM=
 github.com/andybalholm/cascadia v1.3.3/go.mod h1:xNd9bqTn98Ln4DwST8/nG+H0yuB8Hmgu1YHNnWw0GeA=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiErDT4WkJ2k=

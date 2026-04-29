@@ -1,13 +1,15 @@
-package cmd
+package gui
 
 import (
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Seann-Moser/wgl/pkg/util"
 )
 
-type guiSettings struct {
+type Settings struct {
 	ThemeMode                   string `json:"theme_mode,omitempty"`
 	ThemePalette                string `json:"theme_palette,omitempty"`
 	TranscriptTextSize          string `json:"transcript_text_size,omitempty"`
@@ -16,27 +18,27 @@ type guiSettings struct {
 }
 
 func guiSettingsPath() string {
-	return filepath.Join(configBaseDir(), "gui-settings.json")
+	return filepath.Join(util.ConfigBaseDir(), "gui-settings.json")
 }
 
-func loadGUISettings() (guiSettings, error) {
+func LoadSettings() (Settings, error) {
 	data, err := os.ReadFile(guiSettingsPath())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return guiSettings{}, nil
+			return Settings{}, nil
 		}
-		return guiSettings{}, fmt.Errorf("read gui settings: %w", err)
+		return Settings{}, fmt.Errorf("read gui settings: %w", err)
 	}
 
-	var settings guiSettings
+	var settings Settings
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return guiSettings{}, fmt.Errorf("decode gui settings: %w", err)
+		return Settings{}, fmt.Errorf("decode gui settings: %w", err)
 	}
 	return settings, nil
 }
 
-func saveGUISettings(settings guiSettings) error {
-	if err := os.MkdirAll(configBaseDir(), 0o755); err != nil {
+func SaveSettings(settings Settings) error {
+	if err := os.MkdirAll(util.ConfigBaseDir(), 0o755); err != nil {
 		return fmt.Errorf("create gui settings directory: %w", err)
 	}
 

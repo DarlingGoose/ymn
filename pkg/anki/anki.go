@@ -1,7 +1,8 @@
-package cmd
+package anki
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
@@ -12,47 +13,34 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Seann-Moser/wgl/pkg/flashcard"
+	"github.com/Seann-Moser/wgl/pkg/util"
 )
 
 const defaultAnkiConnectURL = "http://127.0.0.1:8765"
 
-type ankiRequest struct {
-	Action  string `json:"action"`
-	Version int    `json:"version"`
-	Params  any    `json:"params,omitempty"`
-}
-
-type ankiResponse struct {
-	Result json.RawMessage `json:"result"`
-	Error  string          `json:"error"`
-}
-
-type ankiClient struct {
+type Client struct {
 	baseURL string
 	client  *http.Client
 }
 
-type ankiSyncResult struct {
-	DeckName string
-	Total    int
-	Created  int
-	Updated  int
-}
-
-func newAnkiClient(baseURL string) *ankiClient {
+func New(baseURL string) *Client {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
 		baseURL = defaultAnkiConnectURL
 	}
-	return &ankiClient{
+	client := &Client{
 		baseURL: baseURL,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
 	}
+	_ = client.ensureModel()
+	return client
 }
 
-func (c *ankiClient) invoke(action string, params any, out any) error {
+func (c *Client) invoke(action string, params any, out any) error {
 	payload, err := json.Marshal(ankiRequest{
 		Action:  action,
 		Version: 6,
@@ -93,12 +81,12 @@ func (c *ankiClient) invoke(action string, params any, out any) error {
 	return nil
 }
 
-func (c *ankiClient) createDeck(name string) error {
+func (c *Client) CreateDeck(name string) error {
 	var result any
 	return c.invoke("createDeck", map[string]string{"deck": name}, &result)
 }
 
-func (c *ankiClient) addNote(card Flashcard) (int64, error) {
+func (c *Client) AddNote(card flashcard.Flashcard) (int64, error) {
 	var result int64
 	audioTag, err := c.storeFlashcardAudio(card)
 	if err != nil {
@@ -120,7 +108,7 @@ func (c *ankiClient) addNote(card Flashcard) (int64, error) {
 				"allowDuplicate": false,
 				"duplicateScope": "deck",
 			},
-			"tags": []string{"wgl", sanitizeName(card.GameName)},
+			"tags": []string{"wgl", util.SanitizeName(card.GameName)},
 		},
 	}, &result)
 	if err != nil {
@@ -132,7 +120,7 @@ func (c *ankiClient) addNote(card Flashcard) (int64, error) {
 	return result, nil
 }
 
-func (c *ankiClient) updateNote(card Flashcard) error {
+func (c *Client) UpdateNote(card flashcard.Flashcard) error {
 	audioTag, err := c.storeFlashcardAudio(card)
 	if err != nil {
 		return err
@@ -148,7 +136,7 @@ func (c *ankiClient) updateNote(card Flashcard) error {
 	}, nil)
 }
 
-func (c *ankiClient) storeMediaFile(filename string, data []byte) error {
+func (c *Client) storeMediaFile(filename string, data []byte) error {
 	var result string
 	return c.invoke("storeMediaFile", map[string]any{
 		"filename": filename,
@@ -156,8 +144,8 @@ func (c *ankiClient) storeMediaFile(filename string, data []byte) error {
 	}, &result)
 }
 
-func (c *ankiClient) storeFlashcardAudio(card Flashcard) (string, error) {
-	if !isExistingFile(card.AudioPath) {
+func (c *Client) storeFlashcardAudio(card flashcard.Flashcard) (string, error) {
+	if !util.IsExistingFile(card.AudioPath) {
 		return "", nil
 	}
 
@@ -173,12 +161,12 @@ func (c *ankiClient) storeFlashcardAudio(card Flashcard) (string, error) {
 	return "[sound:" + filename + "]", nil
 }
 
-func (c *ankiClient) sync() error {
+func (c *Client) sync() error {
 	var result any
 	return c.invoke("sync", nil, &result)
 }
 
-func (c *ankiClient) deleteNotes(noteIDs []int64) error {
+func (c *Client) deleteNotes(noteIDs []int64) error {
 	if len(noteIDs) == 0 {
 		return nil
 	}
@@ -188,26 +176,28 @@ func (c *ankiClient) deleteNotes(noteIDs []int64) error {
 	}, &result)
 }
 
-func deleteFlashcardFromAnki(card Flashcard, baseURL string, pushSync bool) error {
+func (c *Client) DeleteFlashcardFromAnki(card flashcard.Flashcard, baseURL string, pushSync bool) error {
 	if card.AnkiNoteID <= 0 {
 		return nil
 	}
 
-	client := newAnkiClient(baseURL)
-	if err := client.deleteNotes([]int64{card.AnkiNoteID}); err != nil {
+	if err := c.deleteNotes([]int64{card.AnkiNoteID}); err != nil {
 		return err
 	}
 	if pushSync {
-		if err := client.sync(); err != nil {
+		if err := c.sync(); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *ankiClient) ensureModel() error {
+//go:embed model_data/model.css
+var modelCSS string
+
+func (c *Client) ensureModel() error {
 	return c.invoke("createModel", map[string]any{
-		"modelName": defaultAnkiModel,
+		"modelName": flashcard.DefaultAnkiModel,
 		"inOrderFields": []string{
 			"Text",
 			"Reading",
@@ -215,36 +205,7 @@ func (c *ankiClient) ensureModel() error {
 			"Context",
 			"Audio",
 		},
-		"css": `
-.card {
-  font-family: sans-serif;
-  font-size: 28px;
-  text-align: center;
-  color: black;
-  background-color: white;
-}
-
-.front {
-  font-size: 42px;
-  font-weight: 600;
-}
-
-.reading {
-  font-size: 24px;
-  color: #666;
-  margin-top: 0.5rem;
-}
-
-.meaning {
-  font-size: 32px;
-}
-
-.context {
-  font-size: 20px;
-  color: #777;
-  margin-top: 1rem;
-}
-`,
+		"css": modelCSS,
 		"cardTemplates": []map[string]string{
 			{
 				"Name": "Text → Meaning",
@@ -280,45 +241,42 @@ func (c *ankiClient) ensureModel() error {
 	}, nil)
 }
 
-func syncFlashcardsToAnki(gameName, baseURL string, pushSync bool) (ankiSyncResult, error) {
-	cards, err := loadFlashcards(gameName)
+func (c *Client) SyncFlashcardsToAnki(gameName, baseURL string, pushSync bool) (SyncResult, error) {
+	cards, err := flashcard.LoadFlashcards(gameName)
 	if err != nil {
-		return ankiSyncResult{}, err
+		return SyncResult{}, err
 	}
 	if len(cards) == 0 {
-		return ankiSyncResult{}, fmt.Errorf("no flashcards saved for %s", gameName)
+		return SyncResult{}, fmt.Errorf("no flashcards saved for %s", gameName)
 	}
 
-	client := newAnkiClient(baseURL)
-	_ = client.ensureModel()
-
-	deckName := ankiDeckName(gameName)
-	if err := client.createDeck(deckName); err != nil {
-		return ankiSyncResult{}, err
+	deckName := util.AnkiDeckName(gameName)
+	if err := c.CreateDeck(deckName); err != nil {
+		return SyncResult{}, err
 	}
 
-	result := ankiSyncResult{
+	result := SyncResult{
 		DeckName: deckName,
 		Total:    len(cards),
 	}
 	now := time.Now().UTC()
 
 	for i := range cards {
-		cards[i] = normalizeFlashcard(cards[i])
+		cards[i].NormalizeFlashcard()
 		cards[i].AnkiDeck = deckName
-		cards[i].AnkiModel = defaultAnkiModel
+		cards[i].AnkiModel = flashcard.DefaultAnkiModel
 
 		if cards[i].AnkiNoteID > 0 {
-			if err := client.updateNote(cards[i]); err != nil {
+			if err := c.UpdateNote(cards[i]); err != nil {
 				if strings.Contains(err.Error(), "Note was not found") {
-					noteID, err := client.addNote(cards[i])
+					noteID, err := c.AddNote(cards[i])
 					if err != nil {
-						return ankiSyncResult{}, fmt.Errorf("sync card %q: %w", cards[i].Text, err)
+						return SyncResult{}, fmt.Errorf("sync card %q: %w", cards[i].Text, err)
 					}
 					cards[i].AnkiNoteID = noteID
 					result.Created++
 				} else {
-					return ankiSyncResult{}, fmt.Errorf("sync card %q: %w", cards[i].Text, err)
+					return SyncResult{}, fmt.Errorf("sync card %q: %w", cards[i].Text, err)
 
 				}
 			} else {
@@ -326,9 +284,9 @@ func syncFlashcardsToAnki(gameName, baseURL string, pushSync bool) (ankiSyncResu
 			}
 
 		} else {
-			noteID, err := client.addNote(cards[i])
+			noteID, err := c.AddNote(cards[i])
 			if err != nil {
-				return ankiSyncResult{}, fmt.Errorf("sync card %q: %w", cards[i].Text, err)
+				return SyncResult{}, fmt.Errorf("sync card %q: %w", cards[i].Text, err)
 			}
 			cards[i].AnkiNoteID = noteID
 			result.Created++
@@ -337,22 +295,22 @@ func syncFlashcardsToAnki(gameName, baseURL string, pushSync bool) (ankiSyncResu
 		cards[i].AnkiLastSyncAt = &now
 	}
 
-	if err := saveFlashcards(gameName, cards); err != nil {
-		return ankiSyncResult{}, err
+	if err := flashcard.SaveFlashcards(gameName, cards); err != nil {
+		return SyncResult{}, err
 	}
 	if pushSync {
-		if err := client.sync(); err != nil {
-			return ankiSyncResult{}, err
+		if err := c.sync(); err != nil {
+			return SyncResult{}, err
 		}
 	}
 
 	return result, nil
 }
 
-func flashcardBackHTML(card Flashcard, audioTag string) string {
+func flashcardBackHTML(card flashcard.Flashcard, audioTag string) string {
 	var parts []string
 	parts = append(parts, escapedTextHTML(card.Meaning))
-	if furigana := flashcardFuriganaHTML(card); strings.TrimSpace(furigana) != "" {
+	if furigana := card.FlashcardFuriganaHTML(); strings.TrimSpace(furigana) != "" {
 		parts = append(parts, "<small>Furigana: "+furigana+"</small>")
 	}
 	if strings.TrimSpace(card.Reading) != "" {
@@ -384,20 +342,20 @@ func escapedTextHTML(text string) string {
 	return strings.Join(escaped, "<br>")
 }
 
-func ankiAudioFilename(card Flashcard) string {
+func ankiAudioFilename(card flashcard.Flashcard) string {
 	ext := filepath.Ext(card.AudioPath)
 	if ext == "" {
 		ext = ".mp3"
 	}
-	return fmt.Sprintf("wgl-%s-audio%s", sanitizeName(card.ID), ext)
+	return fmt.Sprintf("wgl-%s-audio%s", util.SanitizeName(card.ID), ext)
 }
 
-func exportFlashcardsToTSV(gameName string, cards []Flashcard) (string, error) {
-	if err := os.MkdirAll(flashcardExportDir(), 0o755); err != nil {
+func exportFlashcardsToTSV(gameName string, cards []flashcard.Flashcard) (string, error) {
+	if err := os.MkdirAll(flashcard.FlashcardExportDir(), 0o755); err != nil {
 		return "", fmt.Errorf("create export directory: %w", err)
 	}
 
-	path := filepath.Join(flashcardExportDir(), sanitizeName(gameName)+"-anki.tsv")
+	path := filepath.Join(flashcard.FlashcardExportDir(), util.SanitizeName(gameName)+"-anki.tsv")
 	file, err := os.Create(path)
 	if err != nil {
 		return "", fmt.Errorf("create export file: %w", err)
@@ -414,7 +372,7 @@ func exportFlashcardsToTSV(gameName string, cards []Flashcard) (string, error) {
 			card.Text,
 			card.Meaning,
 			card.SourceLine,
-			ankiDeckName(gameName),
+			util.AnkiDeckName(gameName),
 		})
 	}
 	if err := writer.WriteAll(rows); err != nil {
