@@ -1,6 +1,7 @@
 package gameconfig
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,148 @@ import (
 
 	"github.com/Seann-Moser/wgl/pkg/util"
 )
+
+func ListConfigs() ([]GameConfig, error) {
+	configDir := filepath.Join(util.ConfigBaseDir(), "games")
+
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read config dir: %w", err)
+	}
+
+	configs := make([]GameConfig, 0, len(entries))
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		if !strings.EqualFold(filepath.Ext(entry.Name()), ".json") {
+			continue
+		}
+
+		path := filepath.Join(configDir, entry.Name())
+
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read config %s: %w", path, err)
+		}
+
+		var cfg GameConfig
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			return nil, fmt.Errorf("parse config %s: %w", path, err)
+		}
+
+		configs = append(configs, cfg)
+	}
+
+	sort.Slice(configs, func(i, j int) bool {
+		return strings.ToLower(configs[i].Name) < strings.ToLower(configs[j].Name)
+	})
+
+	return configs, nil
+}
+
+func FindConfig(name string) (*GameConfig, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errors.New("config name is required")
+	}
+
+	configDir := filepath.Join(util.ConfigBaseDir(), "games")
+
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("no game configs found in %s", configDir)
+		}
+		return nil, fmt.Errorf("read config dir: %w", err)
+	}
+
+	wanted := util.SanitizeName(name)
+
+	var matches []GameConfig
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		if !strings.EqualFold(filepath.Ext(entry.Name()), ".json") {
+			continue
+		}
+
+		path := filepath.Join(configDir, entry.Name())
+
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read config %s: %w", path, err)
+		}
+
+		var cfg GameConfig
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			return nil, fmt.Errorf("parse config %s: %w", path, err)
+		}
+
+		fileName := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+
+		if strings.EqualFold(fileName, wanted) ||
+			strings.EqualFold(util.SanitizeName(cfg.Name), wanted) ||
+			strings.EqualFold(cfg.Name, name) {
+			matches = append(matches, cfg)
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("config %q not found in %s", name, configDir)
+	}
+
+	if len(matches) > 1 {
+		names := make([]string, 0, len(matches))
+		for _, match := range matches {
+			names = append(names, match.Name)
+		}
+		sort.Strings(names)
+
+		return nil, fmt.Errorf("config %q is ambiguous; matched: %s", name, strings.Join(names, ", "))
+	}
+
+	return &matches[0], nil
+}
+
+func SaveGameConfig(config GameConfig) (path string, err error) {
+	if strings.TrimSpace(config.Name) == "" {
+		return "", errors.New("config name is required")
+	}
+
+	if config.CreatedAt.IsZero() {
+		config.CreatedAt = time.Now().UTC()
+	}
+
+	configDir := filepath.Join(util.ConfigBaseDir(), "games")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return "", fmt.Errorf("create config dir: %w", err)
+	}
+
+	fileName := util.SanitizeName(config.Name) + ".json"
+	path = filepath.Join(configDir, fileName)
+
+	raw, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal config: %w", err)
+	}
+
+	raw = append(raw, '\n')
+
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		return "", fmt.Errorf("write config: %w", err)
+	}
+
+	return path, nil
+}
 
 func BuildGameConfig(
 	inputPath string,

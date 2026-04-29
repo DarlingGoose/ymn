@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Seann-Moser/wgl/pkg/game/gameconfig"
+	"github.com/Seann-Moser/wgl/pkg/game/launcher"
 	"github.com/spf13/cobra"
 )
 
@@ -64,15 +66,20 @@ var ocrGameCmd = &cobra.Command{
 			selectedName = args[0]
 		}
 
-		var cfg GameConfig
+		var cfg *gameconfig.GameConfig
 		var err error
 		if selectedName == "" {
-			cfg, err = selectGameConfigWithTUI("Select a running game for OCR", "start OCR")
+
+			picker, err := launcher.NewPicker("Select a game to run OCR with", "ocr")
+			if err != nil {
+				return err
+			}
+			cfg, err = picker.SelectGameConfig()
 			if err != nil {
 				return err
 			}
 		} else {
-			cfg, err = findGameConfig(selectedName)
+			cfg, err = gameconfig.FindConfig(selectedName)
 			if err != nil {
 				return err
 			}
@@ -82,7 +89,7 @@ var ocrGameCmd = &cobra.Command{
 			return err
 		}
 
-		match, err := findRunningGameWindow(cfg)
+		match, err := findRunningGameWindow(*cfg)
 		if err != nil {
 			return err
 		}
@@ -165,7 +172,7 @@ func ensureTesseractLanguage(lang string) error {
 	return fmt.Errorf("tesseract language %q is not installed", lang)
 }
 
-func findRunningGameWindow(cfg GameConfig) (windowMatch, error) {
+func findRunningGameWindow(cfg gameconfig.GameConfig) (windowMatch, error) {
 	processes, err := listProcesses()
 	if err != nil {
 		return windowMatch{}, err
@@ -234,7 +241,7 @@ func listHyprClients() ([]hyprClient, error) {
 	return clients, nil
 }
 
-func rankProcessMatches(cfg GameConfig, processes []processMatch) []processMatch {
+func rankProcessMatches(cfg gameconfig.GameConfig, processes []processMatch) []processMatch {
 	type scoredProcess struct {
 		process processMatch
 		score   int
@@ -279,7 +286,7 @@ func rankProcessMatches(cfg GameConfig, processes []processMatch) []processMatch
 	return matches
 }
 
-func rankWindowMatches(cfg GameConfig, clients []hyprClient, processCandidates []processMatch) (windowMatch, bool) {
+func rankWindowMatches(cfg gameconfig.GameConfig, clients []hyprClient, processCandidates []processMatch) (windowMatch, bool) {
 	pidScores := make(map[int]int, len(processCandidates))
 	for idx, process := range processCandidates {
 		pidScores[process.PID] = 1000 - idx*10

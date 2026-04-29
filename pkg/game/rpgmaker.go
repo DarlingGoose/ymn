@@ -26,26 +26,26 @@ var rpgMakerClipboardPluginSource string
 type RPGMakerHook struct {
 }
 
-func (h *RPGMakerHook) resolveInstallTextHookTarget(args []string) (string, error) {
-	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
-		return args[0], nil
-	}
-
-	selectedName := strings.TrimSpace(installTextHookGame)
-	if selectedName != "" {
-		cfg, err := findGameConfig(selectedName)
-		if err != nil {
-			return "", err
-		}
-		return firstNonEmpty(cfg.GamePath, cfg.Executable), nil
-	}
-
-	cfg, err := selectGameConfigWithTUI("Select a game to install a text hook", "install the text hook")
-	if err != nil {
-		return "", err
-	}
-	return firstNonEmpty(cfg.GamePath, cfg.Executable), nil
-}
+//func (h *RPGMakerHook) resolveInstallTextHookTarget(args []string) (string, error) {
+//	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
+//		return args[0], nil
+//	}
+//
+//	selectedName := strings.TrimSpace(installTextHookGame)
+//	if selectedName != "" {
+//		cfg, err := findGameConfig(selectedName)
+//		if err != nil {
+//			return "", err
+//		}
+//		return firstNonEmpty(cfg.GamePath, cfg.Executable), nil
+//	}
+//
+//	cfg, err := selectGameConfigWithTUI("Select a game to install a text hook", "install the text hook")
+//	if err != nil {
+//		return "", err
+//	}
+//	return firstNonEmpty(cfg.GamePath, cfg.Executable), nil
+//}
 
 func (h *RPGMakerHook) InstallHook(inputPath string) (TextHookInstallResult, error) {
 	projectRoot, engine, err := resolveRPGMakerProjectRoot(inputPath)

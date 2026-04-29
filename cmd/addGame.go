@@ -33,17 +33,16 @@ var addGameCmd = &cobra.Command{
 			return err
 		}
 
-		if !addGameSkipVerify {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "verifying game launch...")
-			cfg, err = verifyAndAutofixGameConfig(cfg)
-			if err != nil {
-				printVerificationAttempts(cmd, cfg.Verification.Attempts)
-				return err
-			}
-			printVerificationAttempts(cmd, cfg.Verification.Attempts)
-		}
-
-		configPath, err := saveGameConfig(cfg)
+		//if !addGameSkipVerify {
+		//	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "verifying game launch...")
+		//	cfg, err = verifyAndAutofixGameConfig(cfg)
+		//	if err != nil {
+		//		printVerificationAttempts(cmd, cfg.Verification.Attempts)
+		//		return err
+		//	}
+		//	printVerificationAttempts(cmd, cfg.Verification.Attempts)
+		//}
+		configPath, err := gameconfig.SaveGameConfig(cfg)
 		if err != nil {
 			return err
 		}

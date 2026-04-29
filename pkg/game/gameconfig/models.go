@@ -1,6 +1,17 @@
 package gameconfig
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/Seann-Moser/wgl/pkg/util"
+)
 
 type RunnerType string
 
@@ -49,4 +60,226 @@ type GameConfig struct {
 	CreatedAt     time.Time          `json:"created_at"`
 	RuntimeInfo   RuntimeStatus      `json:"runtime_info"`
 	Verification  VerificationStatus `json:"verification"`
+}
+
+func (c *GameConfig) Launch() error {
+	cmd, err := c.launchCommand()
+	if err != nil {
+		return err
+	}
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	return cmd.Run()
+}
+
+func (c *GameConfig) LaunchInBackground() error {
+	cmd, err := c.launchCommand()
+	if err != nil {
+		return err
+	}
+
+	logPath := filepath.Join(c.prefixOrGameDir(), "launch.log")
+
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return err
+	}
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("open launch log: %w", err)
+	}
+
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.Stdin = nil
+
+	// Detach from parent process group.
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true,
+	}
+
+	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
+		return err
+	}
+
+	// Let Go release process resources after it exits.
+	go func() {
+		_ = cmd.Wait()
+		_ = logFile.Close()
+	}()
+
+	return nil
+}
+
+func (c *GameConfig) launchCommand() (*exec.Cmd, error) {
+	if err := c.validateLaunchConfig(); err != nil {
+		return nil, err
+	}
+
+	switch c.Runner {
+	case RunnerWine:
+		return c.wineCommand(), nil
+
+	case RunnerProton:
+		return c.protonCommand()
+
+	case RunnerSteam:
+		return c.steamCommand(), nil
+
+	default:
+		return nil, fmt.Errorf("unsupported runner: %q", c.Runner)
+	}
+}
+
+func (c *GameConfig) wineCommand() *exec.Cmd {
+	wine := util.FirstNonEmpty(c.RunnerPath, c.RuntimeInfo.WinePath, "wine")
+
+	exe := c.executablePath()
+
+	cmd := exec.Command(wine, exe)
+	cmd.Dir = c.workingDir()
+	cmd.Env = c.baseEnv()
+
+	if strings.TrimSpace(c.PrefixPath) != "" {
+		cmd.Env = append(cmd.Env, "WINEPREFIX="+c.PrefixPath)
+	}
+
+	return cmd
+}
+
+func (c *GameConfig) protonCommand() (*exec.Cmd, error) {
+	proton := util.FirstNonEmpty(
+		c.RunnerPath,
+		c.RuntimeInfo.SelectedProtonPath,
+	)
+
+	if strings.TrimSpace(proton) == "" {
+		return nil, errors.New("proton path is required")
+	}
+
+	exe := c.executablePath()
+
+	prefix := c.PrefixPath
+	if strings.TrimSpace(prefix) == "" {
+		prefix = filepath.Join(util.ConfigBaseDir(), "prefixes", util.SanitizeName(c.Name))
+	}
+
+	if err := os.MkdirAll(prefix, 0o755); err != nil {
+		return nil, fmt.Errorf("create proton prefix dir: %w", err)
+	}
+
+	cmd := exec.Command(proton, "run", exe)
+	cmd.Dir = c.workingDir()
+	cmd.Env = c.baseEnv()
+
+	cmd.Env = append(cmd.Env,
+		"STEAM_COMPAT_DATA_PATH="+prefix,
+		"STEAM_COMPAT_CLIENT_INSTALL_PATH="+util.FirstNonEmpty(
+			c.RuntimeInfo.SteamRoot,
+			filepath.Join(os.Getenv("HOME"), ".steam", "steam"),
+		),
+	)
+
+	return cmd, nil
+}
+
+func (c *GameConfig) steamCommand() *exec.Cmd {
+	steam := util.FirstNonEmpty(c.RunnerPath, c.RuntimeInfo.SteamPath, "steam")
+
+	var target string
+	if strings.TrimSpace(c.SteamAppID) != "" {
+		target = "steam://rungameid/" + c.SteamAppID
+	} else {
+		// Fallback for non-Steam shortcut/exe launch.
+		target = c.executablePath()
+	}
+
+	cmd := exec.Command(steam, target)
+	cmd.Dir = c.workingDir()
+	cmd.Env = c.baseEnv()
+
+	return cmd
+}
+
+func (c *GameConfig) validateLaunchConfig() error {
+	if strings.TrimSpace(c.Name) == "" {
+		return errors.New("game name is required")
+	}
+
+	if strings.TrimSpace(c.GamePath) == "" {
+		return errors.New("game path is required")
+	}
+
+	switch c.Runner {
+	case RunnerWine:
+		if strings.TrimSpace(c.Executable) == "" {
+			return errors.New("executable is required for wine runner")
+		}
+
+	case RunnerProton:
+		if strings.TrimSpace(c.Executable) == "" {
+			return errors.New("executable is required for proton runner")
+		}
+
+		if strings.TrimSpace(c.RunnerPath) == "" &&
+			strings.TrimSpace(c.RuntimeInfo.SelectedProtonPath) == "" {
+			return errors.New("proton runner path is required")
+		}
+
+	case RunnerSteam:
+		if strings.TrimSpace(c.SteamAppID) == "" && strings.TrimSpace(c.Executable) == "" {
+			return errors.New("steam_app_id or executable is required for steam runner")
+		}
+
+	default:
+		return fmt.Errorf("unknown runner: %q", c.Runner)
+	}
+
+	return nil
+}
+
+func (c *GameConfig) executablePath() string {
+	exe := strings.TrimSpace(c.Executable)
+	if filepath.IsAbs(exe) {
+		return exe
+	}
+	return filepath.Join(c.GamePath, exe)
+}
+
+func (c *GameConfig) workingDir() string {
+	if strings.TrimSpace(c.WorkingDir) != "" {
+		return c.WorkingDir
+	}
+
+	exe := c.executablePath()
+	if exe != "" {
+		return filepath.Dir(exe)
+	}
+
+	return c.GamePath
+}
+
+func (c *GameConfig) prefixOrGameDir() string {
+	if strings.TrimSpace(c.PrefixPath) != "" {
+		return c.PrefixPath
+	}
+	if strings.TrimSpace(c.GamePath) != "" {
+		return c.GamePath
+	}
+	return os.TempDir()
+}
+
+func (c *GameConfig) baseEnv() []string {
+	env := os.Environ()
+
+	// Helpful defaults for games launched outside Steam.
+	env = append(env,
+		"WINEDLLOVERRIDES=winemenubuilder.exe=d",
+	)
+
+	return env
 }

@@ -9,6 +9,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Seann-Moser/wgl/pkg/game/gameconfig"
+	"github.com/Seann-Moser/wgl/pkg/game/launcher"
+	"github.com/Seann-Moser/wgl/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -114,28 +117,31 @@ func resolveInstallTextHookTarget(args []string) (string, error) {
 
 	selectedName := strings.TrimSpace(installTextHookGame)
 	if selectedName != "" {
-		cfg, err := findGameConfig(selectedName)
+		cfg, err := gameconfig.FindConfig(selectedName)
 		if err != nil {
 			return "", err
 		}
-		return firstNonEmpty(cfg.GamePath, cfg.Executable), nil
+		return util.FirstNonEmpty(cfg.GamePath, cfg.Executable), nil
 	}
-
-	cfg, err := selectGameConfigWithTUI("Select a game to install a text hook", "install the text hook")
+	picker, err := launcher.NewPicker("Select a game to install a text hook", "install the text hook")
 	if err != nil {
 		return "", err
 	}
-	return firstNonEmpty(cfg.GamePath, cfg.Executable), nil
+	cfg, err := picker.SelectGameConfig()
+	if err != nil {
+		return "", err
+	}
+	return util.FirstNonEmpty(cfg.GamePath, cfg.Executable), nil
 }
 
 func printTextHookCompatibilityReport(cmd *cobra.Command, report textHookCompatibilityReport) {
-	fmt.Fprintf(cmd.OutOrStdout(), "project root: %s\n", report.ProjectRoot)
-	fmt.Fprintf(cmd.OutOrStdout(), "text hook compatibility: %s\n", report.RiskLevel)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "project root: %s\n", report.ProjectRoot)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "text hook compatibility: %s\n", report.RiskLevel)
 	if len(report.EnabledPlugins) > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "enabled plugins (%d): %s\n", len(report.EnabledPlugins), strings.Join(report.EnabledPlugins, ", "))
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "enabled plugins (%d): %s\n", len(report.EnabledPlugins), strings.Join(report.EnabledPlugins, ", "))
 	}
 	for _, finding := range report.Findings {
-		fmt.Fprintf(cmd.OutOrStdout(), "compatibility note: %s\n", finding)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "compatibility note: %s\n", finding)
 	}
 }
 

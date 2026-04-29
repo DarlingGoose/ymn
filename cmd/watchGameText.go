@@ -15,6 +15,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Seann-Moser/wgl/pkg/game/gameconfig"
+	"github.com/Seann-Moser/wgl/pkg/game/launcher"
+	"github.com/Seann-Moser/wgl/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -37,28 +40,32 @@ var watchGameTextCmd = &cobra.Command{
 			selectedName = args[0]
 		}
 
-		var cfg GameConfig
+		var cfg *gameconfig.GameConfig
 		var err error
 		if selectedName == "" {
-			cfg, err = selectGameConfigWithTUI("Select a game transcript to watch", "watch")
+			picker, err := launcher.NewPicker("Select a game transcript to watch", "watch")
+			if err != nil {
+				return err
+			}
+			cfg, err = picker.SelectGameConfig()
 			if err != nil {
 				return err
 			}
 		} else {
-			cfg, err = findGameConfig(selectedName)
+			cfg, err = gameconfig.FindConfig(selectedName)
 			if err != nil {
 				return err
 			}
 		}
 
-		logPath, err := resolveRPGMakerTranscriptPath(firstNonEmpty(cfg.GamePath, cfg.Executable, cfg.WorkingDir))
+		logPath, err := resolveRPGMakerTranscriptPath(util.FirstNonEmpty(cfg.GamePath, cfg.Executable, cfg.WorkingDir))
 		if err != nil {
 			return err
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "watching transcript: %s\n", logPath)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watching transcript: %s\n", logPath)
 		if !watchGameTextPrintExisting {
-			fmt.Fprintln(cmd.OutOrStdout(), "waiting for new dialogue; pass --print-existing to dump the current log first")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "waiting for new dialogue; pass --print-existing to dump the current log first")
 		}
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
