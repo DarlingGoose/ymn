@@ -22,11 +22,17 @@ import (
 
 var _ gui.EvenHandler = &Page{}
 
+const (
+	flashcardTabDeck   = "deck"
+	flashcardTabEditor = "editor"
+)
+
 type Page struct {
 	theme   barethemes.Theme
 	iconify *icons.Iconify
 
 	flashcardList widget.List
+	pageTabs      *bareui.Tabs
 
 	searchEditor  widget.Editor
 	wordEditor    widget.Editor
@@ -53,9 +59,13 @@ type Page struct {
 
 func New(theme barethemes.Theme) *Page {
 	p := &Page{
-		theme:        theme,
-		pushSync:     true,
-		statusText:   "Create a new card or pick one from the list to edit.",
+		theme:      theme,
+		pushSync:   true,
+		statusText: "Create a new card or pick one from the list to edit.",
+		pageTabs: bareui.NewTabs([]bareui.TabItem{
+			{ID: flashcardTabDeck, Label: "Deck", Icon: "mdi:view-list-outline"},
+			{ID: flashcardTabEditor, Label: "Editor", Icon: "mdi:pencil-box-outline"},
+		}, flashcardTabDeck),
 		selectClicks: make(map[string]*widget.Clickable),
 		deleteClicks: make(map[string]*widget.Clickable),
 	}
@@ -161,19 +171,18 @@ func (p *Page) LayoutPage(gtx layout.Context) layout.Dimensions {
 					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(16))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					p.pageTabs.Axis = layout.Horizontal
+					return p.pageTabs.Layout(gtx, p.theme, p.iconify)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(16))),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{
-						Axis:    layout.Horizontal,
-						Spacing: layout.SpaceBetween,
-					}.Layout(gtx,
-						layout.Flexed(0.56, func(gtx layout.Context) layout.Dimensions {
-							return p.layoutFlashcardList(gtx)
-						}),
-						layout.Rigid(bareutils.SpacerW(unit.Dp(16))),
-						layout.Flexed(0.44, func(gtx layout.Context) layout.Dimensions {
-							return p.layoutEditorPanel(gtx)
-						}),
-					)
+					switch p.pageTabs.Selected() {
+					case flashcardTabEditor:
+						return p.layoutEditorPanel(gtx)
+					default:
+						return p.layoutFlashcardList(gtx)
+					}
 				}),
 			)
 		})
@@ -527,6 +536,7 @@ func (p *Page) prepareNewFlashcard() {
 	p.wordEditor.SetText("")
 	p.meaningEditor.SetText("")
 	p.statusText = "Create a new card or pick one from the list to edit."
+	p.pageTabs.Active = flashcardTabEditor
 }
 
 func (p *Page) selectCard(cardID string) {
@@ -536,6 +546,7 @@ func (p *Page) selectCard(cardID string) {
 			p.wordEditor.SetText(card.Text)
 			p.meaningEditor.SetText(card.Meaning)
 			p.statusText = "Editing selected flashcard."
+			p.pageTabs.Active = flashcardTabEditor
 			return
 		}
 	}

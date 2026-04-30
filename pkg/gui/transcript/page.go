@@ -87,6 +87,8 @@ type Page struct {
 	lookupResults     []dictionary.Lookup
 	displayTranscript string
 	lastSyncedText    string
+	highlightCacheKey string
+	highlightCache    []flashcards.Match
 	popupFlashcard    *flashcards.Flashcard
 	popupAnchor       image.Rectangle
 	popupBounds       image.Rectangle
@@ -170,7 +172,11 @@ func (p *Page) SetStatus(status string) *Page {
 }
 
 func (p *Page) SetRawTranscript(raw string) *Page {
-	p.displayTranscript = limitTranscriptLines(sanitizeTranscriptForDisplay(raw), p.recentLineLimit)
+	next := limitTranscriptLines(sanitizeTranscriptForDisplay(raw), p.recentLineLimit)
+	if next != p.displayTranscript {
+		p.displayTranscript = next
+		p.invalidateHighlights()
+	}
 	return p
 }
 
@@ -178,6 +184,7 @@ func (p *Page) ClearTranscript() {
 	p.displayTranscript = ""
 	p.lookupResult = nil
 	p.lookupResults = nil
+	p.invalidateHighlights()
 	p.DismissPopup()
 	p.statusText = "Transcript view cleared; waiting for new dialogue."
 	p.lastSyncedText = ""
@@ -188,6 +195,7 @@ func (p *Page) SetFlashcards(cards []flashcards.Flashcard) *Page {
 	sort.Slice(p.flashcards, func(i, j int) bool {
 		return p.flashcards[i].UpdatedAt.After(p.flashcards[j].UpdatedAt)
 	})
+	p.invalidateHighlights()
 	return p
 }
 
@@ -279,31 +287,7 @@ func (p *Page) LayoutPage(gtx layout.Context) layout.Dimensions {
 		p.iconify = icons.NewIconify()
 	}
 	p.syncTranscriptEditor()
-	if p.shouldStackTranscriptPage(gtx) {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Min.Y = p.compactTranscriptMinHeight(gtx)
-				return p.layoutTranscriptPanel(gtx)
-			}),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return p.layoutFlashcardComposer(gtx)
-			}),
-		)
-	}
-
-	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return p.layoutTranscriptPanel(gtx)
-		}),
-		layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			width := p.transcriptComposerWidth(gtx)
-			gtx.Constraints.Min.X = width
-			gtx.Constraints.Max.X = width
-			return p.layoutFlashcardComposer(gtx)
-		}),
-	)
+	return p.layoutTranscriptPanel(gtx)
 }
 
 func (p *Page) LayoutPopupContent(gtx layout.Context) layout.Dimensions {
@@ -353,52 +337,71 @@ func (p *Page) LayoutPopupContent(gtx layout.Context) layout.Dimensions {
 
 func (p *Page) layoutTranscriptPanel(gtx layout.Context) layout.Dimensions {
 	return bareutils.Panel(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.LG), func(gtx layout.Context) layout.Dimensions {
-		return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			metaSpacing := unit.Dp(14)
-			if !p.gameRunning {
-				metaSpacing = 0
-			}
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.H5(p.theme.Gio(), util.FirstNonEmpty(p.activeGameName, "No game selected"))
-					lbl.Color = p.theme.Color.Text
-					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(4))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body1(p.theme.Gio(), util.FirstNonEmpty(p.logPath, "No transcript path resolved"))
-					lbl.Color = p.theme.Color.TextMuted
-					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body1(p.theme.Gio(), p.statusText)
-					lbl.Color = p.statusColor()
-					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return p.layoutTranscriptActions(gtx)
-				}),
-				layout.Rigid(bareutils.SpacerH(metaSpacing)),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return layout.Stack{}.Layout(gtx,
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					metaSpacing := unit.Dp(14)
 					if !p.gameRunning {
-						return layout.Dimensions{}
+						metaSpacing = 0
 					}
-					return p.layoutTranscriptMeta(gtx)
-				}),
-				layout.Rigid(bareutils.SpacerH(metaSpacing)),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
-						return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.H5(p.theme.Gio(), util.FirstNonEmpty(p.activeGameName, "No game selected"))
+							lbl.Color = p.theme.Color.Text
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(bareutils.SpacerH(unit.Dp(4))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body1(p.theme.Gio(), util.FirstNonEmpty(p.logPath, "No transcript path resolved"))
+							lbl.Color = p.theme.Color.TextMuted
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body1(p.theme.Gio(), p.statusText)
+							lbl.Color = p.statusColor()
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return p.layoutTranscriptActions(gtx)
+						}),
+						layout.Rigid(bareutils.SpacerH(metaSpacing)),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							if !p.gameRunning {
-								return p.layoutTranscriptIdleState(gtx)
+								return layout.Dimensions{}
 							}
-							return p.layoutTranscriptEditor(gtx)
-						})
-					})
-				}),
-			)
+							return p.layoutTranscriptMeta(gtx)
+						}),
+						layout.Rigid(bareutils.SpacerH(metaSpacing)),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+								return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									if !p.gameRunning {
+										return p.layoutTranscriptIdleState(gtx)
+									}
+									return p.layoutTranscriptEditor(gtx)
+								})
+							})
+						}),
+					)
+				})
+			}),
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutFlashcardComposerOverlay(gtx)
+			}),
+		)
+	})
+}
+
+func (p *Page) layoutFlashcardComposerOverlay(gtx layout.Context) layout.Dimensions {
+	inset := layout.Inset{Right: unit.Dp(18), Bottom: unit.Dp(18)}
+	width := p.transcriptComposerOverlayWidth(gtx)
+	return layout.SE.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return inset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.X = width
+			gtx.Constraints.Max.X = width
+			return p.layoutFlashcardComposer(gtx)
 		})
 	})
 }
@@ -494,13 +497,6 @@ func (p *Page) layoutTranscriptEditor(gtx layout.Context) layout.Dimensions {
 		return layout.Stack{}.Layout(gtx,
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 				return p.layoutTranscriptLabel(gtx, p.theme.Color.Text, &p.transcriptView)
-			}),
-			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				if !p.colorizeHighlights {
-					return layout.Dimensions{}
-				}
-				p.paintTranscriptHighlightText(gtx)
-				return layout.Dimensions{}
 			}),
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 				p.paintTranscriptHighlights(gtx)
@@ -687,6 +683,26 @@ func (p *Page) popupHeightGuess(card flashcards.Flashcard) unit.Dp {
 	return unit.Dp(height)
 }
 
+func (p *Page) shouldCollapseFlashcardComposer() bool {
+	if normalizeSelectionText(p.transcriptView.SelectedText()) != "" {
+		return false
+	}
+	if strings.TrimSpace(p.wordEditor.Text()) != "" {
+		return false
+	}
+	if strings.TrimSpace(p.meaningEditor.Text()) != "" {
+		return false
+	}
+	return len(p.lookupResults) == 0
+}
+
+func (p *Page) resetFlashcardComposer() {
+	p.wordEditor.SetText("")
+	p.meaningEditor.SetText("")
+	p.lookupResult = nil
+	p.lookupResults = nil
+}
+
 func (p *Page) layoutTranscriptIdleState(gtx layout.Context) layout.Dimensions {
 	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
@@ -712,6 +728,10 @@ func (p *Page) layoutTranscriptIdleState(gtx layout.Context) layout.Dimensions {
 }
 
 func (p *Page) layoutFlashcardComposer(gtx layout.Context) layout.Dimensions {
+	if p.shouldCollapseFlashcardComposer() {
+		return p.layoutFlashcardComposerHint(gtx)
+	}
+
 	word := material.Editor(p.theme.Gio(), &p.wordEditor, "Word or phrase")
 	word.Color = p.theme.Color.Text
 	word.HintColor = p.theme.Color.TextMuted
@@ -781,6 +801,26 @@ func (p *Page) layoutFlashcardComposer(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Top: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return p.layoutLookupResults(gtx)
 					})
+				}),
+			)
+		})
+	})
+}
+
+func (p *Page) layoutFlashcardComposerHint(gtx layout.Context) layout.Dimensions {
+	return bareutils.Panel(gtx, p.theme.Color.SurfaceAlt, unit.Dp(p.theme.Radius.LG), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.H6(p.theme.Gio(), "New Flashcard")
+					lbl.Color = p.theme.Color.Text
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(p.theme.Gio(), "Highlight transcript text to open the flashcard editor, or click a vocab match to inspect it.")
+					lbl.Color = p.theme.Color.TextMuted
+					return lbl.Layout(gtx)
 				}),
 			)
 		})
@@ -904,6 +944,7 @@ func (p *Page) addLookupFlashcardByKey(key string) {
 			return
 		}
 		_ = p.ReloadFlashcards()
+		p.resetFlashcardComposer()
 		return
 	}
 }
@@ -946,6 +987,7 @@ func (p *Page) addAllLookupFlashcards() {
 		return
 	}
 	_ = p.ReloadFlashcards()
+	p.resetFlashcardComposer()
 }
 
 func (p *Page) flashcardFromLookup(lookup dictionary.Lookup) flashcards.Flashcard {
@@ -1010,10 +1052,20 @@ func (p *Page) paintTranscriptHighlights(gtx layout.Context) {
 		clear(p.transcriptHighlightBounds)
 		return
 	}
-	colorMacro := op.Record(gtx.Ops)
-	paint.ColorOp{Color: transcriptHighlightColor(p.theme.Color.Primary)}.Add(gtx.Ops)
-	fill := colorMacro.Stop()
+	colorModeEnabled := p.colorizeHighlights && len(highlights) <= 160
+	var fill op.CallOp
+	var colorText op.CallOp
+	if colorModeEnabled {
+		colorMacro := op.Record(gtx.Ops)
+		p.layoutTranscriptLabel(gtx, p.theme.Color.Primary, nil)
+		colorText = colorMacro.Stop()
+	} else {
+		colorMacro := op.Record(gtx.Ops)
+		paint.ColorOp{Color: transcriptHighlightColor(p.theme.Color.Primary)}.Add(gtx.Ops)
+		fill = colorMacro.Stop()
+	}
 	regions := make([]widget.Region, 0, 8)
+	colorRects := make([]image.Rectangle, 0, len(highlights)*2)
 	validClicks := make(map[string]struct{}, len(highlights))
 	for _, match := range highlights {
 		validClicks[match.Key] = struct{}{}
@@ -1032,23 +1084,32 @@ func (p *Page) paintTranscriptHighlights(gtx layout.Context) {
 		if !bounds.Empty() {
 			p.transcriptHighlightBounds[match.Key] = bounds
 		}
-		if p.colorizeHighlights {
-			continue
-		}
 		for _, region := range regions {
-			stack := clip.Rect(region.Bounds).Push(gtx.Ops)
-			fill.Add(gtx.Ops)
-			paint.PaintOp{}.Add(gtx.Ops)
-			stack.Pop()
+			if colorModeEnabled {
+				colorRects = append(colorRects, region.Bounds)
+			} else {
+				stack := clip.Rect(region.Bounds).Push(gtx.Ops)
+				fill.Add(gtx.Ops)
+				paint.PaintOp{}.Add(gtx.Ops)
+				stack.Pop()
+			}
 
 			offset := op.Offset(image.Pt(region.Bounds.Min.X, region.Bounds.Min.Y)).Push(gtx.Ops)
-			gtx.Constraints.Min = region.Bounds.Size()
-			gtx.Constraints.Max = region.Bounds.Size()
-			p.transcriptHighlightClicks[match.Key].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			local := gtx
+			local.Constraints.Min = region.Bounds.Size()
+			local.Constraints.Max = region.Bounds.Size()
+			p.transcriptHighlightClicks[match.Key].Layout(local, func(gtx layout.Context) layout.Dimensions {
 				pointer.CursorPointer.Add(gtx.Ops)
 				return layout.Dimensions{Size: region.Bounds.Size()}
 			})
 			offset.Pop()
+		}
+	}
+	if colorModeEnabled && len(colorRects) > 0 {
+		for _, rect := range mergeHighlightRects(colorRects) {
+			stack := clip.Rect(rect).Push(gtx.Ops)
+			colorText.Add(gtx.Ops)
+			stack.Pop()
 		}
 	}
 	for key := range p.transcriptHighlightClicks {
@@ -1074,26 +1135,11 @@ func (p *Page) paintTranscriptHighlights(gtx layout.Context) {
 	}
 }
 
-func (p *Page) paintTranscriptHighlightText(gtx layout.Context) {
-	highlights := p.transcriptHighlights()
-	if len(highlights) == 0 || strings.TrimSpace(p.displayTranscript) == "" {
-		return
-	}
-	regions := make([]widget.Region, 0, 8)
-	macro := op.Record(gtx.Ops)
-	p.layoutTranscriptLabel(gtx, p.theme.Color.Primary, nil)
-	call := macro.Stop()
-	for _, match := range highlights {
-		regions = p.transcriptView.Regions(match.StartRune, match.EndRune, regions[:0])
-		for _, region := range regions {
-			stack := clip.Rect(region.Bounds).Push(gtx.Ops)
-			call.Add(gtx.Ops)
-			stack.Pop()
-		}
-	}
-}
-
 func (p *Page) transcriptHighlights() []flashcards.Match {
+	cacheKey := p.highlightCacheKeyValue()
+	if cacheKey == p.highlightCacheKey {
+		return p.highlightCache
+	}
 	seen := make(map[string]flashcards.Flashcard, len(p.flashcards))
 	words := make([]string, 0, len(p.flashcards))
 	for _, card := range p.flashcards {
@@ -1115,7 +1161,9 @@ func (p *Page) transcriptHighlights() []flashcards.Match {
 		matches[i].Card = seen[matches[i].Word]
 		matches[i].Key = fmt.Sprintf("%s-%d-%d", util.SanitizeName(matches[i].Card.ID), matches[i].StartRune, matches[i].EndRune)
 	}
-	return matches
+	p.highlightCacheKey = cacheKey
+	p.highlightCache = matches
+	return p.highlightCache
 }
 
 func (p *Page) openTranscriptHighlightPopup(key string) {
@@ -1169,13 +1217,17 @@ func (p *Page) transcriptComposerWidth(gtx layout.Context) int {
 	return gtx.Dp(unit.Dp(420))
 }
 
-func (p *Page) compactTranscriptMinHeight(gtx layout.Context) int {
-	maxHeight := gtx.Constraints.Max.Y
-	composerReserve := gtx.Dp(unit.Dp(400))
-	if maxHeight > composerReserve {
-		return maxHeight - composerReserve
+func (p *Page) transcriptComposerOverlayWidth(gtx layout.Context) int {
+	if p.shouldCollapseFlashcardComposer() {
+		if p.isCompactLayout(gtx) {
+			return gtx.Dp(unit.Dp(280))
+		}
+		return gtx.Dp(unit.Dp(320))
 	}
-	return gtx.Dp(unit.Dp(280))
+	if p.isCompactLayout(gtx) {
+		return gtx.Dp(unit.Dp(320))
+	}
+	return min(gtx.Dp(unit.Dp(420)), p.transcriptComposerWidth(gtx))
 }
 
 func (p *Page) transcriptLaunchButtonLabel() string {
@@ -1305,6 +1357,59 @@ func transcriptHighlightColor(base color.NRGBA) color.NRGBA {
 
 func transcriptPopupBorderColor(base color.NRGBA) color.NRGBA {
 	return color.NRGBA{R: base.R, G: base.G, B: base.B, A: 160}
+}
+
+func (p *Page) invalidateHighlights() {
+	p.highlightCacheKey = ""
+	p.highlightCache = nil
+}
+
+func (p *Page) highlightCacheKeyValue() string {
+	var b strings.Builder
+	b.Grow(len(p.displayTranscript) + len(p.flashcards)*24)
+	b.WriteString(p.displayTranscript)
+	b.WriteString("\x00")
+	for _, card := range p.flashcards {
+		b.WriteString(card.ID)
+		b.WriteString("\x1f")
+		b.WriteString(card.Text)
+		b.WriteString("\x1e")
+	}
+	return b.String()
+}
+
+func mergeHighlightRects(rects []image.Rectangle) []image.Rectangle {
+	if len(rects) <= 1 {
+		return rects
+	}
+	sort.Slice(rects, func(i, j int) bool {
+		if rects[i].Min.Y != rects[j].Min.Y {
+			return rects[i].Min.Y < rects[j].Min.Y
+		}
+		return rects[i].Min.X < rects[j].Min.X
+	})
+	merged := make([]image.Rectangle, 0, len(rects))
+	current := rects[0]
+	for _, rect := range rects[1:] {
+		if shouldMergeHighlightRect(current, rect) {
+			current = current.Union(rect)
+			continue
+		}
+		merged = append(merged, current)
+		current = rect
+	}
+	merged = append(merged, current)
+	return merged
+}
+
+func shouldMergeHighlightRect(a, b image.Rectangle) bool {
+	if a.Empty() || b.Empty() {
+		return false
+	}
+	if a.Min.Y > b.Max.Y || b.Min.Y > a.Max.Y {
+		return false
+	}
+	return b.Min.X <= a.Max.X+6
 }
 
 func playAudioFile(path string) error {
