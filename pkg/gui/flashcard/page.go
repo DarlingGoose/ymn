@@ -17,6 +17,7 @@ import (
 	"github.com/Seann-Moser/wgl/pkg/anki"
 	flashcards "github.com/Seann-Moser/wgl/pkg/flashcard"
 	"github.com/Seann-Moser/wgl/pkg/gui"
+	guitoast "github.com/Seann-Moser/wgl/pkg/gui/toast"
 	"github.com/Seann-Moser/wgl/pkg/util"
 )
 
@@ -35,9 +36,10 @@ type Page struct {
 	flashcardList widget.List
 	pageTabs      *bareui.Tabs
 
-	searchEditor  widget.Editor
-	wordEditor    widget.Editor
-	meaningEditor widget.Editor
+	searchEditor      widget.Editor
+	wordEditor        widget.Editor
+	meaningEditor     widget.Editor
+	hideReadingInAnki widget.Bool
 
 	saveButton   widget.Clickable
 	deleteButton widget.Clickable
@@ -54,8 +56,11 @@ type Page struct {
 	ankiURL        string
 	pushSync       bool
 	statusText     string
+	lastAutoWord   string
+	hideReadingSet bool
 
-	OnError func(title, body string)
+	OnError  func(title, body string)
+	OnNotify func(title, body string, kind guitoast.NotificationType)
 }
 
 func New(theme barethemes.Theme) *Page {
@@ -119,6 +124,10 @@ func (p *Page) Cards() []flashcards.Flashcard {
 }
 
 func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window) {
+	if p.hideReadingInAnki.Update(gtx) {
+		p.hideReadingSet = true
+	}
+	p.syncHideReadingDefault()
 	for p.saveButton.Clicked(gtx) {
 		p.saveCurrentCard()
 	}
@@ -136,6 +145,8 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 	for p.syncButton.Clicked(gtx) {
 		if err := p.SyncToAnki(); err != nil {
 			p.showError("Anki Sync Failed", err.Error())
+		} else {
+			p.showNotification("Anki Sync Complete", "Flashcards synced to Anki.", guitoast.NotificationTypeSuccess)
 		}
 	}
 	for cardID, click := range p.selectClicks {
@@ -327,6 +338,8 @@ func (p *Page) layoutEditorPanel(gtx layout.Context) layout.Dimensions {
 	meaning := material.Editor(p.theme.Gio(), &p.meaningEditor, "Meaning")
 	meaning.Color = p.theme.Color.Text
 	meaning.HintColor = p.theme.Color.TextMuted
+	//hideReadingCheck := material.CheckBox(p.theme.Gio(), &p.hideReadingInAnki, "Hide reading/furigana in Anki for this card")
+	//hideReadingCheck.Color = p.theme.Color.Text
 
 	newButton := bareui.Button{
 		Clickable: &p.newButton,
@@ -568,6 +581,9 @@ func (p *Page) prepareNewFlashcard() {
 	p.selectedFlashcardID = ""
 	p.wordEditor.SetText("")
 	p.meaningEditor.SetText("")
+	p.hideReadingInAnki.Value = false
+	p.lastAutoWord = ""
+	p.hideReadingSet = false
 	p.statusText = "Create a new card or pick one from the list to edit."
 	p.pageTabs.Active = flashcardTabEditor
 }
@@ -578,6 +594,8 @@ func (p *Page) selectCard(cardID string) {
 			p.selectedFlashcardID = card.ID
 			p.wordEditor.SetText(card.Text)
 			p.meaningEditor.SetText(card.Meaning)
+			p.lastAutoWord = card.Text
+			p.hideReadingSet = true
 			p.statusText = "Editing selected flashcard."
 			p.pageTabs.Active = flashcardTabEditor
 			return
@@ -698,4 +716,25 @@ func (p *Page) showError(title, body string) {
 	if p.OnError != nil {
 		p.OnError(title, body)
 	}
+}
+
+func (p *Page) showNotification(title, body string, kind guitoast.NotificationType) {
+	if p.OnNotify != nil {
+		p.OnNotify(title, body, kind)
+	}
+}
+
+func (p *Page) syncHideReadingDefault() {
+	if strings.TrimSpace(p.selectedFlashcardID) != "" {
+		return
+	}
+	word := strings.TrimSpace(p.wordEditor.Text())
+	if word == p.lastAutoWord {
+		return
+	}
+	p.lastAutoWord = word
+	if p.hideReadingSet {
+		return
+	}
+	p.hideReadingInAnki.Value = util.ContainsKanji(word)
 }

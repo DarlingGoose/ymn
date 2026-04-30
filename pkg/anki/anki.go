@@ -100,7 +100,7 @@ func (c *Client) AddNote(card flashcard.Flashcard) (int64, error) {
 				"Front":   html.EscapeString(card.Text),
 				"Back":    flashcardBackHTML(card, audioTag),
 				"Meaning": card.Meaning,
-				"Reading": card.Reading,
+				"Reading": card.AnkiReading(),
 				"Text":    card.Text,
 				"Audio":   audioTag,
 			},
@@ -129,8 +129,12 @@ func (c *Client) UpdateNote(card flashcard.Flashcard) error {
 		"note": map[string]any{
 			"id": card.AnkiNoteID,
 			"fields": map[string]string{
-				"Front": html.EscapeString(card.Text),
-				"Back":  flashcardBackHTML(card, audioTag),
+				"Front":   html.EscapeString(card.Text),
+				"Back":    flashcardBackHTML(card, audioTag),
+				"Meaning": card.Meaning,
+				"Reading": card.AnkiReading(),
+				"Text":    card.Text,
+				"Audio":   audioTag,
 			},
 		},
 	}, nil)
@@ -216,6 +220,7 @@ func (c *Client) ensureModel() error {
 				"Back": `
 {{FrontSide}}
 <hr>
+<div class="reading">{{Reading}}</div>
 <div class="meaning">{{Meaning}}</div>
 <div class="context">{{Context}}</div>
 <br><br>
@@ -323,8 +328,8 @@ func flashcardBackHTML(card flashcard.Flashcard, audioTag string) string {
 	if furigana := card.FlashcardFuriganaHTML(); strings.TrimSpace(furigana) != "" {
 		parts = append(parts, "<small>Furigana: "+furigana+"</small>")
 	}
-	if strings.TrimSpace(card.Reading) != "" {
-		parts = append(parts, "<small>Reading: "+html.EscapeString(card.Reading)+"</small>")
+	if reading := strings.TrimSpace(card.Reading); reading != "" {
+		parts = append(parts, "<small>Reading: "+html.EscapeString(reading)+"</small>")
 	}
 	if strings.TrimSpace(card.PronunciationText) != "" {
 		line := "<small>Pronunciation: " + html.EscapeString(card.PronunciationText)

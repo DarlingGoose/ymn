@@ -29,6 +29,7 @@ import (
 	guiflashcard "github.com/Seann-Moser/wgl/pkg/gui/flashcard"
 	guigame "github.com/Seann-Moser/wgl/pkg/gui/game"
 	guisettings "github.com/Seann-Moser/wgl/pkg/gui/settings"
+	guitoast "github.com/Seann-Moser/wgl/pkg/gui/toast"
 	guitranscript "github.com/Seann-Moser/wgl/pkg/gui/transcript"
 	"github.com/Seann-Moser/wgl/pkg/util"
 	"github.com/spf13/cobra"
@@ -105,6 +106,7 @@ type guiApp struct {
 	gameDropdown bareui.Dropdown
 	messageModal bareui.Modal
 	exitButton   widget.Clickable
+	toast        *guitoast.Toast
 
 	settingsPage   *guisettings.Settings
 	transcriptPage *guitranscript.Page
@@ -179,6 +181,7 @@ func newGUI(configs []gameconfig.GameConfig, selectedName string, printExisting 
 		gameOptionClicks: gameClicks,
 		activeGameName:   activeGame,
 		messageModal:     bareui.Modal{CloseOnScrim: true},
+		toast:            guitoast.New(),
 		settingsPage:     settingsPage,
 		transcriptPage:   guitranscript.New(theme).WithIcon(iconify),
 		flashcardPage:    guiflashcard.New(theme).WithIcon(iconify),
@@ -189,7 +192,9 @@ func newGUI(configs []gameconfig.GameConfig, selectedName string, printExisting 
 
 	pkggui.NewDropDownLayout(&app.gameDropdown, "mdi:controller-classic")
 	app.transcriptPage.OnError = app.showMessage
+	app.transcriptPage.OnNotify = app.showToast
 	app.flashcardPage.OnError = app.showMessage
+	app.flashcardPage.OnNotify = app.showToast
 	app.gamePage.OnError = app.showMessage
 	app.gamePage.OnSaved = func(cfg *gameconfig.GameConfig) {
 		g := cfg
@@ -324,6 +329,7 @@ func (g *guiApp) layout(gtx layout.Context, ctx context.Context, w *app.Window) 
 
 func (g *guiApp) handleEvents(gtx layout.Context, ctx context.Context, w *app.Window) {
 	g.settingsPage.HandleEvents(gtx, ctx, w)
+	g.toast.HandleEvents(gtx, ctx, w)
 	g.gameDropdown.Update(gtx)
 	for g.exitButton.Clicked(gtx) {
 		w.Perform(system.ActionClose)
@@ -479,10 +485,17 @@ func (g *guiApp) layoutMain(gtx layout.Context) layout.Dimensions {
 }
 
 func (g *guiApp) layoutOverlay(gtx layout.Context) layout.Dimensions {
-	if !g.messageModal.Open {
-		return layout.Dimensions{}
-	}
-	return g.messageModal.Layout(gtx, g.theme, util.FirstNonEmpty(g.messageTitle, "Message"), g.layoutModalContent)
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			return g.toast.Layout(gtx, g.theme, g.iconify)
+		}),
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			if !g.messageModal.Open {
+				return layout.Dimensions{}
+			}
+			return g.messageModal.Layout(gtx, g.theme, util.FirstNonEmpty(g.messageTitle, "Message"), g.layoutModalContent)
+		}),
+	)
 }
 
 func (g *guiApp) layoutModalContent(gtx layout.Context) layout.Dimensions {
@@ -517,7 +530,19 @@ func (g *guiApp) selectedGameLabel() string {
 func (g *guiApp) showMessage(title, body string) {
 	g.messageTitle = title
 	g.messageBody = body
-	g.messageModal.Open = true
+	g.toast.Queue(guitoast.Notification{
+		Title:   title,
+		Message: body,
+		Type:    guitoast.NotificationTypeError,
+	})
+}
+
+func (g *guiApp) showToast(title, body string, kind guitoast.NotificationType) {
+	g.toast.Queue(guitoast.Notification{
+		Title:   title,
+		Message: body,
+		Type:    kind,
+	})
 }
 
 func (g *guiApp) startWatching(ctx context.Context, gameName string, w *app.Window) {

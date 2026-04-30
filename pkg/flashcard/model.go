@@ -92,6 +92,14 @@ func (card *Flashcard) FlashcardFuriganaHTML() string {
 		"<rt>" + util.HtmlEscapedSingleLine(furigana) + "</rt></ruby>"
 }
 
+func (card *Flashcard) AnkiReading() string {
+	return strings.TrimSpace(card.Reading)
+}
+
+func (card *Flashcard) AnkiFuriganaHTML() string {
+	return card.FlashcardFuriganaHTML()
+}
+
 func (card *Flashcard) DuplicateKey() string {
 	return strings.ToLower(strings.Join([]string{
 		strings.TrimSpace(card.Text),

@@ -30,6 +30,7 @@ import (
 	flashcards "github.com/Seann-Moser/wgl/pkg/flashcard"
 	"github.com/Seann-Moser/wgl/pkg/game/gameconfig"
 	"github.com/Seann-Moser/wgl/pkg/gui"
+	guitoast "github.com/Seann-Moser/wgl/pkg/gui/toast"
 	"github.com/Seann-Moser/wgl/pkg/util"
 )
 
@@ -52,6 +53,7 @@ type Page struct {
 	lookupResultsList  widget.List
 	wordEditor         widget.Editor
 	meaningEditor      widget.Editor
+	hideReadingInAnki  widget.Bool
 	searchWordButton   widget.Clickable
 	playAudioButton    widget.Clickable
 	addAllLookupButton widget.Clickable
@@ -98,8 +100,11 @@ type Page struct {
 	popupWord         string
 	composerMinimized bool
 	composerLastUsed  time.Time
+	lastAutoWord      string
+	hideReadingSet    bool
 
-	OnError func(title, body string)
+	OnError  func(title, body string)
+	OnNotify func(title, body string, kind guitoast.NotificationType)
 }
 
 func New(theme barethemes.Theme) *Page {
@@ -234,12 +239,18 @@ func (p *Page) DismissPopup() {
 }
 
 func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window) {
+	if p.hideReadingInAnki.Update(gtx) {
+		p.hideReadingSet = true
+	}
+	p.syncHideReadingDefault()
 	for p.launchGameButton.Clicked(gtx) {
 		p.launchCurrentGameInBackground()
 	}
 	for p.syncAnkiButton.Clicked(gtx) {
 		if err := p.syncCurrentGameToAnki(); err != nil {
 			p.showError("Anki Sync Failed", err.Error())
+		} else {
+			p.showNotification("Anki Sync Complete", "Transcript flashcards synced to Anki.", guitoast.NotificationTypeSuccess)
 		}
 	}
 	for p.clearButton.Clicked(gtx) {
@@ -717,6 +728,9 @@ func (p *Page) shouldCollapseFlashcardComposer() bool {
 func (p *Page) resetFlashcardComposer() {
 	p.wordEditor.SetText("")
 	p.meaningEditor.SetText("")
+	p.hideReadingInAnki.Value = false
+	p.lastAutoWord = ""
+	p.hideReadingSet = false
 	p.lookupResult = nil
 	p.lookupResults = nil
 	p.composerMinimized = true
@@ -745,6 +759,18 @@ func (p *Page) composerHasActiveContent() bool {
 		return true
 	}
 	return len(p.lookupResults) > 0
+}
+
+func (p *Page) syncHideReadingDefault() {
+	word := strings.TrimSpace(p.wordEditor.Text())
+	if word == p.lastAutoWord {
+		return
+	}
+	p.lastAutoWord = word
+	if p.hideReadingSet {
+		return
+	}
+	p.hideReadingInAnki.Value = util.ContainsKanji(word)
 }
 
 func (p *Page) layoutTranscriptIdleState(gtx layout.Context) layout.Dimensions {
@@ -786,6 +812,8 @@ func (p *Page) layoutFlashcardComposer(gtx layout.Context) layout.Dimensions {
 	meaning := material.Editor(p.theme.Gio(), &p.meaningEditor, "Meaning")
 	meaning.Color = p.theme.Color.Text
 	meaning.HintColor = p.theme.Color.TextMuted
+	//hideReadingCheck := material.CheckBox(p.theme.Gio(), &p.hideReadingInAnki, "Hide reading/furigana in Anki for this card")
+	//hideReadingCheck.Color = p.theme.Color.Text
 
 	searchButton := bareui.Button{Clickable: &p.searchWordButton, Text: "Lookup", Prefix: "mdi:book-search-outline", Variant: bareui.ButtonSecondary}
 	playButton := bareui.Button{Clickable: &p.playAudioButton, Text: "mdi:play-circle-outline", Icon: true, Prefix: "mdi:play-circle-outline", Variant: bareui.ButtonSecondary}
@@ -1002,8 +1030,12 @@ func (p *Page) lookupCurrentWord() {
 	}
 	p.lookupResults = lookups
 	p.lookupResult = &lookups[0]
-	p.wordEditor.SetText(util.FirstNonEmpty(lookups[0].Query, lookups[0].Key, lookups[0].Headword))
+	word = util.FirstNonEmpty(lookups[0].Query, lookups[0].Key, lookups[0].Headword)
+	p.wordEditor.SetText(word)
 	p.meaningEditor.SetText(lookups[0].Meaning)
+	p.hideReadingSet = false
+	p.lastAutoWord = ""
+	p.syncHideReadingDefault()
 }
 
 func (p *Page) playCurrentLookupAudio() {
@@ -1385,6 +1417,12 @@ func (p *Page) lookupResultPlayClickable(key string) *widget.Clickable {
 func (p *Page) showError(title, body string) {
 	if p.OnError != nil {
 		p.OnError(title, body)
+	}
+}
+
+func (p *Page) showNotification(title, body string, kind guitoast.NotificationType) {
+	if p.OnNotify != nil {
+		p.OnNotify(title, body, kind)
 	}
 }
 
