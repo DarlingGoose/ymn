@@ -113,7 +113,7 @@ func UpdateFlashcard(card Flashcard) error {
 	return fmt.Errorf("flashcard %q not found", card.ID)
 }
 
-func deleteFlashcard(gameName, cardID string) error {
+func DeleteFlashcard(gameName, cardID string) error {
 	gameName = strings.TrimSpace(gameName)
 	cardID = strings.TrimSpace(cardID)
 	if gameName == "" {

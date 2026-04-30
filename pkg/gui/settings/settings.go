@@ -31,6 +31,10 @@ type Settings struct {
 	paletteDropdown     bareui.Dropdown
 	textSizeDropdown    bareui.Dropdown
 	recentLinesDropdown bareui.Dropdown
+	modeOptions         []gui.DropdownOption
+	paletteOptions      []gui.DropdownOption
+	textSizeOptions     []gui.DropdownOption
+	recentLineOptions   []gui.DropdownOption
 
 	selectedModeName        string
 	selectedPaletteName     string
@@ -60,19 +64,22 @@ func defaultSettings() Settings {
 		themeMode:               barethemes.ModeDark,
 		themePalette:            barethemes.PaletteOcean,
 		transcriptTextSize:      unit.Sp(16),
+		ThemeMode:               "Dark",
+		ThemePalette:            "Ocean",
+		TranscriptTextSize:      "Medium",
+		VisibleTranscript:       "All Lines",
 	}
 }
 func LoadSettings() (*Settings, error) {
-	var settings Settings
+	settings := defaultSettings()
 	data, err := os.ReadFile(guiSettingsPath())
 	if err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
 			return nil, fmt.Errorf("decode gui settings: %w", err)
 		}
-	} else {
-		settings = defaultSettings()
 	}
 	settings.applyLayout()
+	settings.applySavedSettings()
 	settings.applyTheme()
 	return &settings, nil
 }
@@ -86,8 +93,8 @@ func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.
 		g.persistSettings()
 	}
 
-	for _, op := range gui.NewModeOptions() {
-		opt := &op
+	for i := range g.modeOptions {
+		opt := &g.modeOptions[i]
 		for opt.Clickable.Clicked(gtx) {
 			g.themeMode = opt.Mode
 			g.selectedModeName = opt.Label
@@ -97,8 +104,8 @@ func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.
 		}
 	}
 
-	for _, op := range gui.NewPaletteOptions() {
-		opt := &op
+	for i := range g.paletteOptions {
+		opt := &g.paletteOptions[i]
 		for opt.Clickable.Clicked(gtx) {
 			g.themePalette = opt.Palette
 			g.selectedPaletteName = opt.Label
@@ -108,8 +115,8 @@ func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.
 		}
 	}
 
-	for _, op := range gui.NewTranscriptSizeOptions() {
-		opt := &op
+	for i := range g.textSizeOptions {
+		opt := &g.textSizeOptions[i]
 		for opt.Clickable.Clicked(gtx) {
 			g.transcriptTextSize = opt.TextSize
 			g.selectedTextSizeName = opt.Label
@@ -118,8 +125,8 @@ func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.
 		}
 	}
 
-	for _, op := range gui.NewRecentLineOptions() {
-		opt := &op
+	for i := range g.recentLineOptions {
+		opt := &g.recentLineOptions[i]
 		for opt.Clickable.Clicked(gtx) {
 			g.recentLineLimit.Swap(int64(opt.RecentLineLimit))
 			g.selectedRecentLinesName = opt.Label
@@ -134,6 +141,10 @@ func (g *Settings) applyLayout() {
 	gui.NewDropDownLayout(&g.paletteDropdown, "mdi:palette-outline")
 	gui.NewDropDownLayout(&g.textSizeDropdown, "mdi:format-size")
 	gui.NewDropDownLayout(&g.recentLinesDropdown, "mdi:sort-clock-descending-outline")
+	g.modeOptions = gui.NewModeOptions()
+	g.paletteOptions = gui.NewPaletteOptions()
+	g.textSizeOptions = gui.NewTranscriptSizeOptions()
+	g.recentLineOptions = gui.NewRecentLineOptions()
 }
 
 func (g *Settings) WithIcon(icon *icons.Iconify) *Settings {
@@ -165,46 +176,39 @@ func (g *Settings) LayoutPage(gtx layout.Context) layout.Dimensions {
 					return g.layoutSettingRow(gtx, "Mode", g.selectedModeName,
 						func(gtx layout.Context) layout.Dimensions {
 							return g.modeDropdown.Layout(gtx, g.theme, g.iconify, g.selectedModeName,
-								gui.LayoutOptionMenu(gtx,
-									gui.NewModeOptions(),
-									g.selectedModeName,
-									g.theme,
-									g.iconify,
-								),
+								func(gtx layout.Context) layout.Dimensions {
+									return gui.LayoutOptionMenu(gtx,
+										g.modeOptions,
+										g.selectedModeName,
+										g.theme,
+										g.iconify,
+									)
+								},
 							)
 						})
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return g.layoutSettingRow(gtx, "Palette", g.selectedPaletteName, func(gtx layout.Context) layout.Dimensions {
-						return g.paletteDropdown.Layout(gtx, g.theme, g.iconify, g.selectedPaletteName, gui.LayoutOptionMenu(gtx,
-							gui.NewPaletteOptions(),
-							g.selectedPaletteName,
-							g.theme,
-							g.iconify,
-						))
+						return g.paletteDropdown.Layout(gtx, g.theme, g.iconify, g.selectedPaletteName, func(gtx layout.Context) layout.Dimensions {
+							return gui.LayoutOptionMenu(gtx, g.paletteOptions, g.selectedPaletteName, g.theme, g.iconify)
+						})
 					})
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return g.layoutSettingRow(gtx, "Transcript Size", g.selectedTextSizeName, func(gtx layout.Context) layout.Dimensions {
-						return g.textSizeDropdown.Layout(gtx, g.theme, g.iconify, g.selectedTextSizeName, gui.LayoutOptionMenu(gtx,
-							gui.NewTranscriptSizeOptions(),
-							g.selectedTextSizeName,
-							g.theme,
-							g.iconify,
-						))
+						return g.textSizeDropdown.Layout(gtx, g.theme, g.iconify, g.selectedTextSizeName, func(gtx layout.Context) layout.Dimensions {
+							return gui.LayoutOptionMenu(gtx, g.textSizeOptions, g.selectedTextSizeName, g.theme, g.iconify)
+						})
 					})
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return g.layoutSettingRow(gtx, "Visible Transcript", g.selectedRecentLinesName, func(gtx layout.Context) layout.Dimensions {
-						return g.recentLinesDropdown.Layout(gtx, g.theme, g.iconify, g.selectedRecentLinesName, gui.LayoutOptionMenu(gtx,
-							gui.NewRecentLineOptions(),
-							g.selectedRecentLinesName,
-							g.theme,
-							g.iconify,
-						))
+						return g.recentLinesDropdown.Layout(gtx, g.theme, g.iconify, g.selectedRecentLinesName, func(gtx layout.Context) layout.Dimensions {
+							return gui.LayoutOptionMenu(gtx, g.recentLineOptions, g.selectedRecentLinesName, g.theme, g.iconify)
+						})
 					})
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
@@ -271,44 +275,63 @@ func (g *Settings) persistSettings() {
 }
 
 func (g *Settings) applySavedSettings() {
-	settings, err := LoadSettings()
-	if err != nil {
-		return
-	}
-
-	for _, opt := range gui.NewModeOptions() {
-		if opt.Label == settings.ThemeMode {
+	for _, opt := range g.modeOptions {
+		if opt.Label == g.ThemeMode {
 			g.themeMode = opt.Mode
 			g.selectedModeName = opt.Label
 			break
 		}
 	}
 
-	for _, opt := range gui.NewPaletteOptions() {
-		if opt.Label == settings.ThemePalette {
+	for _, opt := range g.paletteOptions {
+		if opt.Label == g.ThemePalette {
 			g.themePalette = opt.Palette
 			g.selectedPaletteName = opt.Label
 			break
 		}
 	}
 
-	for _, opt := range gui.NewTranscriptSizeOptions() {
-		if opt.Label == settings.TranscriptTextSize {
+	for _, opt := range g.textSizeOptions {
+		if opt.Label == g.TranscriptTextSize {
 			g.transcriptTextSize = opt.TextSize
 			g.selectedTextSizeName = opt.Label
 			break
 		}
 	}
 
-	for _, opt := range gui.NewRecentLineOptions() {
-		if opt.Label == settings.VisibleTranscript {
+	for _, opt := range g.recentLineOptions {
+		if opt.Label == g.VisibleTranscript {
 			g.recentLineLimit.Swap(int64(opt.RecentLineLimit))
 			g.selectedRecentLinesName = opt.Label
 			break
 		}
 	}
 
-	g.autoPlayHighlightAudio.Value = settings.AutoPlayHighlightPopupAudio
+	g.autoPlayHighlightAudio.Value = g.AutoPlayHighlightPopupAudio
+}
+
+func (g *Settings) Theme() barethemes.Theme {
+	return g.theme
+}
+
+func (g *Settings) TranscriptSize() unit.Sp {
+	return g.transcriptTextSize
+}
+
+func (g *Settings) TranscriptSizeLabel() string {
+	return g.selectedTextSizeName
+}
+
+func (g *Settings) RecentLineLimit() int {
+	return int(g.recentLineLimit.Load())
+}
+
+func (g *Settings) RecentLineLabel() string {
+	return g.selectedRecentLinesName
+}
+
+func (g *Settings) AutoPlayHighlightAudio() bool {
+	return g.autoPlayHighlightAudio.Value
 }
 
 func (g *Settings) saveSettings() error {

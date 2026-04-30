@@ -18,7 +18,7 @@ import (
 	"github.com/Seann-Moser/wgl/pkg/util"
 )
 
-const defaultAnkiConnectURL = "http://127.0.0.1:8765"
+const DefaultAnkiConnectURL = "http://127.0.0.1:8765"
 
 type Client struct {
 	baseURL string
@@ -28,7 +28,7 @@ type Client struct {
 func New(baseURL string) *Client {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
-		baseURL = defaultAnkiConnectURL
+		baseURL = DefaultAnkiConnectURL
 	}
 	client := &Client{
 		baseURL: baseURL,
