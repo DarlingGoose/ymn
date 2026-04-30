@@ -27,6 +27,7 @@ import (
 	"github.com/Seann-Moser/wgl/pkg/game/gameconfig"
 	pkggui "github.com/Seann-Moser/wgl/pkg/gui"
 	guiflashcard "github.com/Seann-Moser/wgl/pkg/gui/flashcard"
+	guigame "github.com/Seann-Moser/wgl/pkg/gui/game"
 	guisettings "github.com/Seann-Moser/wgl/pkg/gui/settings"
 	guitranscript "github.com/Seann-Moser/wgl/pkg/gui/transcript"
 	"github.com/Seann-Moser/wgl/pkg/util"
@@ -36,6 +37,7 @@ import (
 const (
 	guiPageTranscript = "transcript"
 	guiPageFlashcards = "flashcards"
+	guiPageGame       = "game"
 	guiPageSettings   = "settings"
 
 	guiCompactWidth             = 1080
@@ -105,10 +107,12 @@ type guiApp struct {
 	pageTabs     *bareui.Tabs
 	gameDropdown bareui.Dropdown
 	messageModal bareui.Modal
+	exitButton   widget.Clickable
 
 	settingsPage   *guisettings.Settings
 	transcriptPage *guitranscript.Page
 	flashcardPage  *guiflashcard.Page
+	gamePage       *guigame.Page
 
 	theme barethemes.Theme
 
@@ -153,6 +157,7 @@ func newGUI(configs []gameconfig.GameConfig, selectedName string, printExisting 
 	pageTabs := bareui.NewTabs([]bareui.TabItem{
 		{ID: guiPageTranscript, Label: "Transcript", Icon: "mdi:text-box-outline"},
 		{ID: guiPageFlashcards, Label: "Flashcards", Icon: "mdi:cards-outline"},
+		{ID: guiPageGame, Label: "Game", Icon: "mdi:puzzle-outline"},
 		{ID: guiPageSettings, Label: "Settings", Icon: "mdi:cog-outline"},
 	}, guiPageTranscript)
 	pageTabs.Axis = layout.Vertical
@@ -174,6 +179,7 @@ func newGUI(configs []gameconfig.GameConfig, selectedName string, printExisting 
 		settingsPage:     settingsPage,
 		transcriptPage:   guitranscript.New(theme).WithIcon(iconify),
 		flashcardPage:    guiflashcard.New(theme).WithIcon(iconify),
+		gamePage:         guigame.New(theme).WithIcon(iconify),
 		theme:            theme,
 		statusText:       "Select a game to start watching its transcript.",
 	}
@@ -181,6 +187,23 @@ func newGUI(configs []gameconfig.GameConfig, selectedName string, printExisting 
 	pkggui.NewDropDownLayout(&app.gameDropdown, "mdi:controller-classic")
 	app.transcriptPage.OnError = app.showMessage
 	app.flashcardPage.OnError = app.showMessage
+	app.gamePage.OnError = app.showMessage
+	app.gamePage.OnSaved = func(cfg *gameconfig.GameConfig) {
+		g := cfg
+		if g == nil {
+			return
+		}
+		app.reloadConfigs()
+		app.currentConfig = g
+		app.activeGameName = g.Name
+	}
+	app.gamePage.OnSelected = func(cfg *gameconfig.GameConfig) {
+		if cfg == nil {
+			return
+		}
+		app.currentConfig = cfg
+		app.activeGameName = cfg.Name
+	}
 	app.syncPages()
 	return app, nil
 }
@@ -277,6 +300,9 @@ func (g *guiApp) layout(gtx layout.Context, ctx context.Context, w *app.Window) 
 func (g *guiApp) handleEvents(gtx layout.Context, ctx context.Context, w *app.Window) {
 	g.settingsPage.HandleEvents(gtx, ctx, w)
 	g.gameDropdown.Update(gtx)
+	for g.exitButton.Clicked(gtx) {
+		w.Perform(system.ActionClose)
+	}
 
 	for name, click := range g.gameOptionClicks {
 		for click.Clicked(gtx) {
@@ -287,6 +313,7 @@ func (g *guiApp) handleEvents(gtx layout.Context, ctx context.Context, w *app.Wi
 
 	g.transcriptPage.HandleEvents(gtx, ctx, w)
 	g.flashcardPage.HandleEvents(gtx, ctx, w)
+	g.gamePage.HandleEvents(gtx, ctx, w)
 
 	switch g.pageTabs.Selected() {
 	case guiPageTranscript:
@@ -335,6 +362,11 @@ func (g *guiApp) syncPages() {
 		WithTheme(g.theme).
 		SetContext(g.activeGameName, guiAnkiURL).
 		SetPushSync(guiAnkiPushSync)
+
+	g.gamePage.
+		WithTheme(g.theme).
+		SetConfigs(g.configs).
+		SetCurrentConfig(g.currentConfig)
 }
 
 func (g *guiApp) layoutLeftSidebar(gtx layout.Context) layout.Dimensions {
@@ -360,6 +392,18 @@ func (g *guiApp) layoutLeftSidebar(gtx layout.Context) layout.Dimensions {
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return g.pageTabs.Layout(gtx, g.theme, g.iconify)
 				}),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return layout.Dimensions{}
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					btn := bareui.Button{
+						Clickable: &g.exitButton,
+						Text:      "Exit",
+						Prefix:    "mdi:exit-to-app",
+						Variant:   bareui.ButtonGhost,
+					}
+					return btn.Layout(gtx, g.theme, g.iconify)
+				}),
 			)
 		})
 	})
@@ -376,6 +420,16 @@ func (g *guiApp) layoutTopbar(gtx layout.Context) layout.Dimensions {
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return g.pageTabs.Layout(gtx, g.theme, g.iconify)
 				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					btn := bareui.Button{
+						Clickable: &g.exitButton,
+						Text:      "Exit",
+						Prefix:    "mdi:exit-to-app",
+						Variant:   bareui.ButtonGhost,
+					}
+					return btn.Layout(gtx, g.theme, g.iconify)
+				}),
 			)
 		})
 	})
@@ -385,6 +439,8 @@ func (g *guiApp) layoutMain(gtx layout.Context) layout.Dimensions {
 	switch g.pageTabs.Selected() {
 	case guiPageFlashcards:
 		return g.flashcardPage.LayoutPage(gtx)
+	case guiPageGame:
+		return g.gamePage.LayoutPage(gtx)
 	case guiPageSettings:
 		return g.settingsPage.LayoutPage(gtx)
 	default:

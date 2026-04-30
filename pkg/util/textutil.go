@@ -2,6 +2,7 @@ package util
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -31,7 +32,10 @@ func DeriveGameName(inputPath, executablePath string, inputWasDir bool) string {
 	if inputWasDir {
 		return filepath.Base(inputPath)
 	}
-	return strings.TrimSuffix(filepath.Base(executablePath), filepath.Ext(executablePath))
+	name := strings.TrimSuffix(filepath.Base(executablePath), filepath.Ext(executablePath))
+	name = regexp.MustCompile(`(([vV](er){0,1}(sion){0,1})[0-9\.\-]+)`).ReplaceAllString(name, "")
+	name = regexp.MustCompile(`_-`).ReplaceAllString(name, " ")
+	return name
 }
 
 func SanitizeName(name string) string {

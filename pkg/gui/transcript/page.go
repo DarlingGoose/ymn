@@ -79,6 +79,7 @@ type Page struct {
 	lookupResult      *dictionary.Lookup
 	lookupResults     []dictionary.Lookup
 	displayTranscript string
+	lastSyncedText    string
 	popupFlashcard    *flashcards.Flashcard
 
 	OnError func(title, body string)
@@ -153,7 +154,6 @@ func (p *Page) SetStatus(status string) *Page {
 
 func (p *Page) SetRawTranscript(raw string) *Page {
 	p.displayTranscript = limitTranscriptLines(sanitizeTranscriptForDisplay(raw), p.recentLineLimit)
-	p.syncTranscriptEditor()
 	return p
 }
 
@@ -163,7 +163,7 @@ func (p *Page) ClearTranscript() {
 	p.lookupResults = nil
 	p.popupFlashcard = nil
 	p.statusText = "Transcript view cleared; waiting for new dialogue."
-	p.syncTranscriptEditor()
+	p.lastSyncedText = ""
 }
 
 func (p *Page) SetFlashcards(cards []flashcards.Flashcard) *Page {
@@ -784,9 +784,16 @@ func (p *Page) launchCurrentGameInBackground() {
 }
 
 func (p *Page) syncTranscriptEditor() {
+	if p.lastSyncedText == p.displayTranscript {
+		return
+	}
+	wasEmpty := p.lastSyncedText == ""
 	p.transcriptView.SetText(p.displayTranscript)
-	runes := len([]rune(p.displayTranscript))
-	p.transcriptView.SetCaret(runes, runes)
+	if wasEmpty {
+		runes := len([]rune(p.displayTranscript))
+		p.transcriptView.SetCaret(runes, runes)
+	}
+	p.lastSyncedText = p.displayTranscript
 }
 
 func (p *Page) paintTranscriptHighlights(gtx layout.Context) {
@@ -1005,16 +1012,7 @@ func findFlashcardSourceLine(transcriptText, word string) string {
 func sanitizeTranscriptForDisplay(text string) string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
-	lines := strings.Split(text, "\n")
-	filtered := make([]string, 0, len(lines))
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		filtered = append(filtered, trimmed)
-	}
-	return strings.Join(filtered, "\n")
+	return text
 }
 
 func limitTranscriptLines(text string, recentLineLimit int) string {

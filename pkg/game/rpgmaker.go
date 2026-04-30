@@ -119,6 +119,50 @@ func resolveRPGMakerProjectRoot(inputPath string) (string, string, error) {
 	return "", "", fmt.Errorf("could not find an RPG Maker MV/MZ project under %s", resolvedPath)
 }
 
+func (h *RPGMakerHook) InspectHook(inputPath string) (TextHookStatus, error) {
+	projectRoot, engine, err := resolveRPGMakerProjectRoot(inputPath)
+	if err != nil {
+		return TextHookStatus{Message: err.Error()}, nil
+	}
+
+	compatibility, err := inspectRPGMakerTextHookCompatibility(projectRoot)
+	if err != nil {
+		return TextHookStatus{}, err
+	}
+
+	pluginPath := filepath.Join(projectRoot, "js", "plugins", rpgMakerClipboardPlugin+".js")
+	pluginsConfigPath := filepath.Join(projectRoot, "js", "plugins.js")
+	configs, err := readRPGMakerPluginConfigs(pluginsConfigPath)
+	if err != nil {
+		return TextHookStatus{}, err
+	}
+
+	enabled := false
+	for _, cfg := range configs {
+		if strings.TrimSpace(cfg.Name) == rpgMakerClipboardPlugin && cfg.Status {
+			enabled = true
+			break
+		}
+	}
+
+	installed := enabled && util.IsExistingFile(pluginPath)
+	message := "Text hook plugin is not installed."
+	if installed {
+		message = "Text hook plugin is installed and enabled."
+	}
+
+	return TextHookStatus{
+		Supported:         true,
+		Installed:         installed,
+		Engine:            engine,
+		ProjectRoot:       projectRoot,
+		PluginPath:        pluginPath,
+		PluginsConfigPath: pluginsConfigPath,
+		Compatibility:     compatibility,
+		Message:           message,
+	}, nil
+}
+
 func detectRPGMakerEngine(projectRoot string) (string, bool) {
 	jsDir := filepath.Join(projectRoot, "js")
 	pluginsDir := filepath.Join(jsDir, "plugins")
@@ -138,14 +182,14 @@ func detectRPGMakerEngine(projectRoot string) (string, bool) {
 	}
 }
 
-func inspectRPGMakerTextHookCompatibility(projectRoot string) (textHookCompatibilityReport, error) {
+func inspectRPGMakerTextHookCompatibility(projectRoot string) (TextHookCompatibilityReport, error) {
 	pluginsConfigPath := filepath.Join(projectRoot, "js", "plugins.js")
 	configs, err := readRPGMakerPluginConfigs(pluginsConfigPath)
 	if err != nil {
-		return textHookCompatibilityReport{}, err
+		return TextHookCompatibilityReport{}, err
 	}
 
-	report := textHookCompatibilityReport{
+	report := TextHookCompatibilityReport{
 		ProjectRoot: filepath.Clean(projectRoot),
 		RiskLevel:   "safe",
 	}
@@ -185,7 +229,7 @@ func inspectRPGMakerTextHookCompatibility(projectRoot string) (textHookCompatibi
 				addFinding("warn", fmt.Sprintf("enabled plugin %q is listed in plugins.js but its file was not found", pluginName))
 				continue
 			}
-			return textHookCompatibilityReport{}, fmt.Errorf("read plugin %s: %w", pluginPath, err)
+			return TextHookCompatibilityReport{}, fmt.Errorf("read plugin %s: %w", pluginPath, err)
 		}
 
 		if signature := detectMessageHookSignature(string(data)); signature != "" {

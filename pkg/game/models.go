@@ -4,24 +4,24 @@ type TextHookInstallResult struct {
 	Engine            string
 	PluginPath        string
 	PluginsConfigPath string
-	Compatibility     textHookCompatibilityReport
+	Compatibility     TextHookCompatibilityReport
 }
 
-type textHookCompatibilityReport struct {
+type TextHookCompatibilityReport struct {
 	ProjectRoot    string
 	RiskLevel      string
 	EnabledPlugins []string
 	Findings       []string
 }
 
-type textHookStatus struct {
+type TextHookStatus struct {
 	Supported         bool
 	Installed         bool
 	Engine            string
 	ProjectRoot       string
 	PluginPath        string
 	PluginsConfigPath string
-	Compatibility     textHookCompatibilityReport
+	Compatibility     TextHookCompatibilityReport
 	Message           string
 }
 
