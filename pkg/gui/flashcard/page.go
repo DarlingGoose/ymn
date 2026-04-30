@@ -24,6 +24,7 @@ var _ gui.EvenHandler = &Page{}
 
 const (
 	flashcardTabDeck   = "deck"
+	flashcardTabInfo   = "info"
 	flashcardTabEditor = "editor"
 )
 
@@ -64,6 +65,7 @@ func New(theme barethemes.Theme) *Page {
 		statusText: "Create a new card or pick one from the list to edit.",
 		pageTabs: bareui.NewTabs([]bareui.TabItem{
 			{ID: flashcardTabDeck, Label: "Deck", Icon: "mdi:view-list-outline"},
+			{ID: flashcardTabInfo, Label: "Info", Icon: "mdi:information-outline"},
 			{ID: flashcardTabEditor, Label: "Editor", Icon: "mdi:pencil-box-outline"},
 		}, flashcardTabDeck),
 		selectClicks: make(map[string]*widget.Clickable),
@@ -178,6 +180,8 @@ func (p *Page) LayoutPage(gtx layout.Context) layout.Dimensions {
 				layout.Rigid(bareutils.SpacerH(unit.Dp(16))),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					switch p.pageTabs.Selected() {
+					case flashcardTabInfo:
+						return p.layoutInfoPanel(gtx)
 					case flashcardTabEditor:
 						return p.layoutEditorPanel(gtx)
 					default:
@@ -342,19 +346,6 @@ func (p *Page) layoutEditorPanel(gtx layout.Context) layout.Dimensions {
 		Prefix:    "mdi:delete-outline",
 		Variant:   bareui.ButtonGhost,
 	}
-	reloadButton := bareui.Button{
-		Clickable: &p.reloadButton,
-		Text:      "Reload Cards",
-		Prefix:    "mdi:refresh",
-		Variant:   bareui.ButtonSecondary,
-	}
-	syncButton := bareui.Button{
-		Clickable: &p.syncButton,
-		Text:      "Sync Anki",
-		Prefix:    "mdi:cloud-upload-outline",
-		Variant:   bareui.ButtonPrimary,
-	}
-
 	return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -392,15 +383,57 @@ func (p *Page) layoutEditorPanel(gtx layout.Context) layout.Dimensions {
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return saveButton.Layout(gtx, p.theme, p.iconify)
 				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(p.theme.Gio(), "Use the Info tab for deck status, reload, and Anki sync.")
+					lbl.Color = p.theme.Color.TextMuted
+					return lbl.Layout(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (p *Page) layoutInfoPanel(gtx layout.Context) layout.Dimensions {
+	reloadButton := bareui.Button{
+		Clickable: &p.reloadButton,
+		Text:      "Reload Cards",
+		Prefix:    "mdi:refresh",
+		Variant:   bareui.ButtonSecondary,
+	}
+	syncButton := bareui.Button{
+		Clickable: &p.syncButton,
+		Text:      "Sync Anki",
+		Prefix:    "mdi:cloud-upload-outline",
+		Variant:   bareui.ButtonPrimary,
+	}
+	return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.H6(p.theme.Gio(), "Deck Info")
+					lbl.Color = p.theme.Color.Text
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(p.theme.Gio(), p.editorStatus())
+					lbl.Color = p.theme.Color.TextMuted
+					return lbl.Layout(gtx)
+				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return p.layoutInfoRow(gtx, "Deck", util.FirstNonEmpty(util.AnkiDeckName(p.activeGameName), "No deck selected"), nil)
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return p.layoutInfoRow(gtx, "AnkiConnect URL", util.FirstNonEmpty(p.ankiURL, "Not configured"), nil)
+					return p.layoutInfoRow(gtx, "Cards", fmt.Sprintf("%d saved", len(p.cards)), nil)
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return p.layoutInfoRow(gtx, "AnkiConnect URL", util.FirstNonEmpty(p.ankiURL, "Not configured"), nil)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(16))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return reloadButton.Layout(gtx, p.theme, p.iconify)
 				}),

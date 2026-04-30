@@ -438,23 +438,27 @@ func (g *guiApp) layoutLeftSidebar(gtx layout.Context) layout.Dimensions {
 func (g *guiApp) layoutTopbar(gtx layout.Context) layout.Dimensions {
 	return bareutils.Panel(gtx, g.theme.Color.Surface, unit.Dp(g.theme.Radius.LG), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			exitButton := bareui.Button{
+				Clickable: &g.exitButton,
+				Text:      "Exit",
+				Prefix:    "mdi:exit-to-app",
+				Variant:   bareui.ButtonGhost,
+			}
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return g.gameDropdown.Layout(gtx, g.theme, g.iconify, g.selectedGameLabel(), g.layoutGameDropdownMenu)
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							return g.gameDropdown.Layout(gtx, g.theme, g.iconify, g.selectedGameLabel(), g.layoutGameDropdownMenu)
+						}),
+						layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return exitButton.Layout(gtx, g.theme, g.iconify)
+						}),
+					)
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return g.pageTabs.Layout(gtx, g.theme, g.iconify)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					btn := bareui.Button{
-						Clickable: &g.exitButton,
-						Text:      "Exit",
-						Prefix:    "mdi:exit-to-app",
-						Variant:   bareui.ButtonGhost,
-					}
-					return btn.Layout(gtx, g.theme, g.iconify)
 				}),
 			)
 		})

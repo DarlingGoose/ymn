@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"gioui.org/app"
 	"gioui.org/io/pointer"
@@ -61,6 +62,7 @@ type Page struct {
 	transcriptPopupAudioButton widget.Clickable
 	transcriptPopupCloseButton widget.Clickable
 	popupDismissClicks         [4]widget.Clickable
+	composerToggleButton       widget.Clickable
 
 	transcriptHighlightClicks map[string]*widget.Clickable
 	transcriptHighlightBounds map[string]image.Rectangle
@@ -94,6 +96,8 @@ type Page struct {
 	popupBounds       image.Rectangle
 	popupMatchKey     string
 	popupWord         string
+	composerMinimized bool
+	composerLastUsed  time.Time
 
 	OnError func(title, body string)
 }
@@ -106,6 +110,8 @@ func New(theme barethemes.Theme) *Page {
 		selectedTextSizeName:      "Medium",
 		selectedRecentLines:       "All Lines",
 		transcriptTextSize:        unit.Sp(16),
+		composerMinimized:         true,
+		composerLastUsed:          time.Now(),
 		transcriptHighlightClicks: make(map[string]*widget.Clickable),
 		transcriptHighlightBounds: make(map[string]image.Rectangle),
 		lookupResultAddClicks:     make(map[string]*widget.Clickable),
@@ -275,6 +281,10 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 	for p.transcriptPopupCloseButton.Clicked(gtx) {
 		p.DismissPopup()
 	}
+	for p.composerToggleButton.Clicked(gtx) {
+		p.composerMinimized = !p.composerMinimized
+		p.composerLastUsed = time.Now()
+	}
 	for i := range p.popupDismissClicks {
 		for p.popupDismissClicks[i].Clicked(gtx) {
 			p.DismissPopup()
@@ -339,7 +349,12 @@ func (p *Page) layoutTranscriptPanel(gtx layout.Context) layout.Dimensions {
 	return bareutils.Panel(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.LG), func(gtx layout.Context) layout.Dimensions {
 		return layout.Stack{}.Layout(gtx,
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-				return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{
+					Top:    unit.Dp(10),
+					Left:   unit.Dp(20),
+					Right:  unit.Dp(20),
+					Bottom: unit.Dp(10),
+				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					metaSpacing := unit.Dp(14)
 					if !p.gameRunning {
 						metaSpacing = 0
@@ -351,29 +366,29 @@ func (p *Page) layoutTranscriptPanel(gtx layout.Context) layout.Dimensions {
 							return lbl.Layout(gtx)
 						}),
 						layout.Rigid(bareutils.SpacerH(unit.Dp(4))),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body1(p.theme.Gio(), util.FirstNonEmpty(p.logPath, "No transcript path resolved"))
-							lbl.Color = p.theme.Color.TextMuted
-							return lbl.Layout(gtx)
-						}),
-						layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+						//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						//	lbl := material.Body1(p.theme.Gio(), util.FirstNonEmpty(p.logPath, "No transcript path resolved"))
+						//	lbl.Color = p.theme.Color.TextMuted
+						//	return lbl.Layout(gtx)
+						//}),
+						//layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							lbl := material.Body1(p.theme.Gio(), p.statusText)
 							lbl.Color = p.statusColor()
 							return lbl.Layout(gtx)
 						}),
-						layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+						layout.Rigid(bareutils.SpacerH(unit.Dp(4))),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return p.layoutTranscriptActions(gtx)
 						}),
 						layout.Rigid(bareutils.SpacerH(metaSpacing)),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							if !p.gameRunning {
-								return layout.Dimensions{}
-							}
-							return p.layoutTranscriptMeta(gtx)
-						}),
-						layout.Rigid(bareutils.SpacerH(metaSpacing)),
+						//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						//	if !p.gameRunning {
+						//		return layout.Dimensions{}
+						//	}
+						//	return p.layoutTranscriptMeta(gtx)
+						//}),
+						//layout.Rigid(bareutils.SpacerH(metaSpacing)),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
 								return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -458,11 +473,11 @@ func (p *Page) layoutTranscriptActions(gtx layout.Context) layout.Dimensions {
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return syncButton.Layout(gtx, p.theme, p.iconify)
 					}),
+					layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return clearButton.Layout(gtx, p.theme, p.iconify)
+					}),
 				)
-			}),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return clearButton.Layout(gtx, p.theme, p.iconify)
 			}),
 			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -701,6 +716,32 @@ func (p *Page) resetFlashcardComposer() {
 	p.meaningEditor.SetText("")
 	p.lookupResult = nil
 	p.lookupResults = nil
+	p.composerMinimized = true
+	p.composerLastUsed = time.Now()
+}
+
+func (p *Page) syncComposerMinimized() {
+	if p.composerHasActiveContent() {
+		p.composerMinimized = false
+		p.composerLastUsed = time.Now()
+		return
+	}
+	if p.shouldCollapseFlashcardComposer() && time.Since(p.composerLastUsed) > 4*time.Second {
+		p.composerMinimized = true
+	}
+}
+
+func (p *Page) composerHasActiveContent() bool {
+	if normalizeSelectionText(p.transcriptView.SelectedText()) != "" {
+		return true
+	}
+	if strings.TrimSpace(p.wordEditor.Text()) != "" {
+		return true
+	}
+	if strings.TrimSpace(p.meaningEditor.Text()) != "" {
+		return true
+	}
+	return len(p.lookupResults) > 0
 }
 
 func (p *Page) layoutTranscriptIdleState(gtx layout.Context) layout.Dimensions {
@@ -728,6 +769,10 @@ func (p *Page) layoutTranscriptIdleState(gtx layout.Context) layout.Dimensions {
 }
 
 func (p *Page) layoutFlashcardComposer(gtx layout.Context) layout.Dimensions {
+	p.syncComposerMinimized()
+	if p.composerMinimized {
+		return p.layoutFlashcardComposerMini(gtx)
+	}
 	if p.shouldCollapseFlashcardComposer() {
 		return p.layoutFlashcardComposerHint(gtx)
 	}
@@ -742,6 +787,7 @@ func (p *Page) layoutFlashcardComposer(gtx layout.Context) layout.Dimensions {
 	searchButton := bareui.Button{Clickable: &p.searchWordButton, Text: "Lookup", Prefix: "mdi:book-search-outline", Variant: bareui.ButtonSecondary}
 	playButton := bareui.Button{Clickable: &p.playAudioButton, Text: "mdi:play-circle-outline", Icon: true, Prefix: "mdi:play-circle-outline", Variant: bareui.ButtonSecondary}
 	addAllButton := bareui.Button{Clickable: &p.addAllLookupButton, Text: "Add All Matches", Prefix: "mdi:playlist-plus", Variant: bareui.ButtonSecondary}
+	minimizeButton := bareui.Button{Clickable: &p.composerToggleButton, Text: "mdi:chevron-down", Icon: true, Prefix: "mdi:chevron-down", Variant: bareui.ButtonGhost}
 
 	selected := normalizeSelectionText(p.transcriptView.SelectedText())
 	if selected == "" {
@@ -752,9 +798,16 @@ func (p *Page) layoutFlashcardComposer(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.H6(p.theme.Gio(), "New Flashcard")
-					lbl.Color = p.theme.Color.Text
-					return lbl.Layout(gtx)
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.H6(p.theme.Gio(), "New Flashcard")
+							lbl.Color = p.theme.Color.Text
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return minimizeButton.Layout(gtx, p.theme, p.iconify)
+						}),
+					)
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -808,19 +861,50 @@ func (p *Page) layoutFlashcardComposer(gtx layout.Context) layout.Dimensions {
 }
 
 func (p *Page) layoutFlashcardComposerHint(gtx layout.Context) layout.Dimensions {
+	expandButton := bareui.Button{Clickable: &p.composerToggleButton, Text: "mdi:chevron-up", Icon: true, Prefix: "mdi:chevron-up", Variant: bareui.ButtonGhost}
 	return bareutils.Panel(gtx, p.theme.Color.SurfaceAlt, unit.Dp(p.theme.Radius.LG), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.H6(p.theme.Gio(), "New Flashcard")
-					lbl.Color = p.theme.Color.Text
-					return lbl.Layout(gtx)
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.H6(p.theme.Gio(), "New Flashcard")
+							lbl.Color = p.theme.Color.Text
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return expandButton.Layout(gtx, p.theme, p.iconify)
+						}),
+					)
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body1(p.theme.Gio(), "Highlight transcript text to open the flashcard editor, or click a vocab match to inspect it.")
 					lbl.Color = p.theme.Color.TextMuted
 					return lbl.Layout(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (p *Page) layoutFlashcardComposerMini(gtx layout.Context) layout.Dimensions {
+	expandButton := bareui.Button{Clickable: &p.composerToggleButton, Text: "mdi:chevron-up", Icon: true, Prefix: "mdi:chevron-up", Variant: bareui.ButtonGhost}
+	return bareutils.Panel(gtx, p.theme.Color.SurfaceAlt, unit.Dp(p.theme.Radius.LG), func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{
+			Top:    unit.Dp(10),
+			Bottom: unit.Dp(0),
+			Left:   unit.Dp(14),
+			Right:  unit.Dp(10),
+		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.H6(p.theme.Gio(), "New Flashcard")
+					lbl.Color = p.theme.Color.Text
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return expandButton.Layout(gtx, p.theme, p.iconify)
 				}),
 			)
 		})
