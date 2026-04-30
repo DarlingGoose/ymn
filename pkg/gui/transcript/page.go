@@ -401,6 +401,7 @@ func (p *Page) layoutTranscriptPanel(gtx layout.Context) layout.Dimensions {
 						//}),
 						//layout.Rigid(bareutils.SpacerH(metaSpacing)),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							gtx.Constraints.Min = gtx.Constraints.Max
 							return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
 								return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 									if !p.gameRunning {

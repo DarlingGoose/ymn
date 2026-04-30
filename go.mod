@@ -7,6 +7,8 @@ require (
 	github.com/Seann-Moser/bare v0.0.4
 	github.com/Seann-Moser/jpndict v0.0.2
 	github.com/charmbracelet/bubbletea v1.3.10
+	github.com/ikawaha/kagome-dict/ipa v1.2.6
+	github.com/ikawaha/kagome/v2 v2.11.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/text v0.36.0
 )
@@ -23,6 +25,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/go-text/typesetting v0.3.0 // indirect
+	github.com/ikawaha/kagome-dict v1.1.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
