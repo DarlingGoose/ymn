@@ -391,7 +391,7 @@ func (p *Page) layoutTranscriptPanel(gtx layout.Context) layout.Dimensions {
 						//layout.Rigid(bareutils.SpacerH(metaSpacing)),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
-								return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 									if !p.gameRunning {
 										return p.layoutTranscriptIdleState(gtx)
 									}
@@ -403,6 +403,9 @@ func (p *Page) layoutTranscriptPanel(gtx layout.Context) layout.Dimensions {
 				})
 			}),
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				if !p.gameRunning {
+					return layout.Dimensions{}
+				}
 				return p.layoutFlashcardComposerOverlay(gtx)
 			}),
 		)
@@ -1510,6 +1513,7 @@ func playAudioFile(path string) error {
 		}
 		cmd = exec.Command("open", path)
 	case "windows":
+
 		cmd = exec.Command("cmd", "/c", "start", "", path)
 	default:
 		for _, candidate := range [][]string{
