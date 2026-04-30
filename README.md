@@ -5,3 +5,9 @@ todo:
 
 - maybe set a min height/width for the window? 
 - add option to add cards to anki without the reading/furigana just the kanji if applicable
+
+```
+makepkg -si
+namcap PKGBUILD
+namcap *.pkg.tar.zst
+```

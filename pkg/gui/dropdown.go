@@ -90,10 +90,11 @@ func NewPaletteOptions() []DropdownOption {
 
 func NewTranscriptSizeOptions() []DropdownOption {
 	return []DropdownOption{
-		//	{Label: "Small", Icon: "mdi:format-font-size-decrease", TextSize: unit.Sp(13), Clickable: new(widget.Clickable)},
+		{Label: "Small", Icon: "mdi:format-font-size-decrease", TextSize: unit.Sp(13), Clickable: new(widget.Clickable)},
 		{Label: "Medium", Icon: "mdi:format-size", TextSize: unit.Sp(16), Clickable: new(widget.Clickable)},
 		{Label: "Large", Icon: "mdi:format-font-size-increase", TextSize: unit.Sp(20), Clickable: new(widget.Clickable)},
 		{Label: "XL", Icon: "mdi:format-letter-case", TextSize: unit.Sp(24), Clickable: new(widget.Clickable)},
+		{Label: "XXL", Icon: "mdi:format-letter-case", TextSize: unit.Sp(32), Clickable: new(widget.Clickable)},
 	}
 }
 

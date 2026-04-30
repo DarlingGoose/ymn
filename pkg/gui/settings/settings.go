@@ -61,16 +61,16 @@ type Settings struct {
 func defaultSettings() Settings {
 	return Settings{
 		selectedModeName:        "Dark",
-		selectedPaletteName:     "Ocean",
+		selectedPaletteName:     "Sunset",
 		selectedTextSizeName:    "Medium",
-		selectedRecentLinesName: "All Lines",
+		selectedRecentLinesName: "Last 200 Lines",
 		themeMode:               barethemes.ModeDark,
 		themePalette:            barethemes.PaletteOcean,
 		transcriptTextSize:      unit.Sp(16),
 		ThemeMode:               "Dark",
-		ThemePalette:            "Ocean",
+		ThemePalette:            "Sunset",
 		TranscriptTextSize:      "Medium",
-		VisibleTranscript:       "All Lines",
+		VisibleTranscript:       "Last 200 Lines",
 	}
 }
 func LoadSettings() (*Settings, error) {

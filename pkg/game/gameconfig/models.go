@@ -60,6 +60,19 @@ type GameConfig struct {
 	CreatedAt     time.Time          `json:"created_at"`
 	RuntimeInfo   RuntimeStatus      `json:"runtime_info"`
 	Verification  VerificationStatus `json:"verification"`
+
+	Locale        string `json:"locale,omitempty"`
+	StageToPrefix bool   `json:"stage_to_prefix,omitempty"`
+	StagedPath    string `json:"staged_path,omitempty"`
+}
+
+func (c *GameConfig) driveCPath() string {
+	switch c.Runner {
+	case RunnerProton:
+		return filepath.Join(c.PrefixPath, "pfx", "drive_c")
+	default:
+		return filepath.Join(c.PrefixPath, "drive_c")
+	}
 }
 
 func (c *GameConfig) Launch() error {
@@ -138,8 +151,7 @@ func (c *GameConfig) launchCommand() (*exec.Cmd, error) {
 func (c *GameConfig) wineCommand() *exec.Cmd {
 	wine := util.FirstNonEmpty(c.RunnerPath, c.RuntimeInfo.WinePath, "wine")
 
-	exe := c.executablePath()
-
+	exe := c.windowsExecutablePath()
 	cmd := exec.Command(wine, exe)
 	cmd.Dir = c.workingDir()
 	cmd.Env = c.baseEnv()
@@ -161,7 +173,7 @@ func (c *GameConfig) protonCommand() (*exec.Cmd, error) {
 		return nil, errors.New("proton path is required")
 	}
 
-	exe := c.executablePath()
+	exe := c.windowsExecutablePath()
 
 	prefix := c.PrefixPath
 	if strings.TrimSpace(prefix) == "" {
@@ -274,12 +286,59 @@ func (c *GameConfig) prefixOrGameDir() string {
 }
 
 func (c *GameConfig) baseEnv() []string {
-	env := os.Environ()
+	env := cleanWineEnv(os.Environ())
 
-	// Helpful defaults for games launched outside Steam.
 	env = append(env,
 		"WINEDLLOVERRIDES=winemenubuilder.exe=d",
 	)
 
+	if strings.TrimSpace(c.Locale) != "" {
+		env = append(env,
+			"LANG="+c.Locale,
+			"LC_ALL="+c.Locale,
+		)
+	}
+
 	return env
+}
+func (c *GameConfig) windowsExecutablePath() string {
+	exe := c.executablePath()
+
+	if strings.TrimSpace(c.PrefixPath) == "" {
+		return exe
+	}
+
+	driveC := c.driveCPath()
+
+	rel, err := filepath.Rel(driveC, exe)
+	if err != nil {
+		return exe
+	}
+
+	if strings.HasPrefix(rel, "..") {
+		return exe
+	}
+
+	return `C:\` + strings.ReplaceAll(filepath.ToSlash(rel), "/", `\`)
+}
+
+func cleanWineEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+
+	for _, e := range env {
+		switch {
+		case strings.HasPrefix(e, "WINEARCH="):
+			continue
+		case strings.HasPrefix(e, "WINEPREFIX="):
+			continue
+		case strings.HasPrefix(e, "STEAM_COMPAT_DATA_PATH="):
+			continue
+		case strings.HasPrefix(e, "STEAM_COMPAT_CLIENT_INSTALL_PATH="):
+			continue
+		}
+
+		out = append(out, e)
+	}
+
+	return out
 }

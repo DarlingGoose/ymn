@@ -180,6 +180,7 @@ func BuildGameConfig(
 	requestedIconPath string,
 	requestedImagePath string,
 ) (GameConfig, error) {
+
 	runtimeStatus, err := CheckInstallations()
 	if err != nil {
 		return GameConfig{}, err
@@ -217,7 +218,7 @@ func BuildGameConfig(
 		return GameConfig{}, errors.New("steam app id is required when a game is marked as requiring steam")
 	}
 
-	return GameConfig{
+	cfg := GameConfig{
 		Name:          gameName,
 		GamePath:      resolvedPath,
 		Executable:    executablePath,
@@ -238,41 +239,65 @@ func BuildGameConfig(
 			AvailableProton:    runtimeStatus.AvailableProton,
 			SelectedProtonPath: runtimeStatus.SelectedProtonPath,
 		},
-	}, nil
-}
+	}
+	profile := detectCompatibilityProfile(resolvedPath)
 
-func resolveExecutable(resolvedPath string, info os.FileInfo) (string, string, error) {
-	if !info.IsDir() {
-		if !util.IsExeFile(resolvedPath) {
-			return "", "", fmt.Errorf("path must point to a directory or .exe file: %s", resolvedPath)
-		}
-		return resolvedPath, filepath.Dir(resolvedPath), nil
+	if profile.Locale != "" {
+		cfg.Locale = profile.Locale
 	}
 
-	var candidates []string
-	err := filepath.Walk(resolvedPath, func(path string, fileInfo os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	if profile.StageToPrefix {
+		cfg.StageToPrefix = true
+
+		fmt.Fprintf(os.Stderr,
+			"note: compatibility profile detected: %s; staging game into Wine prefix\n",
+			profile.Reason,
+		)
+
+		if err := os.MkdirAll(cfg.PrefixPath, 0o755); err != nil {
+			return GameConfig{}, fmt.Errorf("create prefix: %w", err)
 		}
-		if fileInfo == nil || fileInfo.IsDir() {
-			return nil
+
+		if err := stageGameIntoPrefix(&cfg); err != nil {
+			return GameConfig{}, err
 		}
-		if !util.IsExeFile(path) {
-			return nil
+	}
+	scan := scanInstallerArtifacts(resolvedPath)
+
+	autoUseInstaller := shouldRunInstaller(info, scan, executablePath, resolvedPath)
+
+	if autoUseInstaller {
+		installer, ok := scan.BestInstaller()
+		if !ok {
+			return GameConfig{}, errors.New("installer artifacts detected, but no usable installer was found")
 		}
-		candidates = append(candidates, path)
-		return nil
-	})
-	if err != nil {
-		return "", "", fmt.Errorf("scan directory for executables: %w", err)
+
+		if err := os.MkdirAll(cfg.PrefixPath, 0o755); err != nil {
+			return GameConfig{}, fmt.Errorf("create prefix: %w", err)
+		}
+
+		fmt.Fprintf(os.Stderr, "running installer: %s\n", installer.Path)
+
+		if err := RunInstaller(cfg, installer); err != nil {
+			return GameConfig{}, fmt.Errorf("run installer: %w", err)
+		}
+
+		installedExe, err := findInstalledExecutable(cfg.PrefixPath)
+		if err != nil {
+			return GameConfig{}, err
+		}
+
+		cfg.Executable = installedExe
+		cfg.WorkingDir = filepath.Dir(installedExe)
+		cfg.GamePath = cfg.PrefixPath
+	} else if info.IsDir() && len(scan.Installers) > 0 {
+		fmt.Fprintf(os.Stderr,
+			"note: installer artifacts were detected, but selected source executable looks valid: %s\n",
+			executablePath,
+		)
 	}
 
-	if len(candidates) == 0 {
-		return "", "", fmt.Errorf("no .exe files found in %s", resolvedPath)
-	}
-
-	sort.Strings(candidates)
-	return candidates[0], filepath.Dir(candidates[0]), nil
+	return cfg, nil
 }
 
 func resolveGameAssets(searchRoot, requestedIconPath, requestedImagePath string) (string, string, error) {

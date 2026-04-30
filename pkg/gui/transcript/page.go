@@ -39,6 +39,7 @@ const (
 	compactWidth          = 1080
 	transcriptStackWidth  = 1240
 	transcriptMediumWidth = 1480
+	transcriptDockedWidth = 1320
 
 	composerFocusFlashcards        = "flashcards"
 	composerFocusSentenceStructure = "sentence_structure"
@@ -77,6 +78,8 @@ type Page struct {
 	transcriptHighlightBounds map[string]image.Rectangle
 	lookupResultAddClicks     map[string]*widget.Clickable
 	lookupResultPlayClicks    map[string]*widget.Clickable
+	structureTokenAddClicks   map[string]*widget.Clickable
+	structureTokenPlayClicks  map[string]*widget.Clickable
 
 	activeGameName         string
 	logPath                string
@@ -133,6 +136,8 @@ func New(theme barethemes.Theme) *Page {
 		transcriptHighlightBounds: make(map[string]image.Rectangle),
 		lookupResultAddClicks:     make(map[string]*widget.Clickable),
 		lookupResultPlayClicks:    make(map[string]*widget.Clickable),
+		structureTokenAddClicks:   make(map[string]*widget.Clickable),
+		structureTokenPlayClicks:  make(map[string]*widget.Clickable),
 	}
 	p.wordEditor.SingleLine = true
 	p.meaningEditor.SingleLine = false
@@ -288,6 +293,16 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 			p.playLookupAudioByKey(key)
 		}
 	}
+	for key, click := range p.structureTokenAddClicks {
+		for click.Clicked(gtx) {
+			p.addStructureTokenFlashcard(key)
+		}
+	}
+	for key, click := range p.structureTokenPlayClicks {
+		for click.Clicked(gtx) {
+			p.playStructureTokenAudio(key)
+		}
+	}
 	for key, click := range p.transcriptHighlightClicks {
 		for click.Clicked(gtx) {
 			p.openTranscriptHighlightPopup(key)
@@ -414,26 +429,50 @@ func (p *Page) layoutTranscriptPanel(gtx layout.Context) layout.Dimensions {
 						//}),
 						//layout.Rigid(bareutils.SpacerH(metaSpacing)),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							gtx.Constraints.Min = gtx.Constraints.Max
-							return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
-								return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									if !p.gameRunning {
-										return p.layoutTranscriptIdleState(gtx)
-									}
-									return p.layoutTranscriptEditor(gtx)
-								})
-							})
+							return p.layoutTranscriptWorkspace(gtx)
 						}),
 					)
 				})
 			}),
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				if !p.gameRunning {
+				if !p.gameRunning || p.shouldDockTranscriptComposer(gtx) {
 					return layout.Dimensions{}
 				}
 				return p.layoutFlashcardComposerOverlay(gtx)
 			}),
 		)
+	})
+}
+
+func (p *Page) layoutTranscriptWorkspace(gtx layout.Context) layout.Dimensions {
+	if !p.gameRunning || !p.shouldDockTranscriptComposer(gtx) {
+		return p.layoutTranscriptBodyPanel(gtx)
+	}
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min = gtx.Constraints.Max
+			return p.layoutTranscriptBodyPanel(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(14))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			width := p.transcriptComposerWidth(gtx)
+			gtx.Constraints.Min.X = width
+			gtx.Constraints.Max.X = width
+			gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+			return p.layoutFlashcardComposerDocked(gtx)
+		}),
+	)
+}
+
+func (p *Page) layoutTranscriptBodyPanel(gtx layout.Context) layout.Dimensions {
+	gtx.Constraints.Min = gtx.Constraints.Max
+	return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			if !p.gameRunning {
+				return p.layoutTranscriptIdleState(gtx)
+			}
+			return p.layoutTranscriptEditor(gtx)
+		})
 	})
 }
 
@@ -826,20 +865,12 @@ func (p *Page) layoutFlashcardComposer(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return p.layoutComposerFocusTabs(gtx)
-						}),
-						layout.Rigid(bareutils.SpacerW(unit.Dp(6))),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return minimizeButton.Layout(gtx, p.theme, p.iconify)
-						}),
-					)
+					return p.layoutComposerHeader(gtx, &minimizeButton)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					switch p.composerFocus {
 					case composerFocusSentenceStructure:
-						return p.layoutSentenceStructurePanel(gtx)
+						return p.layoutSentenceStructurePanel(gtx, false)
 					default:
 						return p.layoutFlashcardComposerForm(gtx)
 					}
@@ -847,6 +878,46 @@ func (p *Page) layoutFlashcardComposer(gtx layout.Context) layout.Dimensions {
 			)
 		})
 	})
+}
+
+func (p *Page) layoutFlashcardComposerDocked(gtx layout.Context) layout.Dimensions {
+	return bareutils.Panel(gtx, p.theme.Color.SurfaceAlt, unit.Dp(p.theme.Radius.LG), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return p.layoutComposerHeader(gtx, nil)
+				}),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min = gtx.Constraints.Max
+					switch p.composerFocus {
+					case composerFocusSentenceStructure:
+						return p.layoutSentenceStructurePanel(gtx, true)
+					default:
+						return p.layoutFlashcardComposerForm(gtx)
+					}
+				}),
+			)
+		})
+	})
+}
+
+func (p *Page) layoutComposerHeader(gtx layout.Context, action *bareui.Button) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return layout.Dimensions{}
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.layoutComposerFocusTabs(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if action == nil {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Left: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return action.Layout(gtx, p.theme, p.iconify)
+			})
+		}),
+	)
 }
 
 func (p *Page) layoutFlashcardComposerForm(gtx layout.Context) layout.Dimensions {
@@ -924,9 +995,11 @@ func (p *Page) layoutFlashcardComposerForm(gtx layout.Context) layout.Dimensions
 	)
 }
 
-func (p *Page) layoutSentenceStructurePanel(gtx layout.Context) layout.Dimensions {
+func (p *Page) layoutSentenceStructurePanel(gtx layout.Context, fillHeight bool) layout.Dimensions {
 	analysis, errText := p.currentStructureAnalysis()
-	if p.isCompactLayout(gtx) {
+	if fillHeight {
+		gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+	} else if p.isCompactLayout(gtx) {
 		gtx.Constraints.Max.Y = min(gtx.Constraints.Max.Y, gtx.Dp(unit.Dp(320)))
 	} else {
 		gtx.Constraints.Max.Y = min(gtx.Constraints.Max.Y, gtx.Dp(unit.Dp(380)))
@@ -1014,6 +1087,19 @@ func (p *Page) layoutParticleSummary(gtx layout.Context, particles []japanese.To
 }
 
 func (p *Page) layoutStructureToken(gtx layout.Context, token japanese.Token) layout.Dimensions {
+	existingCard, hasExistingCard := p.structureTokenFlashcard(token)
+	addButton := bareui.Button{
+		Clickable: p.structureTokenAddClickable(structureTokenKey(token)),
+		Text:      "mdi:plus-circle-outline",
+		Icon:      true,
+		Variant:   bareui.ButtonPrimary,
+	}
+	playButton := bareui.Button{
+		Clickable: p.structureTokenPlayClickable(structureTokenKey(token)),
+		Text:      "mdi:play-circle-outline",
+		Icon:      true,
+		Variant:   bareui.ButtonSecondary,
+	}
 	return bareutils.Panel(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -1029,6 +1115,22 @@ func (p *Page) layoutStructureToken(gtx layout.Context, token japanese.Token) la
 							lbl.Color = p.theme.Color.Primary
 							return lbl.Layout(gtx)
 						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if hasExistingCard {
+								if strings.TrimSpace(existingCard.AudioPath) == "" {
+									return layout.Dimensions{}
+								}
+								return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return playButton.Layout(gtx, p.theme, p.iconify)
+								})
+							}
+							if !canCreateStructureFlashcard(token) {
+								return layout.Dimensions{}
+							}
+							return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return addButton.Layout(gtx, p.theme, p.iconify)
+							})
+						}),
 					)
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
@@ -1036,6 +1138,16 @@ func (p *Page) layoutStructureToken(gtx layout.Context, token japanese.Token) la
 					lbl := material.Body1(p.theme.Gio(), tokenDetailText(token))
 					lbl.Color = p.theme.Color.TextMuted
 					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if !hasExistingCard || strings.TrimSpace(existingCard.Meaning) == "" {
+						return layout.Dimensions{}
+					}
+					return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body1(p.theme.Gio(), existingCard.Meaning)
+						lbl.Color = p.theme.Color.Text
+						return lbl.Layout(gtx)
+					})
 				}),
 			)
 		})
@@ -1062,6 +1174,113 @@ func (p *Page) currentStructureAnalysis() (japanese.Analysis, string) {
 		p.structureCacheErr = err.Error()
 	}
 	return p.structureCache, p.structureCacheErr
+}
+
+func (p *Page) addStructureTokenFlashcard(key string) {
+	if strings.TrimSpace(p.activeGameName) == "" {
+		p.showError("Create Flashcard Failed", "Select a game before creating flashcards.")
+		return
+	}
+	analysis, errText := p.currentStructureAnalysis()
+	if errText != "" {
+		p.showError("Create Flashcard Failed", errText)
+		return
+	}
+	for _, token := range analysis.Tokens {
+		if structureTokenKey(token) != key {
+			continue
+		}
+		word := structureFlashcardWord(token)
+		if word == "" {
+			p.showError("Create Flashcard Failed", "This structure component cannot be turned into a flashcard.")
+			return
+		}
+		lookups, err := dictionary.LookupWords(word)
+		if err != nil {
+			p.showError("Create Flashcard Failed", err.Error())
+			return
+		}
+		if len(lookups) == 0 {
+			p.showError("Create Flashcard Failed", "No dictionary matches were found for "+word+".")
+			return
+		}
+		card := p.flashcardFromLookup(lookups[0])
+		card.SourceLine = analysis.Sentence
+		if err := flashcards.AddFlashcard(card); err != nil {
+			p.showError("Create Flashcard Failed", err.Error())
+			return
+		}
+		_ = p.ReloadFlashcards()
+		p.showNotification("Flashcard Created", word+" was added from sentence structure.", guitoast.NotificationTypeSuccess)
+		return
+	}
+}
+
+func (p *Page) structureTokenAddClickable(key string) *widget.Clickable {
+	if p.structureTokenAddClicks == nil {
+		p.structureTokenAddClicks = make(map[string]*widget.Clickable)
+	}
+	if p.structureTokenAddClicks[key] == nil {
+		p.structureTokenAddClicks[key] = new(widget.Clickable)
+	}
+	return p.structureTokenAddClicks[key]
+}
+
+func (p *Page) playStructureTokenAudio(key string) {
+	tokenCard, ok := p.structureTokenFlashcardByKey(key)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(tokenCard.AudioPath) == "" {
+		p.showError("Audio Playback Failed", "No audio is available for this flashcard.")
+		return
+	}
+	if err := playAudioFile(tokenCard.AudioPath); err != nil {
+		p.showError("Audio Playback Failed", err.Error())
+	}
+}
+
+func (p *Page) structureTokenPlayClickable(key string) *widget.Clickable {
+	if p.structureTokenPlayClicks == nil {
+		p.structureTokenPlayClicks = make(map[string]*widget.Clickable)
+	}
+	if p.structureTokenPlayClicks[key] == nil {
+		p.structureTokenPlayClicks[key] = new(widget.Clickable)
+	}
+	return p.structureTokenPlayClicks[key]
+}
+
+func (p *Page) structureTokenFlashcardByKey(key string) (flashcards.Flashcard, bool) {
+	analysis, _ := p.currentStructureAnalysis()
+	for _, token := range analysis.Tokens {
+		if structureTokenKey(token) != key {
+			continue
+		}
+		return p.structureTokenFlashcard(token)
+	}
+	return flashcards.Flashcard{}, false
+}
+
+func (p *Page) structureTokenFlashcard(token japanese.Token) (flashcards.Flashcard, bool) {
+	candidates := structureTokenFlashcardCandidates(token)
+	if len(candidates) == 0 {
+		return flashcards.Flashcard{}, false
+	}
+	for _, card := range p.flashcards {
+		cardWords := []string{card.Text, card.Reading, card.PronunciationText}
+		for _, cardWord := range cardWords {
+			cardWord = normalizeStructureMatchText(cardWord)
+			if cardWord == "" {
+				continue
+			}
+			for _, candidate := range candidates {
+				if cardWord == candidate {
+					return card, true
+				}
+			}
+		}
+	}
+	return flashcards.Flashcard{}, false
 }
 
 func (p *Page) structureSourceText() string {
@@ -1103,6 +1322,61 @@ func tokenDetailText(token japanese.Token) string {
 		parts = append(parts, "role: "+particleRole(token.Surface))
 	}
 	return strings.Join(parts, " | ")
+}
+
+func canCreateStructureFlashcard(token japanese.Token) bool {
+	switch token.POSMajor() {
+	case "名詞", "動詞", "形容詞":
+		return structureFlashcardWord(token) != ""
+	default:
+		return false
+	}
+}
+
+func structureFlashcardWord(token japanese.Token) string {
+	switch token.POSMajor() {
+	case "動詞", "形容詞":
+		return util.FirstNonEmpty(strings.TrimSpace(token.BaseForm), strings.TrimSpace(token.Surface))
+	default:
+		return strings.TrimSpace(token.Surface)
+	}
+}
+
+func structureTokenFlashcardCandidates(token japanese.Token) []string {
+	raw := []string{
+		token.Surface,
+		token.BaseForm,
+		token.Reading,
+		token.Pronunciation,
+		structureFlashcardWord(token),
+	}
+	seen := make(map[string]struct{}, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, value := range raw {
+		value = normalizeStructureMatchText(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func normalizeStructureMatchText(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func structureTokenKey(token japanese.Token) string {
+	return strings.Join([]string{
+		strings.TrimSpace(token.Surface),
+		strings.TrimSpace(token.BaseForm),
+		token.POSLabel(),
+		token.InflectionLabel(),
+	}, "\x00")
 }
 
 func posMajorLabel(pos string) string {
@@ -1242,20 +1516,12 @@ func (p *Page) layoutFlashcardComposerHint(gtx layout.Context) layout.Dimensions
 		return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return p.layoutComposerFocusTabs(gtx)
-						}),
-						layout.Rigid(bareutils.SpacerW(unit.Dp(6))),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return expandButton.Layout(gtx, p.theme, p.iconify)
-						}),
-					)
+					return p.layoutComposerHeader(gtx, &expandButton)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					switch p.composerFocus {
 					case composerFocusSentenceStructure:
-						return p.layoutSentenceStructurePanel(gtx)
+						return p.layoutSentenceStructurePanel(gtx, false)
 					default:
 						return p.layoutFlashcardComposerHintText(gtx)
 					}
@@ -1291,15 +1557,7 @@ func (p *Page) layoutFlashcardComposerMini(gtx layout.Context) layout.Dimensions
 			Left:   unit.Dp(14),
 			Right:  unit.Dp(10),
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return p.layoutComposerFocusTabs(gtx)
-				}),
-				layout.Rigid(bareutils.SpacerW(unit.Dp(6))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return expandButton.Layout(gtx, p.theme, p.iconify)
-				}),
-			)
+			return p.layoutComposerHeader(gtx, &expandButton)
 		})
 	})
 }
@@ -1686,6 +1944,10 @@ func (p *Page) isCompactLayout(gtx layout.Context) bool {
 
 func (p *Page) shouldStackTranscriptPage(gtx layout.Context) bool {
 	return gtx.Constraints.Max.X <= gtx.Dp(unit.Dp(transcriptStackWidth))
+}
+
+func (p *Page) shouldDockTranscriptComposer(gtx layout.Context) bool {
+	return gtx.Constraints.Max.X >= gtx.Dp(unit.Dp(transcriptDockedWidth))
 }
 
 func (p *Page) transcriptComposerWidth(gtx layout.Context) int {
