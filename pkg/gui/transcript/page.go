@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -38,6 +39,8 @@ const (
 )
 
 var _ gui.EvenHandler = &Page{}
+
+var ansiRE = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])`)
 
 type Page struct {
 	theme   barethemes.Theme
@@ -579,55 +582,68 @@ func (p *Page) layoutTranscriptPopupCard(gtx layout.Context, card flashcards.Fla
 		Prefix:    "mdi:close",
 		Variant:   bareui.ButtonGhost,
 	}
-	return bareutils.Panel(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
-		return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body1(p.theme.Gio(), "Vocabulary")
-							lbl.Color = p.theme.Color.TextMuted
+	borderColor := transcriptPopupBorderColor(p.theme.Color.Primary)
+	return layout.Stack{}.Layout(gtx,
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return bareutils.Panel(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+				return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body1(p.theme.Gio(), "Vocabulary")
+									lbl.Color = p.theme.Color.TextMuted
+									return lbl.Layout(gtx)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return closeButton.Layout(gtx, p.theme, p.iconify)
+								}),
+							)
+						}),
+						layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.H6(p.theme.Gio(), titleText)
+							lbl.Color = p.theme.Color.Text
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body1(p.theme.Gio(), bodyText)
+							lbl.Color = p.theme.Color.Text
 							return lbl.Layout(gtx)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return closeButton.Layout(gtx, p.theme, p.iconify)
+							meta := p.flashcardMetaText(card)
+							if meta == "" {
+								return layout.Dimensions{}
+							}
+							return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body1(p.theme.Gio(), meta)
+								lbl.Color = p.theme.Color.TextMuted
+								return lbl.Layout(gtx)
+							})
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if !util.IsExistingFile(card.AudioPath) {
+								return layout.Dimensions{}
+							}
+							return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return audioButton.Layout(gtx, p.theme, p.iconify)
+							})
 						}),
 					)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.H6(p.theme.Gio(), titleText)
-					lbl.Color = p.theme.Color.Text
-					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body1(p.theme.Gio(), bodyText)
-					lbl.Color = p.theme.Color.Text
-					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					meta := p.flashcardMetaText(card)
-					if meta == "" {
-						return layout.Dimensions{}
-					}
-					return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body1(p.theme.Gio(), meta)
-						lbl.Color = p.theme.Color.TextMuted
-						return lbl.Layout(gtx)
-					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if !util.IsExistingFile(card.AudioPath) {
-						return layout.Dimensions{}
-					}
-					return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return audioButton.Layout(gtx, p.theme, p.iconify)
-					})
-				}),
-			)
-		})
-	})
+				})
+			})
+		}),
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			border := clip.Stroke{
+				Path:  clip.RRect{Rect: image.Rectangle{Max: gtx.Constraints.Max}, NW: gtx.Dp(unit.Dp(p.theme.Radius.MD)), NE: gtx.Dp(unit.Dp(p.theme.Radius.MD)), SW: gtx.Dp(unit.Dp(p.theme.Radius.MD)), SE: gtx.Dp(unit.Dp(p.theme.Radius.MD))}.Path(gtx.Ops),
+				Width: float32(gtx.Dp(unit.Dp(1))),
+			}.Op()
+			paint.FillShape(gtx.Ops, borderColor, border)
+			return layout.Dimensions{}
+		}),
+	)
 }
 
 func (p *Page) layoutTranscriptPopupDismissRegions(gtx layout.Context, popup image.Rectangle) {
@@ -1259,9 +1275,16 @@ func findFlashcardSourceLine(transcriptText, word string) string {
 }
 
 func sanitizeTranscriptForDisplay(text string) string {
+	text = ansiRE.ReplaceAllString(text, "")
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
 	text = strings.ReplaceAll(text, "\t", "    ")
+	text = strings.Map(func(r rune) rune {
+		if r < 0x20 && r != '\n' && r != '\t' {
+			return -1
+		}
+		return r
+	}, text)
 	return text
 }
 
@@ -1278,6 +1301,10 @@ func limitTranscriptLines(text string, recentLineLimit int) string {
 
 func transcriptHighlightColor(base color.NRGBA) color.NRGBA {
 	return color.NRGBA{R: base.R, G: base.G, B: base.B, A: 72}
+}
+
+func transcriptPopupBorderColor(base color.NRGBA) color.NRGBA {
+	return color.NRGBA{R: base.R, G: base.G, B: base.B, A: 160}
 }
 
 func playAudioFile(path string) error {
