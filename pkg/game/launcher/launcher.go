@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Seann-Moser/wgl/pkg/game/gameconfig"
-	"github.com/Seann-Moser/wgl/pkg/util"
+	"github.com/DarlingGoose/wgl/pkg/game/gameconfig"
+	"github.com/DarlingGoose/wgl/pkg/util"
 )
 
 func SaveDesktopEntry(config *gameconfig.GameConfig, launcherDir string) (path string, err error) {

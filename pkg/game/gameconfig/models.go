@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Seann-Moser/wgl/pkg/util"
+	"github.com/DarlingGoose/wgl/pkg/util"
 )
 
 type RunnerType string

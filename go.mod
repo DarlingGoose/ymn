@@ -1,11 +1,11 @@
-module github.com/Seann-Moser/wgl
+module github.com/DarlingGoose/wgl
 
 go 1.26.2
 
 require (
 	gioui.org v0.9.0
-	github.com/Seann-Moser/bare v0.0.4
-	github.com/Seann-Moser/jpndict v0.0.2
+	github.com/DarlingGoose/bare v0.0.5
+	github.com/DarlingGoose/jpndict v0.0.3
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/ikawaha/kagome-dict/ipa v1.2.6
 	github.com/ikawaha/kagome/v2 v2.11.0

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Seann-Moser/wgl/pkg/game/gameconfig"
-	"github.com/Seann-Moser/wgl/pkg/game/launcher"
+	"github.com/DarlingGoose/wgl/pkg/game/gameconfig"
+	"github.com/DarlingGoose/wgl/pkg/game/launcher"
 	"github.com/spf13/cobra"
 )
 

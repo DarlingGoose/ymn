@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Seann-Moser/wgl/pkg/util"
+	"github.com/DarlingGoose/wgl/pkg/util"
 )
 
 func flashcardDir() string {

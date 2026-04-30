@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Seann-Moser/wgl/pkg/flashcard"
-	"github.com/Seann-Moser/wgl/pkg/util"
+	"github.com/DarlingGoose/wgl/pkg/flashcard"
+	"github.com/DarlingGoose/wgl/pkg/util"
 )
 
 const DefaultAnkiConnectURL = "http://127.0.0.1:8765"

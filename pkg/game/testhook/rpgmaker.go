@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Seann-Moser/wgl/pkg/util"
+	"github.com/DarlingGoose/wgl/pkg/util"
 )
 
 const (

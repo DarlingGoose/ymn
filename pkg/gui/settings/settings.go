@@ -13,12 +13,12 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	bareui "github.com/Seann-Moser/bare/pkg/ui"
-	"github.com/Seann-Moser/bare/pkg/ui/icons"
-	barethemes "github.com/Seann-Moser/bare/pkg/ui/themes"
-	bareutils "github.com/Seann-Moser/bare/pkg/ui/utils"
-	"github.com/Seann-Moser/wgl/pkg/gui"
-	"github.com/Seann-Moser/wgl/pkg/util"
+	bareui "github.com/DarlingGoose/bare/pkg/ui"
+	"github.com/DarlingGoose/bare/pkg/ui/icons"
+	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
+	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
+	"github.com/DarlingGoose/wgl/pkg/gui"
+	"github.com/DarlingGoose/wgl/pkg/util"
 )
 
 var _ gui.EvenHandler = &Settings{}

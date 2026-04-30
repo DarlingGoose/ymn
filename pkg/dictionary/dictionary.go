@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Seann-Moser/jpndict"
-	"github.com/Seann-Moser/wgl/pkg/util"
+	"github.com/DarlingGoose/jpndict"
+	"github.com/DarlingGoose/wgl/pkg/util"
 )
 
 func init() {
