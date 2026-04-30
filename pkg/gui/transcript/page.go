@@ -31,6 +31,7 @@ import (
 	"github.com/Seann-Moser/wgl/pkg/game/gameconfig"
 	"github.com/Seann-Moser/wgl/pkg/gui"
 	guitoast "github.com/Seann-Moser/wgl/pkg/gui/toast"
+	"github.com/Seann-Moser/wgl/pkg/japanese"
 	"github.com/Seann-Moser/wgl/pkg/util"
 )
 
@@ -53,6 +54,7 @@ type Page struct {
 
 	transcriptView     widget.Selectable
 	transcriptList     widget.List
+	structureList      widget.List
 	lookupResultsList  widget.List
 	wordEditor         widget.Editor
 	meaningEditor      widget.Editor
@@ -96,6 +98,9 @@ type Page struct {
 	lookupResults     []dictionary.Lookup
 	displayTranscript string
 	lastSyncedText    string
+	structureCacheKey string
+	structureCache    japanese.Analysis
+	structureCacheErr string
 	highlightCacheKey string
 	highlightCache    []flashcards.Match
 	popupFlashcard    *flashcards.Flashcard
@@ -133,6 +138,7 @@ func New(theme barethemes.Theme) *Page {
 	p.meaningEditor.SingleLine = false
 	p.transcriptList.Axis = layout.Vertical
 	p.transcriptList.ScrollToEnd = true
+	p.structureList.Axis = layout.Vertical
 	p.lookupResultsList.Axis = layout.Vertical
 	return p
 }
@@ -919,11 +925,257 @@ func (p *Page) layoutFlashcardComposerForm(gtx layout.Context) layout.Dimensions
 }
 
 func (p *Page) layoutSentenceStructurePanel(gtx layout.Context) layout.Dimensions {
-	height := gtx.Dp(unit.Dp(220))
+	analysis, errText := p.currentStructureAnalysis()
 	if p.isCompactLayout(gtx) {
-		height = gtx.Dp(unit.Dp(180))
+		gtx.Constraints.Max.Y = min(gtx.Constraints.Max.Y, gtx.Dp(unit.Dp(320)))
+	} else {
+		gtx.Constraints.Max.Y = min(gtx.Constraints.Max.Y, gtx.Dp(unit.Dp(380)))
 	}
-	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
+	if gtx.Constraints.Max.Y <= 0 {
+		gtx.Constraints.Max.Y = gtx.Dp(unit.Dp(260))
+	}
+
+	items := 1 + len(analysis.Tokens)
+	if len(analysis.Particles) > 0 {
+		items++
+	}
+	return material.List(p.theme.Gio(), &p.structureList).Layout(gtx, items, func(gtx layout.Context, index int) layout.Dimensions {
+		switch {
+		case index == 0:
+			return p.layoutStructureSummary(gtx, analysis, errText)
+		case len(analysis.Particles) > 0 && index == 1:
+			return layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return p.layoutParticleSummary(gtx, analysis.Particles)
+			})
+		default:
+			tokenIndex := index - 1
+			if len(analysis.Particles) > 0 {
+				tokenIndex--
+			}
+			if tokenIndex < 0 || tokenIndex >= len(analysis.Tokens) {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return p.layoutStructureToken(gtx, analysis.Tokens[tokenIndex])
+			})
+		}
+	})
+}
+
+func (p *Page) layoutStructureSummary(gtx layout.Context, analysis japanese.Analysis, errText string) layout.Dimensions {
+	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.H6(p.theme.Gio(), "Sentence Structure")
+				lbl.Color = p.theme.Color.Text
+				return lbl.Layout(gtx)
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				text := strings.TrimSpace(analysis.Sentence)
+				if text == "" {
+					text = "Select transcript text, or enter a flashcard word, to inspect sentence structure."
+				}
+				if errText != "" {
+					text = errText
+				}
+				lbl := material.Body1(p.theme.Gio(), text)
+				lbl.Color = p.theme.Color.TextMuted
+				return lbl.Layout(gtx)
+			}),
+		)
+	})
+}
+
+func (p *Page) layoutParticleSummary(gtx layout.Context, particles []japanese.Token) layout.Dimensions {
+	return bareutils.Panel(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			children := []layout.FlexChild{
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(p.theme.Gio(), "Particles")
+					lbl.Color = p.theme.Color.Text
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+			}
+			for _, particle := range particles {
+				particle := particle
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body1(p.theme.Gio(), particle.Surface+" - "+particleRole(particle.Surface))
+						lbl.Color = p.theme.Color.TextMuted
+						return lbl.Layout(gtx)
+					})
+				}))
+			}
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+		})
+	})
+}
+
+func (p *Page) layoutStructureToken(gtx layout.Context, token japanese.Token) layout.Dimensions {
+	return bareutils.Panel(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.H6(p.theme.Gio(), token.Surface)
+							lbl.Color = p.theme.Color.Text
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body1(p.theme.Gio(), posMajorLabel(token.POSMajor()))
+							lbl.Color = p.theme.Color.Primary
+							return lbl.Layout(gtx)
+						}),
+					)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(p.theme.Gio(), tokenDetailText(token))
+					lbl.Color = p.theme.Color.TextMuted
+					return lbl.Layout(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (p *Page) currentStructureAnalysis() (japanese.Analysis, string) {
+	text := p.structureSourceText()
+	if text == "" {
+		p.structureCacheKey = ""
+		p.structureCache = japanese.Analysis{}
+		p.structureCacheErr = ""
+		return japanese.Analysis{}, ""
+	}
+	if text == p.structureCacheKey {
+		return p.structureCache, p.structureCacheErr
+	}
+	analysis, err := japanese.AnalyzeSentence(text)
+	p.structureCacheKey = text
+	p.structureCache = analysis
+	p.structureCacheErr = ""
+	if err != nil {
+		p.structureCache = japanese.Analysis{Sentence: text}
+		p.structureCacheErr = err.Error()
+	}
+	return p.structureCache, p.structureCacheErr
+}
+
+func (p *Page) structureSourceText() string {
+	selected := normalizeSelectionText(p.transcriptView.SelectedText())
+	if selected != "" {
+		if sentence := japanese.ExtractSenNtence(p.displayTranscript, selected); sentence != "" {
+			return sentence
+		}
+		return selected
+	}
+	word := normalizeSelectionText(p.wordEditor.Text())
+	if word != "" {
+		if sentence := findFlashcardSourceLine(p.displayTranscript, word); sentence != "" {
+			return sentence
+		}
+		return word
+	}
+	lines := strings.Split(strings.TrimSpace(p.displayTranscript), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func tokenDetailText(token japanese.Token) string {
+	parts := []string{token.POSLabel()}
+	if base := strings.TrimSpace(token.BaseForm); base != "" && base != token.Surface {
+		parts = append(parts, "base: "+base)
+	}
+	if reading := strings.TrimSpace(token.Reading); reading != "" {
+		parts = append(parts, "reading: "+reading)
+	}
+	if inflection := token.InflectionLabel(); inflection != "" {
+		parts = append(parts, "inflection: "+inflection)
+	}
+	if token.POSMajor() == "助詞" {
+		parts = append(parts, "role: "+particleRole(token.Surface))
+	}
+	return strings.Join(parts, " | ")
+}
+
+func posMajorLabel(pos string) string {
+	switch pos {
+	case "名詞":
+		return "Noun"
+	case "動詞":
+		return "Verb"
+	case "形容詞":
+		return "Adjective"
+	case "副詞":
+		return "Adverb"
+	case "助詞":
+		return "Particle"
+	case "助動詞":
+		return "Auxiliary"
+	case "連体詞":
+		return "Prenoun"
+	case "接続詞":
+		return "Conjunction"
+	case "感動詞":
+		return "Interjection"
+	case "記号":
+		return "Symbol"
+	default:
+		if pos == "" {
+			return "Token"
+		}
+		return pos
+	}
+}
+
+func particleRole(surface string) string {
+	switch strings.TrimSpace(surface) {
+	case "は":
+		return "topic marker; sets what the sentence is about, often with contrast"
+	case "が":
+		return "subject marker; identifies the doer or thing being described"
+	case "を":
+		return "direct object marker; marks what the action affects"
+	case "に":
+		return "target, destination, time, indirect object, or location of existence"
+	case "へ":
+		return "direction marker; points toward a destination"
+	case "で":
+		return "place or means of an action; marks where/how something happens"
+	case "と":
+		return "and/with, quotation, or comparison partner"
+	case "も":
+		return "also/even; adds the marked item to the statement"
+	case "の":
+		return "possession, modification, or nominalizer"
+	case "から":
+		return "from/since; starting point or cause"
+	case "まで":
+		return "until/to; endpoint or limit"
+	case "より":
+		return "than/from; comparison baseline or source"
+	case "や":
+		return "non-exhaustive and; examples from a set"
+	case "か":
+		return "question marker or alternative"
+	case "ね":
+		return "seeks agreement or softens with shared feeling"
+	case "よ":
+		return "assertive emphasis; presents information to the listener"
+	case "な":
+		return "prohibition, emotion, or sentence-ending emphasis depending on form"
+	case "ぞ", "ぜ":
+		return "strong sentence-ending emphasis"
+	default:
+		return "particle function depends on the surrounding phrase"
+	}
 }
 
 func (p *Page) layoutComposerFocusTabs(gtx layout.Context) layout.Dimensions {
