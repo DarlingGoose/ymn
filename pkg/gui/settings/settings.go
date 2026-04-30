@@ -41,6 +41,7 @@ type Settings struct {
 	selectedTextSizeName    string
 	selectedRecentLinesName string
 	autoPlayHighlightAudio  widget.Bool
+	colorizeHighlightText   widget.Bool
 
 	themeMode          barethemes.Mode
 	themePalette       barethemes.PaletteName
@@ -53,6 +54,8 @@ type Settings struct {
 	TranscriptTextSize          string `json:"transcript_text_size,omitempty"`
 	VisibleTranscript           string `json:"visible_transcript,omitempty"`
 	AutoPlayHighlightPopupAudio bool   `json:"auto_play_highlight_popup_audio,omitempty"`
+	ColorizeHighlightWords      bool   `json:"colorize_highlight_text,omitempty"`
+	LastSelectedGame            string `json:"last_selected_game,omitempty"`
 }
 
 func defaultSettings() Settings {
@@ -90,6 +93,9 @@ func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.
 	g.textSizeDropdown.Update(gtx)
 	g.recentLinesDropdown.Update(gtx)
 	if g.autoPlayHighlightAudio.Update(gtx) {
+		g.persistSettings()
+	}
+	if g.colorizeHighlightText.Update(gtx) {
 		g.persistSettings()
 	}
 
@@ -219,6 +225,14 @@ func (g *Settings) LayoutPage(gtx layout.Context) layout.Dimensions {
 						return check.Layout(gtx)
 					})
 				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return g.layoutSettingRow(gtx, "Word Highlight Style", util.BoolSettingLabel(g.colorizeHighlightText.Value), func(gtx layout.Context) layout.Dimensions {
+						check := material.CheckBox(g.theme.Gio(), &g.colorizeHighlightText, "Use colored vocab text instead of background highlights")
+						check.Color = g.theme.Color.Text
+						return check.Layout(gtx)
+					})
+				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(18))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body1(g.theme.Gio(), "Mode, transcript rendering, and highlight click behavior can be tuned without changing the watcher logic.")
@@ -271,6 +285,7 @@ func (g *Settings) persistSettings() {
 	g.TranscriptTextSize = g.selectedTextSizeName
 	g.VisibleTranscript = g.selectedRecentLinesName
 	g.AutoPlayHighlightPopupAudio = g.autoPlayHighlightAudio.Value
+	g.ColorizeHighlightWords = g.colorizeHighlightText.Value
 	_ = g.saveSettings()
 }
 
@@ -308,6 +323,7 @@ func (g *Settings) applySavedSettings() {
 	}
 
 	g.autoPlayHighlightAudio.Value = g.AutoPlayHighlightPopupAudio
+	g.colorizeHighlightText.Value = g.ColorizeHighlightWords
 }
 
 func (g *Settings) Theme() barethemes.Theme {
@@ -332,6 +348,19 @@ func (g *Settings) RecentLineLabel() string {
 
 func (g *Settings) AutoPlayHighlightAudio() bool {
 	return g.autoPlayHighlightAudio.Value
+}
+
+func (g *Settings) ColorizeHighlightText() bool {
+	return g.colorizeHighlightText.Value
+}
+
+func (g *Settings) LastGame() string {
+	return g.LastSelectedGame
+}
+
+func (g *Settings) SetLastGame(name string) error {
+	g.LastSelectedGame = name
+	return g.saveSettings()
 }
 
 func (g *Settings) saveSettings() error {

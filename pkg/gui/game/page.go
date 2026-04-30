@@ -30,6 +30,7 @@ type Page struct {
 	fileBrowser *filemanager.FileBrowser
 	hook        *game.RPGMakerHook
 	gameList    layout.List
+	configList  widget.List
 
 	runnerDropdown bareui.Dropdown
 	runnerOptions  []pkggui.DropdownOption
@@ -41,23 +42,30 @@ type Page struct {
 	imagePathEditor  widget.Editor
 	requiresSteam    widget.Bool
 
-	useSelectionButton widget.Clickable
-	analyzeButton      widget.Clickable
-	saveButton         widget.Clickable
-	inspectHookButton  widget.Clickable
-	installHookButton  widget.Clickable
+	useSelectionButton  widget.Clickable
+	toggleBrowserButton widget.Clickable
+	analyzeButton       widget.Clickable
+	saveButton          widget.Clickable
+	newGameButton       widget.Clickable
+	deleteButton        widget.Clickable
+	inspectHookButton   widget.Clickable
+	installHookButton   widget.Clickable
 
 	selectedRunner string
 	statusText     string
 	previewText    string
 	hookStatusText string
+	showBrowser    bool
 
 	currentConfigName string
+	loadedConfigName  string
 	configs           []gameconfig.GameConfig
 	gameSelectClicks  map[string]*widget.Clickable
 
 	OnSaved    func(config *gameconfig.GameConfig)
 	OnSelected func(config *gameconfig.GameConfig)
+	OnNew      func()
+	OnDeleted  func(name string)
 	OnError    func(title, body string)
 }
 
@@ -67,7 +75,9 @@ func New(theme barethemes.Theme) *Page {
 		fileBrowser:      filemanager.NewFileBrowser(""),
 		hook:             &game.RPGMakerHook{},
 		gameList:         layout.List{Axis: layout.Vertical},
+		configList:       widget.List{List: layout.List{Axis: layout.Vertical}},
 		selectedRunner:   "Auto",
+		showBrowser:      true,
 		statusText:       "Create or update a saved game config for transcript watching and launch flows.",
 		hookStatusText:   "Select a game or path to inspect text hook support.",
 		gameSelectClicks: map[string]*widget.Clickable{},
@@ -112,10 +122,18 @@ func (p *Page) SetConfigs(configs []gameconfig.GameConfig) *Page {
 
 func (p *Page) SetCurrentConfig(cfg *gameconfig.GameConfig) *Page {
 	if cfg == nil {
-		p.currentConfigName = ""
+		return p
+	}
+	if strings.TrimSpace(cfg.Name) == "" {
+		return p
+	}
+	if cfg.Name == p.loadedConfigName {
+		p.currentConfigName = cfg.Name
 		return p
 	}
 	p.currentConfigName = cfg.Name
+	p.loadedConfigName = cfg.Name
+	p.showBrowser = false
 	p.pathEditor.SetText(util.FirstNonEmpty(cfg.GamePath, cfg.Executable))
 	p.steamAppIDEditor.SetText(cfg.SteamAppID)
 	p.iconPathEditor.SetText(cfg.IconPath)
@@ -148,11 +166,25 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 		for click.Clicked(gtx) {
 			cfgCopy := cfg
 			p.SetCurrentConfig(&cfgCopy)
+			p.showBrowser = false
 			p.statusText = fmt.Sprintf("Loaded saved game %q.", cfg.Name)
 			if p.OnSelected != nil {
 				p.OnSelected(&cfgCopy)
 			}
 		}
+	}
+	for p.newGameButton.Clicked(gtx) {
+		p.resetConfigForm()
+		p.showBrowser = true
+		p.statusText = "Creating a new game config. Use the file browser to choose a folder or executable."
+		p.hookStatusText = "Select a game or path to inspect text hook support."
+		p.previewText = ""
+		if p.OnNew != nil {
+			p.OnNew()
+		}
+	}
+	for p.toggleBrowserButton.Clicked(gtx) {
+		p.showBrowser = !p.showBrowser
 	}
 	for p.useSelectionButton.Clicked(gtx) {
 		p.useBrowserSelection()
@@ -162,6 +194,9 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 	}
 	for p.saveButton.Clicked(gtx) {
 		p.saveConfig()
+	}
+	for p.deleteButton.Clicked(gtx) {
+		p.deleteConfig()
 	}
 	for p.inspectHookButton.Clicked(gtx) {
 		p.inspectHook()
@@ -191,19 +226,24 @@ func (p *Page) LayoutPage(gtx layout.Context) layout.Dimensions {
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(16))),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-						layout.Flexed(0.30, func(gtx layout.Context) layout.Dimensions {
+					children := []layout.FlexChild{
+						layout.Flexed(0.34, func(gtx layout.Context) layout.Dimensions {
 							return p.layoutSavedGamesPanel(gtx)
 						}),
 						layout.Rigid(bareutils.SpacerW(unit.Dp(16))),
-						layout.Flexed(0.34, func(gtx layout.Context) layout.Dimensions {
+						layout.Flexed(0.66, func(gtx layout.Context) layout.Dimensions {
 							return p.layoutConfigPanel(gtx)
 						}),
-						layout.Rigid(bareutils.SpacerW(unit.Dp(16))),
-						layout.Flexed(0.36, func(gtx layout.Context) layout.Dimensions {
-							return p.layoutBrowserPanel(gtx)
-						}),
-					)
+					}
+					if p.showBrowser {
+						children = append(children,
+							layout.Rigid(bareutils.SpacerW(unit.Dp(16))),
+							layout.Flexed(0.52, func(gtx layout.Context) layout.Dimensions {
+								return p.layoutBrowserPanel(gtx)
+							}),
+						)
+					}
+					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
 				}),
 			)
 		})
@@ -215,6 +255,7 @@ func (p *Page) layoutSavedGamesPanel(gtx layout.Context) layout.Dimensions {
 	search.Color = p.theme.Color.Text
 	search.HintColor = p.theme.Color.TextMuted
 	filtered := p.filteredConfigs()
+	newGame := bareui.Button{Clickable: &p.newGameButton, Text: "New Game", Prefix: "mdi:plus-circle-outline", Variant: bareui.ButtonPrimary}
 
 	return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -230,6 +271,8 @@ func (p *Page) layoutSavedGamesPanel(gtx layout.Context) layout.Dimensions {
 					lbl.Color = p.theme.Color.TextMuted
 					return lbl.Layout(gtx)
 				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return newGame.Layout(gtx, p.theme, p.iconify) }),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
 				layout.Rigid(search.Layout),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
@@ -301,74 +344,95 @@ func (p *Page) layoutConfigPanel(gtx layout.Context) layout.Dimensions {
 	imagePathEditor.HintColor = p.theme.Color.TextMuted
 
 	useSelection := bareui.Button{Clickable: &p.useSelectionButton, Text: "Use Browser Selection", Prefix: "mdi:folder-check-outline", Variant: bareui.ButtonSecondary}
-	analyze := bareui.Button{Clickable: &p.analyzeButton, Text: "Analyze Path", Prefix: "mdi:magnify-scan", Variant: bareui.ButtonSecondary}
+	toggleBrowser := bareui.Button{Clickable: &p.toggleBrowserButton, Text: p.browserButtonLabel(), Prefix: p.browserButtonIcon(), Variant: bareui.ButtonSecondary}
+	analyze := bareui.Button{Clickable: &p.analyzeButton, Text: "Auto Populate Info", Prefix: "mdi:auto-fix", Variant: bareui.ButtonSecondary}
 	save := bareui.Button{Clickable: &p.saveButton, Text: "Save Game", Prefix: "mdi:content-save-outline", Variant: bareui.ButtonPrimary}
+	deleteButton := bareui.Button{Clickable: &p.deleteButton, Text: "Delete Game", Prefix: "mdi:trash-can-outline", Variant: bareui.ButtonGhost}
 	inspectHook := bareui.Button{Clickable: &p.inspectHookButton, Text: "Inspect Hook", Prefix: "mdi:puzzle-check-outline", Variant: bareui.ButtonSecondary}
 	installHook := bareui.Button{Clickable: &p.installHookButton, Text: "Install Hook", Prefix: "mdi:puzzle-plus-outline", Variant: bareui.ButtonPrimary}
 
 	return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			rows := []layout.Widget{
+				func(gtx layout.Context) layout.Dimensions {
 					lbl := material.H6(p.theme.Gio(), "Config")
 					lbl.Color = p.theme.Color.Text
 					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				},
+				bareutils.SpacerH(unit.Dp(8)),
+				func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body1(p.theme.Gio(), p.statusText)
 					lbl.Color = p.theme.Color.TextMuted
 					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
-				layout.Rigid(pathEditor.Layout),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				},
+				bareutils.SpacerH(unit.Dp(14)),
+				func(gtx layout.Context) layout.Dimensions { return toggleBrowser.Layout(gtx, p.theme, p.iconify) },
+				bareutils.SpacerH(unit.Dp(12)),
+				pathEditor.Layout,
+				bareutils.SpacerH(unit.Dp(12)),
+				func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions { return useSelection.Layout(gtx, p.theme, p.iconify) }),
-						layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions { return analyze.Layout(gtx, p.theme, p.iconify) }),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if !p.showBrowser {
+								return layout.Dimensions{}
+							}
+							return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return useSelection.Layout(gtx, p.theme, p.iconify)
+							})
+						}),
 					)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				},
+				bareutils.SpacerH(unit.Dp(12)),
+				func(gtx layout.Context) layout.Dimensions {
 					return p.layoutInfoRow(gtx, "Runner", p.selectedRunner, func(gtx layout.Context) layout.Dimensions {
 						return p.runnerDropdown.Layout(gtx, p.theme, p.iconify, p.selectedRunner, func(gtx layout.Context) layout.Dimensions {
 							return pkggui.LayoutOptionMenu(gtx, p.runnerOptions, p.selectedRunner, p.theme, p.iconify)
 						})
 					})
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				},
+				bareutils.SpacerH(unit.Dp(12)),
+				func(gtx layout.Context) layout.Dimensions {
 					check := material.CheckBox(p.theme.Gio(), &p.requiresSteam, "Requires Steam")
 					check.Color = p.theme.Color.Text
 					return check.Layout(gtx)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
-				layout.Rigid(steamAppIDEditor.Layout),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
-				layout.Rigid(iconPathEditor.Layout),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
-				layout.Rigid(imagePathEditor.Layout),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				},
+				bareutils.SpacerH(unit.Dp(12)),
+				steamAppIDEditor.Layout,
+				bareutils.SpacerH(unit.Dp(12)),
+				iconPathEditor.Layout,
+				bareutils.SpacerH(unit.Dp(12)),
+				imagePathEditor.Layout,
+				bareutils.SpacerH(unit.Dp(14)),
+				func(gtx layout.Context) layout.Dimensions {
 					return p.layoutSummaryPanel(gtx, "Preview", p.previewText)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				},
+				bareutils.SpacerH(unit.Dp(14)),
+				func(gtx layout.Context) layout.Dimensions {
 					return p.layoutSummaryPanel(gtx, "Text Hook", p.hookStatusText)
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return save.Layout(gtx, p.theme, p.iconify) }),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				},
+				bareutils.SpacerH(unit.Dp(14)),
+				func(gtx layout.Context) layout.Dimensions { return save.Layout(gtx, p.theme, p.iconify) },
+				func(gtx layout.Context) layout.Dimensions {
+					if strings.TrimSpace(p.currentConfigName) == "" {
+						return layout.Dimensions{}
+					}
+					return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return deleteButton.Layout(gtx, p.theme, p.iconify)
+					})
+				},
+				bareutils.SpacerH(unit.Dp(10)),
+				func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions { return inspectHook.Layout(gtx, p.theme, p.iconify) }),
 						layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions { return installHook.Layout(gtx, p.theme, p.iconify) }),
 					)
-				}),
-			)
+				},
+			}
+			return material.List(p.theme.Gio(), &p.configList).Layout(gtx, len(rows), func(gtx layout.Context, index int) layout.Dimensions {
+				return rows[index](gtx)
+			})
 		})
 	})
 }
@@ -452,6 +516,7 @@ func (p *Page) useBrowserSelection() {
 		return
 	}
 	p.pathEditor.SetText(selected)
+	p.showBrowser = false
 	p.statusText = "Copied browser selection into the game path field."
 }
 
@@ -488,8 +553,30 @@ func (p *Page) saveConfig() {
 	}
 	p.currentConfigName = cfg.Name
 	p.statusText = fmt.Sprintf("Saved %q.", cfg.Name)
+	p.loadedConfigName = cfg.Name
 	if p.OnSaved != nil {
 		p.OnSaved(&cfg)
+	}
+}
+
+func (p *Page) deleteConfig() {
+	name := strings.TrimSpace(p.currentConfigName)
+	if name == "" {
+		p.showError("Delete Game Failed", "Load a saved game config before deleting it.")
+		return
+	}
+	if err := gameconfig.DeleteGameConfig(name); err != nil {
+		p.statusText = err.Error()
+		p.showError("Delete Game Failed", err.Error())
+		return
+	}
+	p.resetConfigForm()
+	p.showBrowser = true
+	p.previewText = ""
+	p.hookStatusText = "Select a game or path to inspect text hook support."
+	p.statusText = fmt.Sprintf("Deleted %q.", name)
+	if p.OnDeleted != nil {
+		p.OnDeleted(name)
 	}
 }
 
@@ -577,4 +664,29 @@ func (p *Page) filteredConfigs() []gameconfig.GameConfig {
 		}
 	}
 	return filtered
+}
+
+func (p *Page) resetConfigForm() {
+	p.currentConfigName = ""
+	p.loadedConfigName = ""
+	p.pathEditor.SetText("")
+	p.steamAppIDEditor.SetText("")
+	p.iconPathEditor.SetText("")
+	p.imagePathEditor.SetText("")
+	p.requiresSteam.Value = false
+	p.selectedRunner = "Auto"
+}
+
+func (p *Page) browserButtonLabel() string {
+	if p.showBrowser {
+		return "Hide Browser"
+	}
+	return "Browse Files"
+}
+
+func (p *Page) browserButtonIcon() string {
+	if p.showBrowser {
+		return "mdi:folder-remove-outline"
+	}
+	return "mdi:folder-search-outline"
 }

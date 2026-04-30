@@ -68,9 +68,6 @@ var guiCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if len(configs) == 0 {
-			return fmt.Errorf("no saved games found in %s", util.ConfigBaseDir())
-		}
 		if selectedName != "" {
 			if _, err := gameconfig.FindConfig(selectedName); err != nil {
 				return err
@@ -145,8 +142,11 @@ func newGUI(configs []gameconfig.GameConfig, selectedName string, printExisting 
 	}
 
 	activeGame := strings.TrimSpace(selectedName)
-	if activeGame == "" && len(configs) > 0 {
-		activeGame = configs[0].Name
+	if activeGame == "" {
+		remembered := strings.TrimSpace(settingsPage.LastGame())
+		if configNameExists(configs, remembered) {
+			activeGame = remembered
+		}
 	}
 
 	gameClicks := make(map[string]*widget.Clickable, len(configs))
@@ -160,6 +160,9 @@ func newGUI(configs []gameconfig.GameConfig, selectedName string, printExisting 
 		{ID: guiPageGame, Label: "Game", Icon: "mdi:puzzle-outline"},
 		{ID: guiPageSettings, Label: "Settings", Icon: "mdi:cog-outline"},
 	}, guiPageTranscript)
+	if activeGame == "" {
+		pageTabs.Active = guiPageGame
+	}
 	pageTabs.Axis = layout.Vertical
 
 	iconify := icons.NewIconify()
@@ -196,6 +199,7 @@ func newGUI(configs []gameconfig.GameConfig, selectedName string, printExisting 
 		app.reloadConfigs()
 		app.currentConfig = g
 		app.activeGameName = g.Name
+		_ = app.settingsPage.SetLastGame(g.Name)
 	}
 	app.gamePage.OnSelected = func(cfg *gameconfig.GameConfig) {
 		if cfg == nil {
@@ -203,6 +207,34 @@ func newGUI(configs []gameconfig.GameConfig, selectedName string, printExisting 
 		}
 		app.currentConfig = cfg
 		app.activeGameName = cfg.Name
+		_ = app.settingsPage.SetLastGame(cfg.Name)
+	}
+	app.gamePage.OnNew = func() {
+		app.currentConfig = nil
+		app.activeGameName = ""
+		app.pageTabs.Active = guiPageGame
+		_ = app.settingsPage.SetLastGame("")
+	}
+	app.gamePage.OnDeleted = func(name string) {
+		app.reloadConfigs()
+		if strings.EqualFold(strings.TrimSpace(app.activeGameName), strings.TrimSpace(name)) {
+			if cancel := app.stopWatcher(); cancel != nil {
+				cancel()
+			}
+			app.watcherGeneration++
+			app.activeGameName = ""
+			app.currentConfig = nil
+			app.logPath = ""
+			app.rawTranscript = ""
+			app.offset = 0
+			app.statusText = "Select or create a game to start watching its transcript."
+			app.gameRunning = false
+			app.gameRunningPID = 0
+			app.flashcardsFromPage(nil)
+			app.transcriptPage.ClearTranscript()
+			_ = app.settingsPage.SetLastGame("")
+		}
+		app.pageTabs.Active = guiPageGame
 	}
 	app.syncPages()
 	return app, nil
@@ -261,13 +293,6 @@ func (g *guiApp) Run(ctx context.Context) error {
 func (g *guiApp) layout(gtx layout.Context, ctx context.Context, w *app.Window) layout.Dimensions {
 	g.handleEvents(gtx, ctx, w)
 	g.syncPages()
-
-	if !g.messageModal.Open && g.transcriptPage.PopupFlashcard() != nil {
-		g.transcriptPage.DismissPopup()
-	}
-	if g.transcriptPage.PopupFlashcard() != nil {
-		g.messageModal.Open = true
-	}
 
 	g.pageTabs.Axis = layout.Vertical
 	if g.isCompactLayout(gtx) {
@@ -355,6 +380,7 @@ func (g *guiApp) syncPages() {
 			g.settingsPage.RecentLineLabel(),
 		).
 		SetAutoPlayHighlightAudio(g.settingsPage.AutoPlayHighlightAudio()).
+		SetColorizeHighlights(g.settingsPage.ColorizeHighlightText()).
 		SetStatus(statusText).
 		SetRawTranscript(rawTranscript)
 
@@ -452,17 +478,10 @@ func (g *guiApp) layoutOverlay(gtx layout.Context) layout.Dimensions {
 	if !g.messageModal.Open {
 		return layout.Dimensions{}
 	}
-	title := g.messageTitle
-	if g.transcriptPage.PopupFlashcard() != nil {
-		title = "Flashcard"
-	}
-	return g.messageModal.Layout(gtx, g.theme, util.FirstNonEmpty(title, "Message"), g.layoutModalContent)
+	return g.messageModal.Layout(gtx, g.theme, util.FirstNonEmpty(g.messageTitle, "Message"), g.layoutModalContent)
 }
 
 func (g *guiApp) layoutModalContent(gtx layout.Context) layout.Dimensions {
-	if g.transcriptPage.PopupFlashcard() != nil {
-		return g.transcriptPage.LayoutPopupContent(gtx)
-	}
 	lbl := material.Body1(g.theme.Gio(), g.messageBody)
 	lbl.Color = g.theme.Color.Text
 	return lbl.Layout(gtx)
@@ -527,6 +546,7 @@ func (g *guiApp) startWatching(ctx context.Context, gameName string, w *app.Wind
 	g.reloadConfigs()
 	g.reloadFlashcards()
 	g.refreshCurrentGameRunningState(true)
+	_ = g.settingsPage.SetLastGame(cfg.Name)
 
 	watcherCtx, cancel := context.WithCancel(ctx)
 	g.watcherCancel = cancel
@@ -597,9 +617,16 @@ func (g *guiApp) reloadConfigs() {
 		return
 	}
 	g.configs = configs
+	valid := make(map[string]struct{}, len(configs))
 	for _, cfg := range configs {
+		valid[cfg.Name] = struct{}{}
 		if g.gameOptionClicks[cfg.Name] == nil {
 			g.gameOptionClicks[cfg.Name] = new(widget.Clickable)
+		}
+	}
+	for name := range g.gameOptionClicks {
+		if _, ok := valid[name]; !ok {
+			delete(g.gameOptionClicks, name)
 		}
 	}
 }
@@ -678,4 +705,17 @@ func dropdownButtonVariant(active bool) bareui.ButtonVariant {
 		return bareui.ButtonPrimary
 	}
 	return bareui.ButtonSecondary
+}
+
+func configNameExists(configs []gameconfig.GameConfig, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	for _, cfg := range configs {
+		if strings.EqualFold(strings.TrimSpace(cfg.Name), name) {
+			return true
+		}
+	}
+	return false
 }

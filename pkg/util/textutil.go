@@ -5,6 +5,9 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 func TruncateForWidth(text string, width int) string {
@@ -28,14 +31,56 @@ func FirstNonEmpty(values ...string) string {
 	return ""
 }
 
+var (
+	versionRegex = regexp.MustCompile(`(([vV](er){0,1}(sion){0,1})[0-9\.\-]+)`)
+	sepRegex     = regexp.MustCompile(`[_\-]`)
+	titleCaser   = cases.Title(language.English)
+)
+
 func DeriveGameName(inputPath, executablePath string, inputWasDir bool) string {
+	var name string
 	if inputWasDir {
-		return filepath.Base(inputPath)
+		name = filepath.Base(inputPath)
+	} else {
+		name = strings.TrimSuffix(filepath.Base(executablePath), filepath.Ext(executablePath))
 	}
-	name := strings.TrimSuffix(filepath.Base(executablePath), filepath.Ext(executablePath))
-	name = regexp.MustCompile(`(([vV](er){0,1}(sion){0,1})[0-9\.\-]+)`).ReplaceAllString(name, "")
-	name = regexp.MustCompile(`_-`).ReplaceAllString(name, " ")
+
+	// Clean name
+	name = versionRegex.ReplaceAllString(name, "")
+	name = sepRegex.ReplaceAllString(name, " ")
+	name = strings.TrimSpace(name)
+
+	// Title-case only if it looks like English
+	if isMostlyASCII(name) {
+		name = titleCaser.String(strings.ToLower(name))
+	}
+
 	return name
+}
+
+// heuristic: treat as English if most runes are ASCII letters/spaces
+func isMostlyASCII(s string) bool {
+	if s == "" {
+		return false
+	}
+
+	var asciiCount, total int
+	for _, r := range s {
+		if unicode.IsLetter(r) {
+			total++
+			if r <= unicode.MaxASCII {
+				asciiCount++
+			}
+		}
+	}
+
+	// avoid division by zero
+	if total == 0 {
+		return false
+	}
+
+	// threshold: 80% ASCII letters
+	return float64(asciiCount)/float64(total) > 0.8
 }
 
 func SanitizeName(name string) string {

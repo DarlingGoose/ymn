@@ -155,6 +155,23 @@ func SaveGameConfig(config GameConfig) (path string, err error) {
 	return path, nil
 }
 
+func DeleteGameConfig(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("config name is required")
+	}
+
+	configDir := filepath.Join(util.ConfigBaseDir(), "games")
+	path := filepath.Join(configDir, util.SanitizeName(name)+".json")
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("config %q not found in %s", name, configDir)
+		}
+		return fmt.Errorf("delete config: %w", err)
+	}
+	return nil
+}
+
 func BuildGameConfig(
 	inputPath string,
 	requestedRunner string,
