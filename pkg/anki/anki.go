@@ -271,10 +271,16 @@ func (c *Client) SyncFlashcardsToAnki(gameName, baseURL string, pushSync bool) (
 				if strings.Contains(err.Error(), "Note was not found") {
 					noteID, err := c.AddNote(cards[i])
 					if err != nil {
+						if strings.Contains(err.Error(), "duplicate") {
+							result.Updated++
+							continue
+						}
 						return SyncResult{}, fmt.Errorf("sync card %q: %w", cards[i].Text, err)
 					}
 					cards[i].AnkiNoteID = noteID
 					result.Created++
+				} else if strings.Contains(err.Error(), "duplicate") {
+					result.Updated++
 				} else {
 					return SyncResult{}, fmt.Errorf("sync card %q: %w", cards[i].Text, err)
 
@@ -286,6 +292,10 @@ func (c *Client) SyncFlashcardsToAnki(gameName, baseURL string, pushSync bool) (
 		} else {
 			noteID, err := c.AddNote(cards[i])
 			if err != nil {
+				if strings.Contains(err.Error(), "duplicate") {
+					result.Updated++
+					continue
+				}
 				return SyncResult{}, fmt.Errorf("sync card %q: %w", cards[i].Text, err)
 			}
 			cards[i].AnkiNoteID = noteID
