@@ -532,7 +532,7 @@ func (p *Page) layoutTranscriptPopup(gtx layout.Context) layout.Dimensions {
 	if popupWidth <= 0 {
 		return layout.Dimensions{}
 	}
-	popupHeightGuess := gtx.Dp(unit.Dp(176))
+	popupHeightGuess := gtx.Dp(p.popupHeightGuess(card))
 
 	x := p.popupAnchor.Min.X
 	if x+popupWidth > gtx.Constraints.Max.X {
@@ -556,7 +556,7 @@ func (p *Page) layoutTranscriptPopup(gtx layout.Context) layout.Dimensions {
 	offset := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
 	local := gtx
 	local.Constraints.Min = image.Point{}
-	local.Constraints.Max = image.Pt(popupWidth, gtx.Constraints.Max.Y)
+	local.Constraints.Max = image.Pt(popupWidth, popupHeightGuess)
 	dims := p.layoutTranscriptPopupCard(local, card)
 	offset.Pop()
 	p.popupBounds = image.Rect(x, y, x+dims.Size.X, y+dims.Size.Y)
@@ -650,6 +650,25 @@ func (p *Page) layoutTranscriptPopupDismissRegions(gtx layout.Context, popup ima
 		})
 		offset.Pop()
 	}
+}
+
+func (p *Page) popupHeightGuess(card flashcards.Flashcard) unit.Dp {
+	bodyText := util.FirstNonEmpty(strings.TrimSpace(card.Meaning), strings.TrimSpace(card.SourceLine), "No saved meaning for this word yet.")
+	height := 92
+	height += min(3, 1+strings.Count(bodyText, "\n")) * 18
+	if meta := p.flashcardMetaText(card); meta != "" {
+		height += min(3, 1+strings.Count(meta, "\n")) * 14
+	}
+	if util.IsExistingFile(card.AudioPath) {
+		height += 34
+	}
+	if height < 112 {
+		height = 112
+	}
+	if height > 168 {
+		height = 168
+	}
+	return unit.Dp(height)
 }
 
 func (p *Page) layoutTranscriptIdleState(gtx layout.Context) layout.Dimensions {
