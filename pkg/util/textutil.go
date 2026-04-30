@@ -51,31 +51,6 @@ func SanitizeName(name string) string {
 	return sanitized
 }
 
-func DesktopExecEscape(value string) string {
-	replacer := strings.NewReplacer(
-		"\\", "\\\\",
-		" ", "\\ ",
-		"\t", "\\\t",
-		"\n", "\\\n",
-		"\"", "\\\"",
-		"'", "\\'",
-		">", "\\>",
-		"<", "\\<",
-		"~", "\\~",
-		"|", "\\|",
-		"&", "\\&",
-		";", "\\;",
-		"$", "\\$",
-		"*", "\\*",
-		"?", "\\?",
-		"#", "\\#",
-		"(", "\\(",
-		")", "\\)",
-		"`", "\\`",
-	)
-	return replacer.Replace(strings.TrimSpace(value))
-}
-
 func AnkiDeckName(gameName string) string {
 	return strings.TrimSpace(gameName)
 }
@@ -92,4 +67,50 @@ func ContainsKanji(text string) bool {
 func HtmlEscapedSingleLine(text string) string {
 	replacer := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;", "'", "&#39;")
 	return replacer.Replace(strings.TrimSpace(text))
+}
+
+func NormalizeGUISelectionText(text string) string {
+	fields := strings.Fields(strings.ReplaceAll(text, "\x00", " "))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Join(fields, " ")
+}
+
+func BoolSettingLabel(value bool) string {
+	if value {
+		return "On"
+	}
+	return "Off"
+}
+
+func FindFlashcardSourceLine(displayBuffer, selectedText string) string {
+	selectedText = NormalizeGUISelectionText(selectedText)
+	if selectedText == "" {
+		return ""
+	}
+
+	lines := strings.Split(displayBuffer, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := NormalizeGUISelectionText(lines[i])
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, selectedText) {
+			return lines[i]
+		}
+	}
+	return ""
+}
+
+func LimitLines(text string, limit int) string {
+	if limit <= 0 || strings.TrimSpace(text) == "" {
+		return text
+	}
+
+	lines := strings.Split(text, "\n")
+	if len(lines) <= limit {
+		return text
+	}
+	return strings.Join(lines[len(lines)-limit:], "\n")
 }

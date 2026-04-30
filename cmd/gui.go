@@ -3248,60 +3248,6 @@ package cmd
 //	return matches
 //}
 //
-//type transcriptMatch struct {
-//	Key       string
-//	Word      string
-//	Card      Flashcard
-//	StartRune int
-//	EndRune   int
-//}
-//
-//func findTranscriptMatches(text string, words []string) []transcriptMatch {
-//	if len(words) == 0 || text == "" {
-//		return nil
-//	}
-//
-//	textRunes := []rune(text)
-//	occupied := make([]bool, len(textRunes))
-//	matches := make([]transcriptMatch, 0)
-//	for _, word := range words {
-//		if word == "" {
-//			continue
-//		}
-//		wordRunes := []rune(word)
-//		if len(wordRunes) == 0 || len(wordRunes) > len(textRunes) {
-//			continue
-//		}
-//		for start := 0; start <= len(textRunes)-len(wordRunes); start++ {
-//			end := start + len(wordRunes)
-//			if transcriptRunesOccupied(occupied, start, end) {
-//				continue
-//			}
-//			if !slices.Equal(textRunes[start:end], wordRunes) {
-//				continue
-//			}
-//
-//			matches = append(matches, transcriptMatch{
-//				Word:      word,
-//				StartRune: start,
-//				EndRune:   end,
-//			})
-//			for i := start; i < end; i++ {
-//				occupied[i] = true
-//			}
-//		}
-//	}
-//	return matches
-//}
-//
-//func transcriptRunesOccupied(occupied []bool, start, end int) bool {
-//	for i := start; i < end; i++ {
-//		if occupied[i] {
-//			return true
-//		}
-//	}
-//	return false
-//}
 //
 //func transcriptHighlightColor(base color.NRGBA) color.NRGBA {
 //	return color.NRGBA{
@@ -3322,18 +3268,6 @@ package cmd
 //			return
 //		}
 //	}
-//}
-//
-//func limitTranscriptLines(text string, limit int) string {
-//	if limit <= 0 || strings.TrimSpace(text) == "" {
-//		return text
-//	}
-//
-//	lines := strings.Split(text, "\n")
-//	if len(lines) <= limit {
-//		return text
-//	}
-//	return strings.Join(lines[len(lines)-limit:], "\n")
 //}
 //
 //func (g *transcriptGUI) statusColor() color.NRGBA {
@@ -3407,38 +3341,4 @@ package cmd
 //		return "Detected running game process."
 //	}
 //	return "Game process not detected."
-//}
-//
-//func normalizeGUISelectionText(text string) string {
-//	fields := strings.Fields(strings.ReplaceAll(text, "\x00", " "))
-//	if len(fields) == 0 {
-//		return ""
-//	}
-//	return strings.Join(fields, " ")
-//}
-//
-//func boolSettingLabel(value bool) string {
-//	if value {
-//		return "On"
-//	}
-//	return "Off"
-//}
-//
-//func findFlashcardSourceLine(displayBuffer, selectedText string) string {
-//	selectedText = normalizeGUISelectionText(selectedText)
-//	if selectedText == "" {
-//		return ""
-//	}
-//
-//	lines := strings.Split(displayBuffer, "\n")
-//	for i := len(lines) - 1; i >= 0; i-- {
-//		line := normalizeGUISelectionText(lines[i])
-//		if line == "" {
-//			continue
-//		}
-//		if strings.Contains(line, selectedText) {
-//			return lines[i]
-//		}
-//	}
-//	return ""
 //}

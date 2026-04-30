@@ -1,8 +1,11 @@
 package gui
 
 import (
+	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
+	bareui "github.com/Seann-Moser/bare/pkg/ui"
+	"github.com/Seann-Moser/bare/pkg/ui/icons"
 	barethemes "github.com/Seann-Moser/bare/pkg/ui/themes"
 )
 
@@ -22,6 +25,39 @@ type DropdownOption struct {
 	TextSize        unit.Sp
 	RecentLineLimit int
 	Clickable       *widget.Clickable
+}
+
+func NewDropDownLayout(drop *bareui.Dropdown, icon string) {
+	drop.Width = unit.Dp(260)
+	drop.MaxHeight = unit.Dp(320)
+	drop.OffsetY = unit.Dp(52)
+	drop.Prefix = icon
+	return
+}
+func LayoutOptionMenu(gtx layout.Context, options []DropdownOption, selected string, theme barethemes.Theme, iconify *icons.Iconify) layout.Dimensions {
+	children := make([]layout.FlexChild, 0, len(options))
+	for i := range options {
+		opt := options[i]
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			btn := bareui.Button{
+				Clickable: opt.Clickable,
+				Text:      opt.Label,
+				Prefix:    opt.Icon,
+				Variant:   dropdownButtonVariant(opt.Label == selected),
+			}
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return btn.Layout(gtx, theme, iconify)
+			})
+		}))
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func dropdownButtonVariant(active bool) bareui.ButtonVariant {
+	if active {
+		return bareui.ButtonPrimary
+	}
+	return bareui.ButtonSecondary
 }
 
 func NewModeOptions() []DropdownOption {
