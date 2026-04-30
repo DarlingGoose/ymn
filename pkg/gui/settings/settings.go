@@ -147,6 +147,9 @@ func (g *Settings) WithTheme(theme barethemes.Theme) *Settings {
 }
 
 func (g *Settings) LayoutPage(gtx layout.Context) layout.Dimensions {
+	if g.iconify == nil {
+		g.iconify = icons.NewIconify() //terrible please set elseware but fine as a fallback
+	}
 	return bareutils.Panel(gtx, g.theme.Color.Surface, unit.Dp(g.theme.Radius.LG), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{
