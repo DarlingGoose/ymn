@@ -1,4 +1,4 @@
-package game
+package testhook
 
 import (
 	_ "embed"
@@ -14,10 +14,7 @@ import (
 )
 
 const (
-	textHookMethodAuto       = "auto"
-	textHookMethodMod        = "mod"
-	textHookMethodTextractor = "textractor"
-	rpgMakerClipboardPlugin  = "WGLClipboardText"
+	rpgMakerClipboardPlugin = "WGLClipboardText"
 )
 
 //go:embed plugins/rpgmakerPlugin.js
@@ -26,26 +23,65 @@ var rpgMakerClipboardPluginSource string
 type RPGMakerHook struct {
 }
 
-//func (h *RPGMakerHook) resolveInstallTextHookTarget(args []string) (string, error) {
-//	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
-//		return args[0], nil
-//	}
-//
-//	selectedName := strings.TrimSpace(installTextHookGame)
-//	if selectedName != "" {
-//		cfg, err := findGameConfig(selectedName)
-//		if err != nil {
-//			return "", err
-//		}
-//		return firstNonEmpty(cfg.GamePath, cfg.Executable), nil
-//	}
-//
-//	cfg, err := selectGameConfigWithTUI("Select a game to install a text hook", "install the text hook")
-//	if err != nil {
-//		return "", err
-//	}
-//	return firstNonEmpty(cfg.GamePath, cfg.Executable), nil
-//}
+func (h *RPGMakerHook) Detect(inputPath string) (TextHookStatus, error) {
+	projectRoot, engine, err := resolveRPGMakerProjectRoot(inputPath)
+	if err != nil {
+		return TextHookStatus{
+			Supported: false,
+			Installed: false,
+			Engine:    string(EngineUnknown),
+			Method:    string(MethodMod),
+			Message:   err.Error(),
+		}, nil
+	}
+
+	compatibility, err := inspectRPGMakerTextHookCompatibility(projectRoot)
+	if err != nil {
+		return TextHookStatus{}, err
+	}
+
+	pluginPath := filepath.Join(projectRoot, "js", "plugins", rpgMakerClipboardPlugin+".js")
+	pluginsConfigPath := filepath.Join(projectRoot, "js", "plugins.js")
+
+	enabled, err := isRPGMakerPluginEnabled(pluginsConfigPath, rpgMakerClipboardPlugin)
+	if err != nil {
+		return TextHookStatus{}, err
+	}
+
+	pluginExists := util.IsExistingFile(pluginPath)
+	installed := pluginExists && enabled
+
+	message := "RPG Maker text hook plugin is not installed."
+	switch {
+	case installed:
+		message = "RPG Maker text hook plugin is installed and enabled."
+	case pluginExists && !enabled:
+		message = "RPG Maker text hook plugin exists but is not enabled in plugins.js."
+	case !pluginExists && enabled:
+		message = "RPG Maker text hook plugin is enabled in plugins.js but the plugin file is missing."
+	}
+
+	return TextHookStatus{
+		Supported:         true,
+		Installed:         installed,
+		Engine:            engine,
+		Method:            string(MethodMod),
+		ProjectRoot:       projectRoot,
+		PluginPath:        pluginPath,
+		PluginsConfigPath: pluginsConfigPath,
+		OutputPath:        filepath.Join(projectRoot, "wgl-dialogue.log"),
+		Compatibility:     compatibility,
+		Message:           message,
+	}, nil
+}
+
+func (h *RPGMakerHook) IsInstalled(inputPath string) (bool, error) {
+	status, err := h.Detect(inputPath)
+	if err != nil {
+		return false, err
+	}
+	return status.Supported && status.Installed, nil
+}
 
 func (h *RPGMakerHook) InstallHook(inputPath string) (TextHookInstallResult, error) {
 	projectRoot, engine, err := resolveRPGMakerProjectRoot(inputPath)
@@ -77,12 +113,27 @@ func (h *RPGMakerHook) InstallHook(inputPath string) (TextHookInstallResult, err
 
 	return TextHookInstallResult{
 		Engine:            engine,
+		Method:            string(MethodMod),
 		PluginPath:        pluginPath,
 		PluginsConfigPath: pluginsConfigPath,
+		OutputPath:        filepath.Join(projectRoot, "wgl-dialogue.log"),
 		Compatibility:     compatibility,
 	}, nil
 }
+func isRPGMakerPluginEnabled(pluginsConfigPath, pluginName string) (bool, error) {
+	configs, err := readRPGMakerPluginConfigs(pluginsConfigPath)
+	if err != nil {
+		return false, err
+	}
 
+	for _, cfg := range configs {
+		if strings.TrimSpace(cfg.Name) == pluginName && cfg.Status {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
 func resolveRPGMakerProjectRoot(inputPath string) (string, string, error) {
 	resolvedPath, err := filepath.Abs(strings.TrimSpace(inputPath))
 	if err != nil {
@@ -120,47 +171,7 @@ func resolveRPGMakerProjectRoot(inputPath string) (string, string, error) {
 }
 
 func (h *RPGMakerHook) InspectHook(inputPath string) (TextHookStatus, error) {
-	projectRoot, engine, err := resolveRPGMakerProjectRoot(inputPath)
-	if err != nil {
-		return TextHookStatus{Message: err.Error()}, nil
-	}
-
-	compatibility, err := inspectRPGMakerTextHookCompatibility(projectRoot)
-	if err != nil {
-		return TextHookStatus{}, err
-	}
-
-	pluginPath := filepath.Join(projectRoot, "js", "plugins", rpgMakerClipboardPlugin+".js")
-	pluginsConfigPath := filepath.Join(projectRoot, "js", "plugins.js")
-	configs, err := readRPGMakerPluginConfigs(pluginsConfigPath)
-	if err != nil {
-		return TextHookStatus{}, err
-	}
-
-	enabled := false
-	for _, cfg := range configs {
-		if strings.TrimSpace(cfg.Name) == rpgMakerClipboardPlugin && cfg.Status {
-			enabled = true
-			break
-		}
-	}
-
-	installed := enabled && util.IsExistingFile(pluginPath)
-	message := "Text hook plugin is not installed."
-	if installed {
-		message = "Text hook plugin is installed and enabled."
-	}
-
-	return TextHookStatus{
-		Supported:         true,
-		Installed:         installed,
-		Engine:            engine,
-		ProjectRoot:       projectRoot,
-		PluginPath:        pluginPath,
-		PluginsConfigPath: pluginsConfigPath,
-		Compatibility:     compatibility,
-		Message:           message,
-	}, nil
+	return h.Detect(inputPath)
 }
 
 func detectRPGMakerEngine(projectRoot string) (string, bool) {
@@ -271,29 +282,50 @@ func ensureRPGMakerPluginEnabled(pluginsConfigPath, pluginName string) error {
 	}
 
 	content := string(data)
-	if strings.Contains(content, "\"name\":\""+pluginName+"\"") || strings.Contains(content, "\"name\": \""+pluginName+"\"") {
-		return nil
-	}
-
-	lastBracket := strings.LastIndex(content, "]")
 	firstBracket := strings.Index(content, "[")
+	lastBracket := strings.LastIndex(content, "]")
 	if firstBracket == -1 || lastBracket == -1 || lastBracket < firstBracket {
 		return fmt.Errorf("plugins.js did not contain a recognizable plugin array: %s", pluginsConfigPath)
 	}
 
-	inner := strings.TrimSpace(content[firstBracket+1 : lastBracket])
-	entry := fmt.Sprintf(`{"name":"%s","status":true,"description":"Capture the latest dialogue and copy it with Ctrl+C.","parameters":{}}`, pluginName)
+	prefix := content[:firstBracket]
+	suffix := content[lastBracket+1:]
 
-	var updated string
-	if inner == "" {
-		updated = content[:firstBracket+1] + "\n" + entry + "\n" + content[lastBracket:]
-	} else {
-		updated = content[:lastBracket] + ",\n" + entry + "\n" + content[lastBracket:]
+	var configs []rpgMakerPluginConfig
+	if err := json.Unmarshal([]byte(content[firstBracket:lastBracket+1]), &configs); err != nil {
+		return fmt.Errorf("decode plugins.js: %w", err)
+	}
+
+	found := false
+	for i := range configs {
+		if strings.TrimSpace(configs[i].Name) == pluginName {
+			configs[i].Status = true
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		configs = append(configs, rpgMakerPluginConfig{
+			Name:   pluginName,
+			Status: true,
+		})
+	}
+
+	encoded, err := json.MarshalIndent(configs, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode plugins.js: %w", err)
+	}
+
+	updated := prefix + string(encoded) + suffix
+	if !strings.HasSuffix(updated, "\n") {
+		updated += "\n"
 	}
 
 	if err := os.WriteFile(pluginsConfigPath, []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write plugins.js: %w", err)
 	}
+
 	return nil
 }
 

@@ -46,20 +46,21 @@ type VerificationStatus struct {
 }
 
 type GameConfig struct {
-	Name          string             `json:"name"`
-	GamePath      string             `json:"game_path"`
-	Executable    string             `json:"executable"`
-	WorkingDir    string             `json:"working_dir"`
-	IconPath      string             `json:"icon_path,omitempty"`
-	ImagePath     string             `json:"image_path,omitempty"`
-	Runner        RunnerType         `json:"runner"`
-	RunnerPath    string             `json:"runner_path"`
-	PrefixPath    string             `json:"prefix_path,omitempty"`
-	RequiresSteam bool               `json:"requires_steam"`
-	SteamAppID    string             `json:"steam_app_id,omitempty"`
-	CreatedAt     time.Time          `json:"created_at"`
-	RuntimeInfo   RuntimeStatus      `json:"runtime_info"`
-	Verification  VerificationStatus `json:"verification"`
+	EnableProxyInjection bool               `json:"enable_proxy_injection"`
+	Name                 string             `json:"name"`
+	GamePath             string             `json:"game_path"`
+	Executable           string             `json:"executable"`
+	WorkingDir           string             `json:"working_dir"`
+	IconPath             string             `json:"icon_path,omitempty"`
+	ImagePath            string             `json:"image_path,omitempty"`
+	Runner               RunnerType         `json:"runner"`
+	RunnerPath           string             `json:"runner_path"`
+	PrefixPath           string             `json:"prefix_path,omitempty"`
+	RequiresSteam        bool               `json:"requires_steam"`
+	SteamAppID           string             `json:"steam_app_id,omitempty"`
+	CreatedAt            time.Time          `json:"created_at"`
+	RuntimeInfo          RuntimeStatus      `json:"runtime_info"`
+	Verification         VerificationStatus `json:"verification"`
 
 	Locale        string `json:"locale,omitempty"`
 	StageToPrefix bool   `json:"stage_to_prefix,omitempty"`
@@ -84,7 +85,6 @@ func (c *GameConfig) Launch() error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-
 	return cmd.Run()
 }
 
@@ -93,7 +93,6 @@ func (c *GameConfig) LaunchInBackground() error {
 	if err != nil {
 		return err
 	}
-
 	logPath := filepath.Join(c.prefixOrGameDir(), "launch.log")
 
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
@@ -288,9 +287,15 @@ func (c *GameConfig) prefixOrGameDir() string {
 func (c *GameConfig) baseEnv() []string {
 	env := cleanWineEnv(os.Environ())
 
-	env = append(env,
-		"WINEDLLOVERRIDES=winemenubuilder.exe=d",
-	)
+	// Standard overrides
+	overrides := "winemenubuilder.exe=d"
+
+	// If the toggle is on, add the version.dll override
+	if c.EnableProxyInjection {
+		overrides += ";version=n,b"
+	}
+
+	env = append(env, "WINEDLLOVERRIDES="+overrides)
 
 	if strings.TrimSpace(c.Locale) != "" {
 		env = append(env,
@@ -301,6 +306,7 @@ func (c *GameConfig) baseEnv() []string {
 
 	return env
 }
+
 func (c *GameConfig) windowsExecutablePath() string {
 	exe := c.executablePath()
 

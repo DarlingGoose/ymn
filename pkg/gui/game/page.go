@@ -15,8 +15,8 @@ import (
 	"github.com/Seann-Moser/bare/pkg/ui/icons"
 	barethemes "github.com/Seann-Moser/bare/pkg/ui/themes"
 	bareutils "github.com/Seann-Moser/bare/pkg/ui/utils"
-	"github.com/Seann-Moser/wgl/pkg/game"
 	"github.com/Seann-Moser/wgl/pkg/game/gameconfig"
+	"github.com/Seann-Moser/wgl/pkg/game/testhook"
 	pkggui "github.com/Seann-Moser/wgl/pkg/gui"
 	"github.com/Seann-Moser/wgl/pkg/util"
 )
@@ -28,7 +28,6 @@ type Page struct {
 	iconify *icons.Iconify
 
 	fileBrowser *filemanager.FileBrowser
-	hook        *game.RPGMakerHook
 	gameList    layout.List
 	configList  widget.List
 
@@ -73,7 +72,6 @@ func New(theme barethemes.Theme) *Page {
 	p := &Page{
 		theme:            theme,
 		fileBrowser:      filemanager.NewFileBrowser(""),
-		hook:             &game.RPGMakerHook{},
 		gameList:         layout.List{Axis: layout.Vertical},
 		configList:       widget.List{List: layout.List{Axis: layout.Vertical}},
 		selectedRunner:   "Auto",
@@ -220,7 +218,7 @@ func (p *Page) LayoutPage(gtx layout.Context) layout.Dimensions {
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body1(p.theme.Gio(), "Save launchable game configs and install the RPG Maker clipboard hook from the same page.")
+					lbl := material.Body1(p.theme.Gio(), "Save launchable game configs and inspect/install supported text hooks from the same page.")
 					lbl.Color = p.theme.Color.TextMuted
 					return lbl.Layout(gtx)
 				}),
@@ -518,15 +516,19 @@ func (p *Page) useBrowserSelection() {
 	p.pathEditor.SetText(selected)
 	p.showBrowser = false
 	p.statusText = "Copied browser selection into the game path field."
+	p.inspectHook()
 }
 
 func (p *Page) analyzePath() {
+	inputPath := strings.TrimSpace(p.pathEditor.Text())
+
 	cfg, err := p.buildConfig()
 	if err != nil {
 		p.previewText = err.Error()
 		p.statusText = err.Error()
 		return
 	}
+
 	p.previewText = strings.Join([]string{
 		"Name: " + cfg.Name,
 		"Resolved Path: " + cfg.GamePath,
@@ -536,6 +538,15 @@ func (p *Page) analyzePath() {
 		"Icon: " + util.FirstNonEmpty(cfg.IconPath, "Unavailable"),
 		"Image: " + util.FirstNonEmpty(cfg.ImagePath, "Unavailable"),
 	}, "\n")
+
+	if inputPath != "" {
+		hook := testhook.NewAutoHook(inputPath)
+		status, err := hook.Detect(inputPath)
+		if err == nil {
+			p.hookStatusText = p.formatHookStatus(status)
+		}
+	}
+
 	p.statusText = fmt.Sprintf("Ready to save %q.", cfg.Name)
 }
 
@@ -586,20 +597,17 @@ func (p *Page) inspectHook() {
 		p.showError("Inspect Hook Failed", "Enter or browse to a game path first.")
 		return
 	}
-	status, err := p.hook.InspectHook(inputPath)
+
+	hook := testhook.NewAutoHook(inputPath)
+
+	status, err := hook.Detect(inputPath)
 	if err != nil {
 		p.hookStatusText = err.Error()
 		p.showError("Inspect Hook Failed", err.Error())
 		return
 	}
-	lines := []string{
-		status.Message,
-		"Engine: " + util.FirstNonEmpty(status.Engine, "Unknown"),
-		"Project Root: " + util.FirstNonEmpty(status.ProjectRoot, "Unavailable"),
-		"Plugin Path: " + util.FirstNonEmpty(status.PluginPath, "Unavailable"),
-	}
-	lines = append(lines, status.Compatibility.Findings...)
-	p.hookStatusText = strings.Join(lines, "\n")
+
+	p.hookStatusText = p.formatHookStatus(status)
 }
 
 func (p *Page) installHook() {
@@ -608,23 +616,117 @@ func (p *Page) installHook() {
 		p.showError("Install Hook Failed", "Enter or browse to a game path first.")
 		return
 	}
-	result, err := p.hook.InstallHook(inputPath)
+
+	hook := testhook.NewAutoHook(inputPath)
+
+	status, err := hook.Detect(inputPath)
 	if err != nil {
 		p.hookStatusText = err.Error()
 		p.showError("Install Hook Failed", err.Error())
 		return
 	}
-	lines := []string{
-		"Text hook plugin is installed and enabled.",
-		"Engine: " + result.Engine,
-		"Plugin Path: " + result.PluginPath,
-		"Plugins Config: " + result.PluginsConfigPath,
+
+	if !status.Supported {
+		p.hookStatusText = p.formatHookStatus(status)
+		p.statusText = "No supported in-engine text hook is available for this game."
+		return
 	}
-	lines = append(lines, result.Compatibility.Findings...)
-	p.hookStatusText = strings.Join(lines, "\n")
-	p.statusText = "Installed the clipboard text hook plugin for this game."
+
+	result, err := hook.InstallHook(inputPath)
+	if err != nil {
+		p.hookStatusText = err.Error()
+		p.showError("Install Hook Failed", err.Error())
+		return
+	}
+
+	// Re-detect after install so Installed/Loaded are accurate.
+	updatedStatus, detectErr := hook.Detect(inputPath)
+	if detectErr == nil {
+		p.hookStatusText = p.formatHookStatus(updatedStatus)
+	} else {
+		p.hookStatusText = p.formatHookInstallResult(result)
+	}
+
+	p.statusText = fmt.Sprintf("Installed text hook for %s.", util.FirstNonEmpty(result.Engine, "this game"))
+}
+func (p *Page) formatHookStatus(status testhook.TextHookStatus) string {
+	lines := []string{
+		status.Message,
+		"Supported: " + boolLabel(status.Supported),
+		"Installed: " + boolLabel(status.Installed),
+		"Loaded: " + boolLabel(status.Loaded),
+		"Engine: " + util.FirstNonEmpty(status.Engine, "Unknown"),
+		"Method: " + util.FirstNonEmpty(status.Method, "Unavailable"),
+		"Project Root: " + util.FirstNonEmpty(status.ProjectRoot, "Unavailable"),
+	}
+
+	if strings.TrimSpace(status.PluginPath) != "" {
+		lines = append(lines, "Plugin Path: "+status.PluginPath)
+	}
+	if strings.TrimSpace(status.PluginsConfigPath) != "" {
+		lines = append(lines, "Plugins Config: "+status.PluginsConfigPath)
+	}
+	if strings.TrimSpace(status.OutputPath) != "" {
+		lines = append(lines, "Output: "+status.OutputPath)
+	}
+
+	if strings.TrimSpace(status.Compatibility.RiskLevel) != "" {
+		lines = append(lines, "Risk: "+status.Compatibility.RiskLevel)
+	}
+
+	lines = appendHookFindings(lines, status.Compatibility.Findings)
+
+	return strings.Join(lines, "\n")
 }
 
+func (p *Page) formatHookInstallResult(result testhook.TextHookInstallResult) string {
+	lines := []string{
+		"Text hook install completed.",
+		"Engine: " + util.FirstNonEmpty(result.Engine, "Unknown"),
+		"Method: " + util.FirstNonEmpty(result.Method, "Unavailable"),
+	}
+
+	if strings.TrimSpace(result.PluginPath) != "" {
+		lines = append(lines, "Plugin Path: "+result.PluginPath)
+	}
+	if strings.TrimSpace(result.PluginsConfigPath) != "" {
+		lines = append(lines, "Plugins Config: "+result.PluginsConfigPath)
+	}
+	if strings.TrimSpace(result.OutputPath) != "" {
+		lines = append(lines, "Output: "+result.OutputPath)
+	}
+	if strings.TrimSpace(result.Compatibility.RiskLevel) != "" {
+		lines = append(lines, "Risk: "+result.Compatibility.RiskLevel)
+	}
+
+	lines = appendHookFindings(lines, result.Compatibility.Findings)
+
+	return strings.Join(lines, "\n")
+}
+
+func appendHookFindings(lines []string, findings []string) []string {
+	if len(findings) == 0 {
+		return lines
+	}
+
+	lines = append(lines, "Findings:")
+	for _, finding := range findings {
+		finding = strings.TrimSpace(finding)
+		if finding == "" {
+			continue
+		}
+		lines = append(lines, "- "+finding)
+	}
+
+	return lines
+}
+
+func boolLabel(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
+}
 func (p *Page) buildConfig() (gameconfig.GameConfig, error) {
 	inputPath := strings.TrimSpace(p.pathEditor.Text())
 	if inputPath == "" {
