@@ -13,11 +13,11 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
-	bareui "github.com/Seann-Moser/bare/pkg/ui"
-	"github.com/Seann-Moser/bare/pkg/ui/icons"
-	barethemes "github.com/Seann-Moser/bare/pkg/ui/themes"
-	bareutils "github.com/Seann-Moser/bare/pkg/ui/utils"
-	"github.com/Seann-Moser/wgl/pkg/gui"
+	bareui "github.com/DarlingGoose/bare/pkg/ui"
+	"github.com/DarlingGoose/bare/pkg/ui/icons"
+	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
+	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
+	"github.com/DarlingGoose/wgl/pkg/gui"
 )
 
 const (

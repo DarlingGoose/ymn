@@ -3,7 +3,7 @@ package dictionary
 import (
 	"sync"
 
-	"github.com/Seann-Moser/jpndict"
+	"github.com/DarlingGoose/jpndict"
 )
 
 type Lookup struct {

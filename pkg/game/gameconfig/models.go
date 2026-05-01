@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Seann-Moser/wgl/pkg/util"
+	"github.com/DarlingGoose/wgl/pkg/util"
 )
 
 type RunnerType string
@@ -291,9 +291,6 @@ func (c *GameConfig) baseEnv() []string {
 	overrides := "winemenubuilder.exe=d"
 
 	// If the toggle is on, add the version.dll override
-	if c.EnableProxyInjection {
-		overrides += ";version=n,b"
-	}
 
 	env = append(env, "WINEDLLOVERRIDES="+overrides)
 

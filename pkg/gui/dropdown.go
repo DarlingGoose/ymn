@@ -4,9 +4,9 @@ import (
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
-	bareui "github.com/Seann-Moser/bare/pkg/ui"
-	"github.com/Seann-Moser/bare/pkg/ui/icons"
-	barethemes "github.com/Seann-Moser/bare/pkg/ui/themes"
+	bareui "github.com/DarlingGoose/bare/pkg/ui"
+	"github.com/DarlingGoose/bare/pkg/ui/icons"
+	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
 )
 
 type OptionsList struct {
