@@ -1,11 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-	"strings"
-
-	"github.com/DarlingGoose/wgl/pkg/game/gameconfig"
-	"github.com/DarlingGoose/wgl/pkg/game/launcher"
 	"github.com/spf13/cobra"
 )
 
@@ -19,40 +14,8 @@ var runGameCmd = &cobra.Command{
 	Short:   "Launch a previously added game",
 	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		selectedName := strings.TrimSpace(runGameName)
-		if selectedName == "" && len(args) > 0 {
-			selectedName = args[0]
-		}
-
-		var cfg *gameconfig.GameConfig
-		var err error
-		if selectedName == "" {
-			picker, err := launcher.NewPicker("Select a game to launch", "launch")
-			if err != nil {
-				return err
-			}
-			cfg, err = picker.SelectGameConfig()
-			if err != nil {
-				return err
-			}
-		} else {
-			cfg, err = gameconfig.FindConfig(selectedName)
-			if err != nil {
-				return err
-			}
-		}
-
-		if runGameSaveLauncher {
-			desktopPath, err := launcher.SaveDesktopEntry(cfg, runGameLauncherDir)
-			if err != nil {
-				return err
-			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "saved launcher: %s\n", desktopPath)
-			return nil
-		}
-
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "launching %s with %s\n", cfg.Name, cfg.Runner)
-		return cfg.Launch()
+		//todo vntext wrapper + launch gui
+		return nil
 	},
 }
 

@@ -15,6 +15,7 @@ type Lookup struct {
 	PronunciationText string
 	Pitch             string
 	AudioPath         string
+	response          *jpndict.Response
 }
 
 var dictionaryState struct {

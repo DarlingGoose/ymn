@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"os/exec"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -25,10 +23,11 @@ import (
 	"github.com/DarlingGoose/bare/pkg/ui/icons"
 	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
+	vngame "github.com/DarlingGoose/vntext/pkg/game"
+	"github.com/DarlingGoose/vntext/pkg/runner"
 	"github.com/DarlingGoose/wgl/pkg/anki"
 	"github.com/DarlingGoose/wgl/pkg/dictionary"
 	flashcards "github.com/DarlingGoose/wgl/pkg/flashcard"
-	"github.com/DarlingGoose/wgl/pkg/game/gameconfig"
 	"github.com/DarlingGoose/wgl/pkg/gui"
 	guitoast "github.com/DarlingGoose/wgl/pkg/gui/toast"
 	"github.com/DarlingGoose/wgl/pkg/japanese"
@@ -86,9 +85,8 @@ type Page struct {
 	ankiURL                string
 	pushSync               bool
 	statusText             string
-	gameRunning            bool
-	gameRunningPID         int
-	currentConfig          *gameconfig.GameConfig
+	currentConfig          *vngame.Game
+	runnerStatus           *runner.ProcessStatus
 	selectedTextSizeName   string
 	selectedRecentLines    string
 	transcriptTextSize     unit.Sp
@@ -158,7 +156,7 @@ func (p *Page) WithIcon(icon *icons.Iconify) *Page {
 	return p
 }
 
-func (p *Page) SetContext(activeGameName, logPath, ankiURL string, cfg *gameconfig.GameConfig) *Page {
+func (p *Page) SetContext(activeGameName, logPath, ankiURL string, cfg *vngame.Game) *Page {
 	p.activeGameName = strings.TrimSpace(activeGameName)
 	p.logPath = strings.TrimSpace(logPath)
 	p.ankiURL = strings.TrimSpace(ankiURL)
@@ -172,8 +170,14 @@ func (p *Page) SetPushSync(pushSync bool) *Page {
 }
 
 func (p *Page) SetRunningState(running bool, pid int) *Page {
-	p.gameRunning = running
-	p.gameRunningPID = pid
+	if !running {
+		p.runnerStatus = nil
+		return p
+	}
+	p.runnerStatus = &runner.ProcessStatus{
+		PID:    pid,
+		Status: runner.StatusRunning,
+	}
 	return p
 }
 
@@ -313,7 +317,7 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 			p.showError("Audio Playback Failed", "No flashcard is selected.")
 			continue
 		}
-		if err := playAudioFile(p.popupFlashcard.AudioPath); err != nil {
+		if err := playFlashcardAudio(*p.popupFlashcard); err != nil {
 			p.showError("Audio Playback Failed", err.Error())
 		}
 	}
@@ -395,7 +399,7 @@ func (p *Page) layoutTranscriptPanel(gtx layout.Context) layout.Dimensions {
 					Bottom: unit.Dp(10),
 				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					metaSpacing := unit.Dp(14)
-					if !p.gameRunning {
+					if p.runnerStatus == nil {
 						metaSpacing = 0
 					}
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -435,7 +439,7 @@ func (p *Page) layoutTranscriptPanel(gtx layout.Context) layout.Dimensions {
 				})
 			}),
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				if !p.gameRunning || p.shouldDockTranscriptComposer(gtx) {
+				if p.runnerStatus == nil || p.shouldDockTranscriptComposer(gtx) {
 					return layout.Dimensions{}
 				}
 				return p.layoutFlashcardComposerOverlay(gtx)
@@ -445,7 +449,7 @@ func (p *Page) layoutTranscriptPanel(gtx layout.Context) layout.Dimensions {
 }
 
 func (p *Page) layoutTranscriptWorkspace(gtx layout.Context) layout.Dimensions {
-	if !p.gameRunning || !p.shouldDockTranscriptComposer(gtx) {
+	if p.runnerStatus == nil || !p.shouldDockTranscriptComposer(gtx) {
 		return p.layoutTranscriptBodyPanel(gtx)
 	}
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
@@ -468,7 +472,7 @@ func (p *Page) layoutTranscriptBodyPanel(gtx layout.Context) layout.Dimensions {
 	gtx.Constraints.Min = gtx.Constraints.Max
 	return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			if !p.gameRunning {
+			if p.runnerStatus == nil {
 				return p.layoutTranscriptIdleState(gtx)
 			}
 			return p.layoutTranscriptEditor(gtx)
@@ -531,7 +535,7 @@ func (p *Page) layoutTranscriptActions(gtx layout.Context) layout.Dimensions {
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						if p.gameRunning {
+						if p.runnerStatus != nil {
 							return launchButton.Layout(gtx.Disabled(), p.theme, p.iconify)
 						}
 						return launchButton.Layout(gtx, p.theme, p.iconify)
@@ -556,7 +560,7 @@ func (p *Page) layoutTranscriptActions(gtx layout.Context) layout.Dimensions {
 	}
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if p.gameRunning {
+			if p.runnerStatus != nil {
 				return launchButton.Layout(gtx.Disabled(), p.theme, p.iconify)
 			}
 			return launchButton.Layout(gtx, p.theme, p.iconify)
@@ -1235,7 +1239,7 @@ func (p *Page) playStructureTokenAudio(key string) {
 		p.showError("Audio Playback Failed", "No audio is available for this flashcard.")
 		return
 	}
-	if err := playAudioFile(tokenCard.AudioPath); err != nil {
+	if err := playFlashcardAudio(tokenCard); err != nil {
 		p.showError("Audio Playback Failed", err.Error())
 	}
 }
@@ -1663,7 +1667,7 @@ func (p *Page) playCurrentLookupAudio() {
 		p.showError("Audio Playback Failed", "No audio is available for the current lookup.")
 		return
 	}
-	if err := playAudioFile(p.lookupResult.AudioPath); err != nil {
+	if err := dictionary.PlayLookupAudio(*p.lookupResult); err != nil {
 		p.showError("Audio Playback Failed", err.Error())
 	}
 }
@@ -1701,7 +1705,7 @@ func (p *Page) playLookupAudioByKey(key string) {
 			p.showError("Audio Playback Failed", "No audio is available for this lookup result.")
 			return
 		}
-		if err := playAudioFile(lookup.AudioPath); err != nil {
+		if err := dictionary.PlayLookupAudio(lookup); err != nil {
 			p.showError("Audio Playback Failed", err.Error())
 		}
 		return
@@ -1756,19 +1760,22 @@ func (p *Page) syncCurrentGameToAnki() error {
 }
 
 func (p *Page) launchCurrentGameInBackground() {
+	if p.runnerStatus != nil {
+		p.statusText = p.transcriptRunningStatusText()
+		return
+	}
 	if p.currentConfig == nil || strings.TrimSpace(p.currentConfig.Name) == "" {
 		p.showError("Launch Failed", "The selected game configuration is not loaded yet.")
 		return
 	}
-	if p.gameRunning {
-		p.statusText = p.transcriptRunningStatusText()
-		return
-	}
-	if err := p.currentConfig.LaunchInBackground(); err != nil {
+	auto := runner.New()
+	status, err := auto.RunBackground(p.currentConfig)
+	if err != nil {
 		p.statusText = err.Error()
 		p.showError("Launch Failed", err.Error())
 		return
 	}
+	p.runnerStatus = status
 	p.statusText = fmt.Sprintf("Launching %s in the background.", p.currentConfig.Name)
 }
 
@@ -1920,7 +1927,7 @@ func (p *Page) openTranscriptHighlightPopup(key string) {
 		p.popupMatchKey = match.Key
 		p.popupWord = match.Word
 		if p.autoPlayHighlightAudio {
-			_ = playAudioFile(match.Card.AudioPath)
+			_ = playFlashcardAudio(match.Card)
 		}
 		return
 	}
@@ -1974,30 +1981,30 @@ func (p *Page) transcriptComposerOverlayWidth(gtx layout.Context) int {
 }
 
 func (p *Page) transcriptLaunchButtonLabel() string {
-	if p.gameRunning {
+	if p.runnerStatus != nil {
 		return "Game Running"
 	}
 	return "Launch Game"
 }
 
 func (p *Page) transcriptLaunchButtonIcon() string {
-	if p.gameRunning {
+	if p.runnerStatus != nil {
 		return "mdi:check-circle-outline"
 	}
 	return "mdi:play-box-outline"
 }
 
 func (p *Page) transcriptLaunchButtonVariant() bareui.ButtonVariant {
-	if p.gameRunning {
+	if p.runnerStatus != nil {
 		return bareui.ButtonSecondary
 	}
 	return bareui.ButtonPrimary
 }
 
 func (p *Page) transcriptRunningStatusText() string {
-	if p.gameRunning {
-		if p.gameRunningPID > 0 {
-			return fmt.Sprintf("Detected running game process (pid %d).", p.gameRunningPID)
+	if p.runnerStatus != nil {
+		if p.runnerStatus.PID > 0 {
+			return fmt.Sprintf("Detected running game process (pid %d).", p.runnerStatus.PID)
 		}
 		return "Detected running game process."
 	}
@@ -2161,37 +2168,10 @@ func shouldMergeHighlightRect(a, b image.Rectangle) bool {
 	return b.Min.X <= a.Max.X+6
 }
 
-func playAudioFile(path string) error {
-	path = strings.TrimSpace(path)
-	if !util.IsExistingFile(path) {
-		return fmt.Errorf("audio file not found: %s", path)
+func playFlashcardAudio(card flashcards.Flashcard) error {
+	word := util.FirstNonEmpty(card.Text, card.Reading)
+	if strings.TrimSpace(word) == "" {
+		return fmt.Errorf("no audio is available for this flashcard")
 	}
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		if _, err := exec.LookPath("afplay"); err == nil {
-			cmd = exec.Command("afplay", path)
-			break
-		}
-		cmd = exec.Command("open", path)
-	case "windows":
-
-		cmd = exec.Command("cmd", "/c", "start", "", path)
-	default:
-		for _, candidate := range [][]string{
-			{"xdg-open", path},
-			{"mpv", path},
-			{"ffplay", "-nodisp", "-autoexit", path},
-			{"vlc", "--play-and-exit", path},
-		} {
-			if _, err := exec.LookPath(candidate[0]); err == nil {
-				cmd = exec.Command(candidate[0], candidate[1:]...)
-				break
-			}
-		}
-	}
-	if cmd == nil {
-		return fmt.Errorf("no supported audio player found")
-	}
-	return cmd.Start()
+	return dictionary.PlayAudioForText(word)
 }

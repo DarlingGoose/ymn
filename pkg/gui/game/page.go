@@ -15,8 +15,9 @@ import (
 	"github.com/DarlingGoose/bare/pkg/ui/icons"
 	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
-	"github.com/DarlingGoose/wgl/pkg/game/gameconfig"
-	"github.com/DarlingGoose/wgl/pkg/game/testhook"
+	"github.com/DarlingGoose/vntext/pkg/engine/auto"
+	vngame "github.com/DarlingGoose/vntext/pkg/game"
+	"github.com/DarlingGoose/vntext/pkg/gameConfig"
 	pkggui "github.com/DarlingGoose/wgl/pkg/gui"
 	"github.com/DarlingGoose/wgl/pkg/util"
 )
@@ -55,17 +56,27 @@ type Page struct {
 	previewText    string
 	hookStatusText string
 	showBrowser    bool
+	installing     bool
+	installResult  chan gameInstallResult
 
 	currentConfigName string
 	loadedConfigName  string
-	configs           []gameconfig.GameConfig
+	draftConfig       *vngame.Game
+	configs           []*vngame.Game
 	gameSelectClicks  map[string]*widget.Clickable
 
-	OnSaved    func(config *gameconfig.GameConfig)
-	OnSelected func(config *gameconfig.GameConfig)
+	OnSaved    func(config *vngame.Game)
+	OnSelected func(config *vngame.Game)
 	OnNew      func()
 	OnDeleted  func(name string)
 	OnError    func(title, body string)
+}
+
+type gameInstallResult struct {
+	cfg     *vngame.Game
+	preview string
+	title   string
+	err     error
 }
 
 func New(theme barethemes.Theme) *Page {
@@ -101,8 +112,8 @@ func (p *Page) WithIcon(icon *icons.Iconify) *Page {
 	return p
 }
 
-func (p *Page) SetConfigs(configs []gameconfig.GameConfig) *Page {
-	p.configs = append([]gameconfig.GameConfig(nil), configs...)
+func (p *Page) SetConfigs(configs []*vngame.Game) *Page {
+	p.configs = append([]*vngame.Game(nil), configs...)
 	valid := make(map[string]struct{}, len(p.configs))
 	for _, cfg := range p.configs {
 		valid[cfg.Name] = struct{}{}
@@ -118,7 +129,7 @@ func (p *Page) SetConfigs(configs []gameconfig.GameConfig) *Page {
 	return p
 }
 
-func (p *Page) SetCurrentConfig(cfg *gameconfig.GameConfig) *Page {
+func (p *Page) SetCurrentConfig(cfg *vngame.Game) *Page {
 	if cfg == nil {
 		return p
 	}
@@ -131,6 +142,7 @@ func (p *Page) SetCurrentConfig(cfg *gameconfig.GameConfig) *Page {
 	}
 	p.currentConfigName = cfg.Name
 	p.loadedConfigName = cfg.Name
+	p.draftConfig = cfg
 	p.showBrowser = false
 	p.pathEditor.SetText(util.FirstNonEmpty(cfg.GamePath, cfg.Executable))
 	p.steamAppIDEditor.SetText(cfg.SteamAppID)
@@ -138,11 +150,11 @@ func (p *Page) SetCurrentConfig(cfg *gameconfig.GameConfig) *Page {
 	p.imagePathEditor.SetText(cfg.ImagePath)
 	p.requiresSteam.Value = cfg.RequiresSteam
 	switch cfg.Runner {
-	case gameconfig.RunnerWine:
+	case vngame.RunnerWine:
 		p.selectedRunner = "Wine"
-	case gameconfig.RunnerProton:
+	case vngame.RunnerProton:
 		p.selectedRunner = "Proton"
-	case gameconfig.RunnerSteam:
+	case vngame.RunnerSteam:
 		p.selectedRunner = "Steam"
 	default:
 		p.selectedRunner = "Auto"
@@ -150,7 +162,8 @@ func (p *Page) SetCurrentConfig(cfg *gameconfig.GameConfig) *Page {
 	return p
 }
 
-func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window) {
+func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, w *app.Window) {
+	p.consumeInstallResult(w)
 	p.runnerDropdown.Update(gtx)
 	for i := range p.runnerOptions {
 		opt := &p.runnerOptions[i]
@@ -162,16 +175,22 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 	for _, cfg := range p.filteredConfigs() {
 		click := p.gameSelectClicks[cfg.Name]
 		for click.Clicked(gtx) {
+			if p.installing {
+				continue
+			}
 			cfgCopy := cfg
-			p.SetCurrentConfig(&cfgCopy)
+			p.SetCurrentConfig(cfgCopy)
 			p.showBrowser = false
 			p.statusText = fmt.Sprintf("Loaded saved game %q.", cfg.Name)
 			if p.OnSelected != nil {
-				p.OnSelected(&cfgCopy)
+				p.OnSelected(cfgCopy)
 			}
 		}
 	}
 	for p.newGameButton.Clicked(gtx) {
+		if p.installing {
+			continue
+		}
 		p.resetConfigForm()
 		p.showBrowser = true
 		p.statusText = "Creating a new game config. Use the file browser to choose a folder or executable."
@@ -182,26 +201,30 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 		}
 	}
 	for p.toggleBrowserButton.Clicked(gtx) {
+		if p.installing {
+			continue
+		}
 		p.showBrowser = !p.showBrowser
 	}
 	for p.useSelectionButton.Clicked(gtx) {
 		p.useBrowserSelection()
 	}
 	for p.analyzeButton.Clicked(gtx) {
-		p.analyzePath()
+		p.startAnalyzePath(w)
 	}
 	for p.saveButton.Clicked(gtx) {
-		p.saveConfig()
+		p.saveConfig(w)
 	}
 	for p.deleteButton.Clicked(gtx) {
+		if p.installing {
+			continue
+		}
 		p.deleteConfig()
 	}
-	for p.inspectHookButton.Clicked(gtx) {
-		p.inspectHook()
-	}
-	for p.installHookButton.Clicked(gtx) {
-		p.installHook()
-	}
+
+	//for p.installHookButton.Clicked(gtx) {
+	//	p.installHook()
+	//}
 }
 
 func (p *Page) LayoutPage(gtx layout.Context) layout.Dimensions {
@@ -292,7 +315,7 @@ func (p *Page) layoutSavedGamesPanel(gtx layout.Context) layout.Dimensions {
 	})
 }
 
-func (p *Page) layoutSavedGameRow(gtx layout.Context, cfg gameconfig.GameConfig) layout.Dimensions {
+func (p *Page) layoutSavedGameRow(gtx layout.Context, cfg *vngame.Game) layout.Dimensions {
 	variant := bareui.ButtonSecondary
 	if cfg.Name == p.currentConfigName {
 		variant = bareui.ButtonPrimary
@@ -343,8 +366,8 @@ func (p *Page) layoutConfigPanel(gtx layout.Context) layout.Dimensions {
 
 	useSelection := bareui.Button{Clickable: &p.useSelectionButton, Text: "Use Browser Selection", Prefix: "mdi:folder-check-outline", Variant: bareui.ButtonSecondary}
 	toggleBrowser := bareui.Button{Clickable: &p.toggleBrowserButton, Text: p.browserButtonLabel(), Prefix: p.browserButtonIcon(), Variant: bareui.ButtonSecondary}
-	analyze := bareui.Button{Clickable: &p.analyzeButton, Text: "Auto Populate Info", Prefix: "mdi:auto-fix", Variant: bareui.ButtonSecondary}
-	save := bareui.Button{Clickable: &p.saveButton, Text: "Save Game", Prefix: "mdi:content-save-outline", Variant: bareui.ButtonPrimary}
+	analyze := bareui.Button{Clickable: &p.analyzeButton, Text: p.installActionLabel("Auto Populate Info"), Prefix: p.installActionIcon("mdi:auto-fix"), Variant: bareui.ButtonSecondary}
+	save := bareui.Button{Clickable: &p.saveButton, Text: p.installActionLabel("Save Game"), Prefix: p.installActionIcon("mdi:content-save-outline"), Variant: bareui.ButtonPrimary}
 	deleteButton := bareui.Button{Clickable: &p.deleteButton, Text: "Delete Game", Prefix: "mdi:trash-can-outline", Variant: bareui.ButtonGhost}
 	inspectHook := bareui.Button{Clickable: &p.inspectHookButton, Text: "Inspect Hook", Prefix: "mdi:puzzle-check-outline", Variant: bareui.ButtonSecondary}
 	installHook := bareui.Button{Clickable: &p.installHookButton, Text: "Install Hook", Prefix: "mdi:puzzle-plus-outline", Variant: bareui.ButtonPrimary}
@@ -364,18 +387,31 @@ func (p *Page) layoutConfigPanel(gtx layout.Context) layout.Dimensions {
 					return lbl.Layout(gtx)
 				},
 				bareutils.SpacerH(unit.Dp(14)),
-				func(gtx layout.Context) layout.Dimensions { return toggleBrowser.Layout(gtx, p.theme, p.iconify) },
+				func(gtx layout.Context) layout.Dimensions {
+					if p.installing {
+						return toggleBrowser.Layout(gtx.Disabled(), p.theme, p.iconify)
+					}
+					return toggleBrowser.Layout(gtx, p.theme, p.iconify)
+				},
 				bareutils.SpacerH(unit.Dp(12)),
 				pathEditor.Layout,
 				bareutils.SpacerH(unit.Dp(12)),
 				func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions { return analyze.Layout(gtx, p.theme, p.iconify) }),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if p.installing {
+								return analyze.Layout(gtx.Disabled(), p.theme, p.iconify)
+							}
+							return analyze.Layout(gtx, p.theme, p.iconify)
+						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							if !p.showBrowser {
 								return layout.Dimensions{}
 							}
 							return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								if p.installing {
+									return useSelection.Layout(gtx.Disabled(), p.theme, p.iconify)
+								}
 								return useSelection.Layout(gtx, p.theme, p.iconify)
 							})
 						}),
@@ -410,7 +446,12 @@ func (p *Page) layoutConfigPanel(gtx layout.Context) layout.Dimensions {
 					return p.layoutSummaryPanel(gtx, "Text Hook", p.hookStatusText)
 				},
 				bareutils.SpacerH(unit.Dp(14)),
-				func(gtx layout.Context) layout.Dimensions { return save.Layout(gtx, p.theme, p.iconify) },
+				func(gtx layout.Context) layout.Dimensions {
+					if p.installing {
+						return save.Layout(gtx.Disabled(), p.theme, p.iconify)
+					}
+					return save.Layout(gtx, p.theme, p.iconify)
+				},
 				func(gtx layout.Context) layout.Dimensions {
 					if strings.TrimSpace(p.currentConfigName) == "" {
 						return layout.Dimensions{}
@@ -505,6 +546,9 @@ func (p *Page) layoutInfoRow(gtx layout.Context, label, current string, control 
 }
 
 func (p *Page) useBrowserSelection() {
+	if p.installing {
+		return
+	}
 	selected := strings.TrimSpace(p.fileBrowser.SelectedPath)
 	if selected == "" {
 		selected = strings.TrimSpace(p.fileBrowser.Dir)
@@ -519,17 +563,44 @@ func (p *Page) useBrowserSelection() {
 	p.inspectHook()
 }
 
-func (p *Page) analyzePath() {
+func (p *Page) startAnalyzePath(w *app.Window) {
+	if p.installing {
+		return
+	}
 	inputPath := strings.TrimSpace(p.pathEditor.Text())
-
-	cfg, err := p.buildConfig()
-	if err != nil {
-		p.previewText = err.Error()
-		p.statusText = err.Error()
+	if inputPath == "" {
+		p.showError("Install Game Failed", "Enter or browse to a game path first.")
 		return
 	}
 
-	p.previewText = strings.Join([]string{
+	p.installing = true
+	p.statusText = "Installing game config and text hook..."
+	p.hookStatusText = "Installing text hook..."
+	p.previewText = "Working in the background."
+	p.installResult = make(chan gameInstallResult, 1)
+
+	go func() {
+		p.installResult <- installGameConfig(inputPath)
+		if w != nil {
+			w.Invalidate()
+		}
+	}()
+}
+
+func installGameConfig(inputPath string) gameInstallResult {
+	eng, err := auto.SelectEngine(inputPath)
+	if err != nil {
+		return gameInstallResult{title: "Engine Select Failed", err: err}
+	}
+	cfg, err := eng.InstallGame(inputPath)
+	if err != nil {
+		return gameInstallResult{title: "Install Game Failed", err: err}
+	}
+	err = eng.InstallTextHook(cfg)
+	if err != nil {
+		return gameInstallResult{title: "Install Text Hook Failed", err: err}
+	}
+	preview := strings.Join([]string{
 		"Name: " + cfg.Name,
 		"Resolved Path: " + cfg.GamePath,
 		"Executable: " + cfg.Executable,
@@ -539,56 +610,72 @@ func (p *Page) analyzePath() {
 		"Image: " + util.FirstNonEmpty(cfg.ImagePath, "Unavailable"),
 	}, "\n")
 
-	if inputPath != "" {
-		hook := testhook.NewAutoHook(inputPath)
-		status, err := hook.Detect(inputPath)
-		if err == nil {
-			p.hookStatusText = p.formatHookStatus(status)
-		}
+	err = gameConfig.WriteGameConfig(gameConfig.DefaultGameConfigPath(cfg), cfg)
+	if err != nil {
+		return gameInstallResult{title: "Save Game Failed", err: err}
 	}
-
-	p.statusText = fmt.Sprintf("Ready to save %q.", cfg.Name)
+	return gameInstallResult{cfg: cfg, preview: preview}
 }
 
-func (p *Page) saveConfig() {
-	cfg, err := p.buildConfig()
-	if err != nil {
-		p.statusText = err.Error()
-		p.showError("Save Game Failed", err.Error())
+func (p *Page) consumeInstallResult(w *app.Window) {
+	if p.installResult == nil {
 		return
 	}
-	if _, err := gameconfig.SaveGameConfig(cfg); err != nil {
-		p.statusText = err.Error()
-		p.showError("Save Game Failed", err.Error())
-		return
+	select {
+	case result := <-p.installResult:
+		p.installing = false
+		p.installResult = nil
+		if result.err != nil {
+			p.statusText = result.err.Error()
+			p.hookStatusText = "Text hook install did not complete."
+			p.showError(util.FirstNonEmpty(result.title, "Install Game Failed"), result.err.Error())
+			return
+		}
+		cfg := result.cfg
+		if cfg == nil {
+			p.statusText = "Install completed without returning a game config."
+			return
+		}
+		p.previewText = result.preview
+		p.hookStatusText = "Text hook installed."
+		p.currentConfigName = cfg.Name
+		p.draftConfig = cfg
+		p.statusText = fmt.Sprintf("Saved Config %q.", cfg.Name)
+		p.loadedConfigName = cfg.Name
+		if p.OnSaved != nil {
+			p.OnSaved(cfg)
+		}
+		if w != nil {
+			w.Invalidate()
+		}
+	default:
 	}
-	p.currentConfigName = cfg.Name
-	p.statusText = fmt.Sprintf("Saved %q.", cfg.Name)
-	p.loadedConfigName = cfg.Name
-	if p.OnSaved != nil {
-		p.OnSaved(&cfg)
-	}
+}
+
+func (p *Page) saveConfig(w *app.Window) {
+	p.startAnalyzePath(w)
 }
 
 func (p *Page) deleteConfig() {
-	name := strings.TrimSpace(p.currentConfigName)
-	if name == "" {
-		p.showError("Delete Game Failed", "Load a saved game config before deleting it.")
-		return
-	}
-	if err := gameconfig.DeleteGameConfig(name); err != nil {
-		p.statusText = err.Error()
-		p.showError("Delete Game Failed", err.Error())
-		return
-	}
-	p.resetConfigForm()
-	p.showBrowser = true
-	p.previewText = ""
-	p.hookStatusText = "Select a game or path to inspect text hook support."
-	p.statusText = fmt.Sprintf("Deleted %q.", name)
-	if p.OnDeleted != nil {
-		p.OnDeleted(name)
-	}
+	// todo
+	//name := strings.TrimSpace(p.currentConfigName)
+	//if name == "" {
+	//	p.showError("Delete Game Failed", "Load a saved game config before deleting it.")
+	//	return
+	//}
+	//if err := gameconfig.DeleteGameConfig(name); err != nil {
+	//	p.statusText = err.Error()
+	//	p.showError("Delete Game Failed", err.Error())
+	//	return
+	//}
+	//p.resetConfigForm()
+	//p.showBrowser = true
+	//p.previewText = ""
+	//p.hookStatusText = "Select a game or path to inspect text hook support."
+	//p.statusText = fmt.Sprintf("Deleted %q.", name)
+	//if p.OnDeleted != nil {
+	//	p.OnDeleted(name)
+	//}
 }
 
 func (p *Page) inspectHook() {
@@ -597,112 +684,78 @@ func (p *Page) inspectHook() {
 		p.showError("Inspect Hook Failed", "Enter or browse to a game path first.")
 		return
 	}
-
-	hook := testhook.NewAutoHook(inputPath)
-
-	status, err := hook.Detect(inputPath)
+	_, err := auto.SelectEngine(inputPath)
 	if err != nil {
 		p.hookStatusText = err.Error()
-		p.showError("Inspect Hook Failed", err.Error())
+		p.showError("Inspect Hook Failed: engine select error ", err.Error())
 		return
 	}
+	//
+	//status, err := e.Status(inputPath)
+	//if err != nil {
+	//	p.hookStatusText = err.Error()
+	//	p.showError("Inspect Hook Failed", err.Error())
+	//	return
+	//}
 
-	p.hookStatusText = p.formatHookStatus(status)
+	//p.hookStatusText = p.formatHookStatus(status)
 }
 
-func (p *Page) installHook() {
-	inputPath := strings.TrimSpace(p.pathEditor.Text())
-	if inputPath == "" {
-		p.showError("Install Hook Failed", "Enter or browse to a game path first.")
-		return
-	}
+//todo
+//func (p *Page) formatHookStatus(status testhook.TextHookStatus) string {
+//	//lines := []string{
+//	//	status.Message,
+//	//	"Supported: " + boolLabel(status.Supported),
+//	//	"Installed: " + boolLabel(status.Installed),
+//	//	"Loaded: " + boolLabel(status.Loaded),
+//	//	"Engine: " + util.FirstNonEmpty(status.Engine, "Unknown"),
+//	//	"Method: " + util.FirstNonEmpty(status.Method, "Unavailable"),
+//	//	"Project Root: " + util.FirstNonEmpty(status.ProjectRoot, "Unavailable"),
+//	//}
+//	//
+//	//if strings.TrimSpace(status.PluginPath) != "" {
+//	//	lines = append(lines, "Plugin Path: "+status.PluginPath)
+//	//}
+//	//if strings.TrimSpace(status.PluginsConfigPath) != "" {
+//	//	lines = append(lines, "Plugins Config: "+status.PluginsConfigPath)
+//	//}
+//	//if strings.TrimSpace(status.OutputPath) != "" {
+//	//	lines = append(lines, "Output: "+status.OutputPath)
+//	//}
+//	//
+//	//if strings.TrimSpace(status.Compatibility.RiskLevel) != "" {
+//	//	lines = append(lines, "Risk: "+status.Compatibility.RiskLevel)
+//	//}
+//	//
+//	//lines = appendHookFindings(lines, status.Compatibility.Findings)
+//	//
+//	//return strings.Join(lines, "\n")
+//}
 
-	hook := testhook.NewAutoHook(inputPath)
-
-	status, err := hook.Detect(inputPath)
-	if err != nil {
-		p.hookStatusText = err.Error()
-		p.showError("Install Hook Failed", err.Error())
-		return
-	}
-
-	if !status.Supported {
-		p.hookStatusText = p.formatHookStatus(status)
-		p.statusText = "No supported in-engine text hook is available for this game."
-		return
-	}
-
-	result, err := hook.InstallHook(inputPath)
-	if err != nil {
-		p.hookStatusText = err.Error()
-		p.showError("Install Hook Failed", err.Error())
-		return
-	}
-
-	// Re-detect after install so Installed/Loaded are accurate.
-	updatedStatus, detectErr := hook.Detect(inputPath)
-	if detectErr == nil {
-		p.hookStatusText = p.formatHookStatus(updatedStatus)
-	} else {
-		p.hookStatusText = p.formatHookInstallResult(result)
-	}
-
-	p.statusText = fmt.Sprintf("Installed text hook for %s.", util.FirstNonEmpty(result.Engine, "this game"))
-}
-func (p *Page) formatHookStatus(status testhook.TextHookStatus) string {
-	lines := []string{
-		status.Message,
-		"Supported: " + boolLabel(status.Supported),
-		"Installed: " + boolLabel(status.Installed),
-		"Loaded: " + boolLabel(status.Loaded),
-		"Engine: " + util.FirstNonEmpty(status.Engine, "Unknown"),
-		"Method: " + util.FirstNonEmpty(status.Method, "Unavailable"),
-		"Project Root: " + util.FirstNonEmpty(status.ProjectRoot, "Unavailable"),
-	}
-
-	if strings.TrimSpace(status.PluginPath) != "" {
-		lines = append(lines, "Plugin Path: "+status.PluginPath)
-	}
-	if strings.TrimSpace(status.PluginsConfigPath) != "" {
-		lines = append(lines, "Plugins Config: "+status.PluginsConfigPath)
-	}
-	if strings.TrimSpace(status.OutputPath) != "" {
-		lines = append(lines, "Output: "+status.OutputPath)
-	}
-
-	if strings.TrimSpace(status.Compatibility.RiskLevel) != "" {
-		lines = append(lines, "Risk: "+status.Compatibility.RiskLevel)
-	}
-
-	lines = appendHookFindings(lines, status.Compatibility.Findings)
-
-	return strings.Join(lines, "\n")
-}
-
-func (p *Page) formatHookInstallResult(result testhook.TextHookInstallResult) string {
-	lines := []string{
-		"Text hook install completed.",
-		"Engine: " + util.FirstNonEmpty(result.Engine, "Unknown"),
-		"Method: " + util.FirstNonEmpty(result.Method, "Unavailable"),
-	}
-
-	if strings.TrimSpace(result.PluginPath) != "" {
-		lines = append(lines, "Plugin Path: "+result.PluginPath)
-	}
-	if strings.TrimSpace(result.PluginsConfigPath) != "" {
-		lines = append(lines, "Plugins Config: "+result.PluginsConfigPath)
-	}
-	if strings.TrimSpace(result.OutputPath) != "" {
-		lines = append(lines, "Output: "+result.OutputPath)
-	}
-	if strings.TrimSpace(result.Compatibility.RiskLevel) != "" {
-		lines = append(lines, "Risk: "+result.Compatibility.RiskLevel)
-	}
-
-	lines = appendHookFindings(lines, result.Compatibility.Findings)
-
-	return strings.Join(lines, "\n")
-}
+//func (p *Page) formatHookInstallResult(result testhook.TextHookInstallResult) string {
+//	lines := []string{
+//		"Text hook install completed.",
+//		"Engine: " + util.FirstNonEmpty(result.Engine, "Unknown"),
+//		"Method: " + util.FirstNonEmpty(result.Method, "Unavailable"),
+//	}
+//
+//	if strings.TrimSpace(result.PluginPath) != "" {
+//		lines = append(lines, "Plugin Path: "+result.PluginPath)
+//	}
+//	if strings.TrimSpace(result.PluginsConfigPath) != "" {
+//		lines = append(lines, "Plugins Config: "+result.PluginsConfigPath)
+//	}
+//	if strings.TrimSpace(result.OutputPath) != "" {
+//		lines = append(lines, "Output: "+result.OutputPath)
+//	}
+//	if strings.TrimSpace(result.Compatibility.RiskLevel) != "" {
+//		lines = append(lines, "Risk: "+result.Compatibility.RiskLevel)
+//	}
+//
+//	lines = appendHookFindings(lines, result.Compatibility.Findings)
+//
+//	return strings.Join(lines, "\n")
+//}
 
 func appendHookFindings(lines []string, findings []string) []string {
 	if len(findings) == 0 {
@@ -727,20 +780,6 @@ func boolLabel(value bool) string {
 	}
 	return "no"
 }
-func (p *Page) buildConfig() (gameconfig.GameConfig, error) {
-	inputPath := strings.TrimSpace(p.pathEditor.Text())
-	if inputPath == "" {
-		return gameconfig.GameConfig{}, fmt.Errorf("game path is required")
-	}
-	return gameconfig.BuildGameConfig(
-		inputPath,
-		strings.ToLower(strings.TrimSpace(p.selectedRunner)),
-		p.requiresSteam.Value,
-		strings.TrimSpace(p.steamAppIDEditor.Text()),
-		strings.TrimSpace(p.iconPathEditor.Text()),
-		strings.TrimSpace(p.imagePathEditor.Text()),
-	)
-}
 
 func (p *Page) showError(title, body string) {
 	if p.OnError != nil {
@@ -748,12 +787,12 @@ func (p *Page) showError(title, body string) {
 	}
 }
 
-func (p *Page) filteredConfigs() []gameconfig.GameConfig {
+func (p *Page) filteredConfigs() []*vngame.Game {
 	query := strings.TrimSpace(strings.ToLower(p.gameSearchEditor.Text()))
 	if query == "" {
 		return p.configs
 	}
-	filtered := make([]gameconfig.GameConfig, 0, len(p.configs))
+	filtered := make([]*vngame.Game, 0, len(p.configs))
 	for _, cfg := range p.configs {
 		haystack := strings.ToLower(strings.Join([]string{
 			cfg.Name,
@@ -769,8 +808,12 @@ func (p *Page) filteredConfigs() []gameconfig.GameConfig {
 }
 
 func (p *Page) resetConfigForm() {
+	if p.installing {
+		return
+	}
 	p.currentConfigName = ""
 	p.loadedConfigName = ""
+	p.draftConfig = nil
 	p.pathEditor.SetText("")
 	p.steamAppIDEditor.SetText("")
 	p.iconPathEditor.SetText("")
@@ -791,4 +834,18 @@ func (p *Page) browserButtonIcon() string {
 		return "mdi:folder-remove-outline"
 	}
 	return "mdi:folder-search-outline"
+}
+
+func (p *Page) installActionLabel(idle string) string {
+	if p.installing {
+		return "Installing..."
+	}
+	return idle
+}
+
+func (p *Page) installActionIcon(idle string) string {
+	if p.installing {
+		return "mdi:progress-clock"
+	}
+	return idle
 }

@@ -57,7 +57,6 @@ func LookupWords(word string) ([]Lookup, error) {
 	if len(responses) == 0 {
 		return nil, fmt.Errorf("no dictionary entry found for %q", word)
 	}
-
 	lookups := make([]Lookup, 0, len(responses))
 	seen := make(map[string]struct{}, len(responses))
 	for _, resp := range responses {
@@ -76,6 +75,39 @@ func LookupWords(word string) ([]Lookup, error) {
 		return nil, fmt.Errorf("dictionary entry for %q did not contain a usable meaning", word)
 	}
 	return lookups, nil
+}
+
+func PlayLookupAudio(lookup Lookup) error {
+	if lookup.response != nil {
+		if _, err := lookup.response.PlayAudio(false); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	return PlayAudioForText(util.FirstNonEmpty(lookup.Query, lookup.Key, lookup.Headword, lookup.Reading))
+}
+
+func PlayAudioForText(text string) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return fmt.Errorf("word cannot be empty")
+	}
+
+	dict, err := loadDictionary()
+	if err != nil {
+		return err
+	}
+
+	resp, err := dict.Search(text)
+	if err != nil {
+		return err
+	}
+	if resp == nil {
+		return fmt.Errorf("no dictionary entry found for %q", text)
+	}
+	_, err = resp.PlayAudio(false)
+	return err
 }
 
 func SummarizeDictionaryEntry(entry *jpndict.Entry) string {
@@ -127,8 +159,9 @@ func loadDictionary() (jpndict.Dictonary, error) {
 
 func dictionaryLookupFromResponse(query string, resp *jpndict.Response) Lookup {
 	lookup := Lookup{
-		Key:   strings.TrimSpace(util.FirstNonEmpty(resp.Key, query)),
-		Query: strings.TrimSpace(query),
+		Key:      strings.TrimSpace(util.FirstNonEmpty(resp.Key, query)),
+		Query:    strings.TrimSpace(query),
+		response: resp,
 	}
 
 	if resp.Entry != nil {

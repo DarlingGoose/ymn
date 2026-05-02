@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -22,9 +24,11 @@ import (
 	"github.com/DarlingGoose/bare/pkg/ui/icons"
 	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
+	"github.com/DarlingGoose/vntext/pkg/game"
+	"github.com/DarlingGoose/vntext/pkg/gameConfig"
+	"github.com/DarlingGoose/vntext/pkg/runner"
 	"github.com/DarlingGoose/wgl/pkg/anki"
 	"github.com/DarlingGoose/wgl/pkg/flashcard"
-	"github.com/DarlingGoose/wgl/pkg/game/gameconfig"
 	pkggui "github.com/DarlingGoose/wgl/pkg/gui"
 	guiflashcard "github.com/DarlingGoose/wgl/pkg/gui/flashcard"
 	guigame "github.com/DarlingGoose/wgl/pkg/gui/game"
@@ -65,12 +69,12 @@ var guiCmd = &cobra.Command{
 			selectedName = strings.TrimSpace(args[0])
 		}
 
-		configs, err := gameconfig.ListConfigs()
+		configs, err := loadInstalledGameConfigs()
 		if err != nil {
 			return err
 		}
 		if selectedName != "" {
-			if _, err := gameconfig.FindConfig(selectedName); err != nil {
+			if _, err := gameConfig.FindInstalledGame(configs, selectedName); err != nil {
 				return err
 			}
 		}
@@ -96,7 +100,7 @@ func init() {
 }
 
 type guiApp struct {
-	configs       []gameconfig.GameConfig
+	configs       []*game.Game
 	printExisting bool
 	pollInterval  time.Duration
 
@@ -118,7 +122,7 @@ type guiApp struct {
 	gameOptionClicks map[string]*widget.Clickable
 
 	activeGameName string
-	currentConfig  *gameconfig.GameConfig
+	currentConfig  *game.Game
 	logPath        string
 	statusText     string
 	messageTitle   string
@@ -137,7 +141,7 @@ type guiApp struct {
 	mu sync.Mutex
 }
 
-func newGUI(configs []gameconfig.GameConfig, selectedName string, printExisting bool, pollInterval time.Duration) (*guiApp, error) {
+func newGUI(configs []*game.Game, selectedName string, printExisting bool, pollInterval time.Duration) (*guiApp, error) {
 	settingsPage, err := guisettings.LoadSettings()
 	if err != nil {
 		return nil, err
@@ -196,7 +200,7 @@ func newGUI(configs []gameconfig.GameConfig, selectedName string, printExisting 
 	app.flashcardPage.OnError = app.showMessage
 	app.flashcardPage.OnNotify = app.showToast
 	app.gamePage.OnError = app.showMessage
-	app.gamePage.OnSaved = func(cfg *gameconfig.GameConfig) {
+	app.gamePage.OnSaved = func(cfg *game.Game) {
 		g := cfg
 		if g == nil {
 			return
@@ -206,7 +210,7 @@ func newGUI(configs []gameconfig.GameConfig, selectedName string, printExisting 
 		app.activeGameName = g.Name
 		_ = app.settingsPage.SetLastGame(g.Name)
 	}
-	app.gamePage.OnSelected = func(cfg *gameconfig.GameConfig) {
+	app.gamePage.OnSelected = func(cfg *game.Game) {
 		if cfg == nil {
 			return
 		}
@@ -546,15 +550,9 @@ func (g *guiApp) showToast(title, body string, kind guitoast.NotificationType) {
 }
 
 func (g *guiApp) startWatching(ctx context.Context, gameName string, w *app.Window) {
-	cfg, err := gameconfig.FindConfig(gameName)
+	cfg, err := gameConfig.FindInstalledGame(g.configs, gameName)
 	if err != nil {
 		g.showMessage("Game Load Failed", err.Error())
-		return
-	}
-
-	logPath, err := resolveRPGMakerTranscriptPath(util.FirstNonEmpty(cfg.GamePath, cfg.Executable, cfg.WorkingDir))
-	if err != nil {
-		g.showMessage("Transcript Setup Failed", err.Error())
 		return
 	}
 
@@ -562,11 +560,11 @@ func (g *guiApp) startWatching(ctx context.Context, gameName string, w *app.Wind
 		cancel()
 	}
 
-	raw, offset, status := initializeTranscriptState(logPath, g.printExisting)
+	raw, offset, status := initializeTranscriptState(cfg.TextHookLogFile, g.printExisting)
 	g.mu.Lock()
 	g.activeGameName = cfg.Name
 	g.currentConfig = cfg
-	g.logPath = logPath
+	g.logPath = cfg.TextHookLogFile
 	g.rawTranscript = raw
 	g.offset = offset
 	g.statusText = status
@@ -582,7 +580,7 @@ func (g *guiApp) startWatching(ctx context.Context, gameName string, w *app.Wind
 	g.watcherGeneration++
 	generation := g.watcherGeneration
 
-	go g.pollTranscript(watcherCtx, generation, logPath, w)
+	go g.pollTranscript(watcherCtx, generation, cfg.TextHookLogFile, w)
 }
 
 func (g *guiApp) stopWatcher() context.CancelFunc {
@@ -641,7 +639,7 @@ func (g *guiApp) pollTranscript(ctx context.Context, generation int, logPath str
 }
 
 func (g *guiApp) reloadConfigs() {
-	configs, err := gameconfig.ListConfigs()
+	configs, err := loadInstalledGameConfigs()
 	if err != nil {
 		return
 	}
@@ -684,20 +682,15 @@ func (g *guiApp) refreshCurrentGameRunningState(force bool) {
 		return
 	}
 
-	processes, err := listProcesses()
-	if err != nil {
-		g.gameRunning = false
-		g.gameRunningPID = 0
+	r, err := runner.New().IsRunning(g.currentConfig)
+	if err == nil && r != nil && r.Status == runner.StatusRunning {
+		g.gameRunning = true
+		g.gameRunningPID = r.PID
 		return
 	}
-	matches := rankProcessMatches(*g.currentConfig, processes)
-	if len(matches) == 0 {
-		g.gameRunning = false
-		g.gameRunningPID = 0
-		return
-	}
-	g.gameRunning = true
-	g.gameRunningPID = matches[0].PID
+
+	g.gameRunning = false
+	g.gameRunningPID = 0
 }
 
 func (g *guiApp) isCompactLayout(gtx layout.Context) bool {
@@ -736,7 +729,7 @@ func dropdownButtonVariant(active bool) bareui.ButtonVariant {
 	return bareui.ButtonSecondary
 }
 
-func configNameExists(configs []gameconfig.GameConfig, name string) bool {
+func configNameExists(configs []*game.Game, name string) bool {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return false
@@ -747,4 +740,45 @@ func configNameExists(configs []gameconfig.GameConfig, name string) bool {
 		}
 	}
 	return false
+}
+
+func loadInstalledGameConfigs() ([]*game.Game, error) {
+	return gameConfig.LoadInstalledGames(gameConfigDirs()...)
+}
+
+func gameConfigDirs() []string {
+	return []string{
+		filepath.Join(gameConfig.ConfigBaseDir(), "games"),
+		filepath.Join(util.ConfigBaseDir(), "games"),
+	}
+}
+
+func readTranscriptDelta(logPath string, offset *int64) (string, error) {
+	info, err := os.Stat(logPath)
+	if err != nil {
+		return "", err
+	}
+	if info.Size() < *offset {
+		*offset = 0
+	}
+	if info.Size() == *offset {
+		return "", nil
+	}
+
+	file, err := os.Open(logPath)
+	if err != nil {
+		return "", fmt.Errorf("open transcript log: %w", err)
+	}
+	defer file.Close()
+
+	if _, err := file.Seek(*offset, io.SeekStart); err != nil {
+		return "", fmt.Errorf("seek transcript log: %w", err)
+	}
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return "", fmt.Errorf("read transcript log: %w", err)
+	}
+	*offset = info.Size()
+	return string(data), nil
 }
