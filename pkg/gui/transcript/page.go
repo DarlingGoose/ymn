@@ -38,10 +38,13 @@ const (
 	compactWidth          = 1080
 	transcriptStackWidth  = 1240
 	transcriptMediumWidth = 1480
-	transcriptDockedWidth = 1320
 
 	composerFocusFlashcards        = "flashcards"
 	composerFocusSentenceStructure = "sentence_structure"
+
+	focusedFuriganaHidden = "hidden"
+	focusedFuriganaAbove  = "above"
+	focusedFuriganaBelow  = "below"
 )
 
 var _ gui.EvenHandler = &Page{}
@@ -52,26 +55,38 @@ type Page struct {
 	theme   barethemes.Theme
 	iconify *icons.Iconify
 
-	transcriptView     widget.Selectable
-	transcriptList     widget.List
-	structureList      widget.List
-	lookupResultsList  widget.List
-	wordEditor         widget.Editor
-	meaningEditor      widget.Editor
-	hideReadingInAnki  widget.Bool
-	searchWordButton   widget.Clickable
-	playAudioButton    widget.Clickable
-	addAllLookupButton widget.Clickable
-	launchGameButton   widget.Clickable
-	syncAnkiButton     widget.Clickable
-	clearButton        widget.Clickable
+	transcriptView       widget.Selectable
+	focusedSentenceView  widget.Selectable
+	transcriptFocusSplit widget.Float
+	transcriptList       widget.List
+	structureList        widget.List
+	lookupResultsList    widget.List
+	wordEditor           widget.Editor
+	meaningEditor        widget.Editor
+	translationEditor    widget.Editor
+	targetLanguageDrop   bareui.Dropdown
+	hideReadingInAnki    widget.Bool
+	searchWordButton     widget.Clickable
+	playAudioButton      widget.Clickable
+	addAllLookupButton   widget.Clickable
+	launchGameButton     widget.Clickable
+	syncAnkiButton       widget.Clickable
+	clearButton          widget.Clickable
 
+	playSentenceButton         widget.Clickable
+	translateSentenceButton    widget.Clickable
+	saveSentenceButton         widget.Clickable
+	focusedLookupButton        widget.Clickable
 	transcriptPopupAudioButton widget.Clickable
 	transcriptPopupCloseButton widget.Clickable
 	popupDismissClicks         [4]widget.Clickable
 	composerToggleButton       widget.Clickable
 	composerFlashcardsTab      widget.Clickable
 	composerSentenceTab        widget.Clickable
+	translationToggleButton    widget.Clickable
+	furiganaHiddenButton       widget.Clickable
+	furiganaAboveButton        widget.Clickable
+	furiganaBelowButton        widget.Clickable
 
 	transcriptHighlightClicks map[string]*widget.Clickable
 	transcriptHighlightBounds map[string]image.Rectangle
@@ -79,6 +94,8 @@ type Page struct {
 	lookupResultPlayClicks    map[string]*widget.Clickable
 	structureTokenAddClicks   map[string]*widget.Clickable
 	structureTokenPlayClicks  map[string]*widget.Clickable
+	transcriptRowClicks       map[string]*widget.Clickable
+	targetLanguageOptions     []gui.DropdownOption
 
 	activeGameName         string
 	logPath                string
@@ -94,29 +111,42 @@ type Page struct {
 	autoPlayHighlightAudio bool
 	colorizeHighlights     bool
 
-	flashcards        []flashcards.Flashcard
-	lookupResult      *dictionary.Lookup
-	lookupResults     []dictionary.Lookup
-	displayTranscript string
-	lastSyncedText    string
-	structureCacheKey string
-	structureCache    japanese.Analysis
-	structureCacheErr string
-	highlightCacheKey string
-	highlightCache    []flashcards.Match
-	popupFlashcard    *flashcards.Flashcard
-	popupAnchor       image.Rectangle
-	popupBounds       image.Rectangle
-	popupMatchKey     string
-	popupWord         string
-	composerFocus     string
-	composerMinimized bool
-	composerLastUsed  time.Time
-	lastAutoWord      string
-	hideReadingSet    bool
+	flashcards             []flashcards.Flashcard
+	lookupResult           *dictionary.Lookup
+	lookupResults          []dictionary.Lookup
+	displayTranscript      string
+	lastSyncedText         string
+	lastFocusedText        string
+	structureCacheKey      string
+	structureCache         japanese.Analysis
+	structureCacheErr      string
+	highlightCacheKey      string
+	highlightCache         []flashcards.Match
+	popupFlashcard         *flashcards.Flashcard
+	popupAnchor            image.Rectangle
+	popupBounds            image.Rectangle
+	popupMatchKey          string
+	popupWord              string
+	selectedLineKey        string
+	selectedLineText       string
+	translationCollapsed   bool
+	focusedFuriganaMode    string
+	selectedTargetLanguage string
+	composerFocus          string
+	composerMinimized      bool
+	composerLastUsed       time.Time
+	lastAutoWord           string
+	hideReadingSet         bool
 
 	OnError  func(title, body string)
 	OnNotify func(title, body string, kind guitoast.NotificationType)
+}
+
+type transcriptRow struct {
+	Key        string
+	Time       string
+	Text       string
+	VocabWords []string
 }
 
 func New(theme barethemes.Theme) *Page {
@@ -127,6 +157,8 @@ func New(theme barethemes.Theme) *Page {
 		selectedTextSizeName:      "Medium",
 		selectedRecentLines:       "All Lines",
 		transcriptTextSize:        unit.Sp(16),
+		focusedFuriganaMode:       focusedFuriganaHidden,
+		selectedTargetLanguage:    "English",
 		composerFocus:             composerFocusFlashcards,
 		composerMinimized:         true,
 		composerLastUsed:          time.Now(),
@@ -136,9 +168,16 @@ func New(theme barethemes.Theme) *Page {
 		lookupResultPlayClicks:    make(map[string]*widget.Clickable),
 		structureTokenAddClicks:   make(map[string]*widget.Clickable),
 		structureTokenPlayClicks:  make(map[string]*widget.Clickable),
+		transcriptRowClicks:       make(map[string]*widget.Clickable),
 	}
+	p.transcriptFocusSplit.Value = 0.5
 	p.wordEditor.SingleLine = true
 	p.meaningEditor.SingleLine = false
+	p.translationEditor.SingleLine = false
+	gui.NewDropDownLayout(&p.targetLanguageDrop, "mdi:translate")
+	p.targetLanguageDrop.Width = unit.Dp(190)
+	p.targetLanguageDrop.OffsetY = unit.Dp(42)
+	p.targetLanguageOptions = newTranslationLanguageOptions()
 	p.transcriptList.Axis = layout.Vertical
 	p.transcriptList.ScrollToEnd = true
 	p.structureList.Axis = layout.Vertical
@@ -219,6 +258,8 @@ func (p *Page) ClearTranscript() {
 	p.lookupResults = nil
 	p.invalidateHighlights()
 	p.DismissPopup()
+	p.selectedLineKey = ""
+	p.selectedLineText = ""
 	p.statusText = "Transcript view cleared; waiting for new dialogue."
 	p.lastSyncedText = ""
 }
@@ -264,6 +305,7 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 	if p.hideReadingInAnki.Update(gtx) {
 		p.hideReadingSet = true
 	}
+	p.targetLanguageDrop.Update(gtx)
 	p.syncHideReadingDefault()
 	for p.launchGameButton.Clicked(gtx) {
 		p.launchCurrentGameInBackground()
@@ -277,6 +319,41 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 	}
 	for p.clearButton.Clicked(gtx) {
 		p.ClearTranscript()
+	}
+	for p.playSentenceButton.Clicked(gtx) {
+		p.playCurrentLookupAudio()
+	}
+	for p.translateSentenceButton.Clicked(gtx) {
+		p.composerFocus = composerFocusSentenceStructure
+		p.composerMinimized = false
+		p.composerLastUsed = time.Now()
+	}
+	for p.saveSentenceButton.Clicked(gtx) {
+		p.composerFocus = composerFocusFlashcards
+		p.composerMinimized = false
+		p.composerLastUsed = time.Now()
+	}
+	for p.focusedLookupButton.Clicked(gtx) {
+		p.lookupCurrentWord()
+	}
+	for p.translationToggleButton.Clicked(gtx) {
+		p.translationCollapsed = !p.translationCollapsed
+	}
+	for p.furiganaHiddenButton.Clicked(gtx) {
+		p.focusedFuriganaMode = focusedFuriganaHidden
+	}
+	for p.furiganaAboveButton.Clicked(gtx) {
+		p.focusedFuriganaMode = focusedFuriganaAbove
+	}
+	for p.furiganaBelowButton.Clicked(gtx) {
+		p.focusedFuriganaMode = focusedFuriganaBelow
+	}
+	for i := range p.targetLanguageOptions {
+		opt := &p.targetLanguageOptions[i]
+		for opt.Clickable.Clicked(gtx) {
+			p.selectedTargetLanguage = opt.Label
+			p.targetLanguageDrop.Close()
+		}
 	}
 	for p.searchWordButton.Clicked(gtx) {
 		p.lookupCurrentWord()
@@ -310,6 +387,11 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 	for key, click := range p.transcriptHighlightClicks {
 		for click.Clicked(gtx) {
 			p.openTranscriptHighlightPopup(key)
+		}
+	}
+	for key, click := range p.transcriptRowClicks {
+		for click.Clicked(gtx) {
+			p.selectTranscriptRow(key)
 		}
 	}
 	for p.transcriptPopupAudioButton.Clicked(gtx) {
@@ -393,45 +475,16 @@ func (p *Page) layoutTranscriptPanel(gtx layout.Context) layout.Dimensions {
 		return layout.Stack{}.Layout(gtx,
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{
-					Top:    unit.Dp(10),
+					Top:    unit.Dp(18),
 					Left:   unit.Dp(20),
 					Right:  unit.Dp(20),
-					Bottom: unit.Dp(10),
+					Bottom: unit.Dp(18),
 				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					metaSpacing := unit.Dp(14)
-					if p.runnerStatus == nil {
-						metaSpacing = 0
-					}
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							lbl := material.H5(p.theme.Gio(), util.FirstNonEmpty(p.activeGameName, "No game selected"))
-							lbl.Color = p.theme.Color.Text
-							return lbl.Layout(gtx)
+							return p.layoutTranscriptTopbar(gtx)
 						}),
-						layout.Rigid(bareutils.SpacerH(unit.Dp(4))),
-						//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						//	lbl := material.Body1(p.theme.Gio(), util.FirstNonEmpty(p.logPath, "No transcript path resolved"))
-						//	lbl.Color = p.theme.Color.TextMuted
-						//	return lbl.Layout(gtx)
-						//}),
-						//layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body1(p.theme.Gio(), p.statusText)
-							lbl.Color = p.statusColor()
-							return lbl.Layout(gtx)
-						}),
-						layout.Rigid(bareutils.SpacerH(unit.Dp(4))),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return p.layoutTranscriptActions(gtx)
-						}),
-						layout.Rigid(bareutils.SpacerH(metaSpacing)),
-						//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						//	if !p.gameRunning {
-						//		return layout.Dimensions{}
-						//	}
-						//	return p.layoutTranscriptMeta(gtx)
-						//}),
-						//layout.Rigid(bareutils.SpacerH(metaSpacing)),
+						layout.Rigid(bareutils.SpacerH(unit.Dp(16))),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							return p.layoutTranscriptWorkspace(gtx)
 						}),
@@ -439,79 +492,13 @@ func (p *Page) layoutTranscriptPanel(gtx layout.Context) layout.Dimensions {
 				})
 			}),
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				if p.runnerStatus == nil || p.shouldDockTranscriptComposer(gtx) {
-					return layout.Dimensions{}
-				}
-				return p.layoutFlashcardComposerOverlay(gtx)
+				return layout.Dimensions{}
 			}),
 		)
 	})
 }
 
-func (p *Page) layoutTranscriptWorkspace(gtx layout.Context) layout.Dimensions {
-	if p.runnerStatus == nil || !p.shouldDockTranscriptComposer(gtx) {
-		return p.layoutTranscriptBodyPanel(gtx)
-	}
-	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min = gtx.Constraints.Max
-			return p.layoutTranscriptBodyPanel(gtx)
-		}),
-		layout.Rigid(bareutils.SpacerW(unit.Dp(14))),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			width := p.transcriptComposerWidth(gtx)
-			gtx.Constraints.Min.X = width
-			gtx.Constraints.Max.X = width
-			gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-			return p.layoutFlashcardComposerDocked(gtx)
-		}),
-	)
-}
-
-func (p *Page) layoutTranscriptBodyPanel(gtx layout.Context) layout.Dimensions {
-	gtx.Constraints.Min = gtx.Constraints.Max
-	return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
-		return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			if p.runnerStatus == nil {
-				return p.layoutTranscriptIdleState(gtx)
-			}
-			return p.layoutTranscriptEditor(gtx)
-		})
-	})
-}
-
-func (p *Page) layoutFlashcardComposerOverlay(gtx layout.Context) layout.Dimensions {
-	inset := layout.Inset{Right: unit.Dp(18), Bottom: unit.Dp(18)}
-	width := p.transcriptComposerOverlayWidth(gtx)
-	return layout.SE.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return inset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.X = width
-			gtx.Constraints.Max.X = width
-			return p.layoutFlashcardComposer(gtx)
-		})
-	})
-}
-
-func (p *Page) layoutTranscriptMeta(gtx layout.Context) layout.Dimensions {
-	left := material.Body1(p.theme.Gio(), "Text Size: "+p.selectedTextSizeName)
-	left.Color = p.theme.Color.TextMuted
-	right := material.Body1(p.theme.Gio(), "Visible: "+p.selectedRecentLines)
-	right.Color = p.theme.Color.TextMuted
-	if p.isCompactLayout(gtx) {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(left.Layout),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
-			layout.Rigid(right.Layout),
-		)
-	}
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		layout.Rigid(left.Layout),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{} }),
-		layout.Rigid(right.Layout),
-	)
-}
-
-func (p *Page) layoutTranscriptActions(gtx layout.Context) layout.Dimensions {
+func (p *Page) layoutTranscriptTopbar(gtx layout.Context) layout.Dimensions {
 	launchButton := bareui.Button{
 		Clickable: &p.launchGameButton,
 		Text:      p.transcriptLaunchButtonLabel(),
@@ -526,12 +513,35 @@ func (p *Page) layoutTranscriptActions(gtx layout.Context) layout.Dimensions {
 	}
 	clearButton := bareui.Button{
 		Clickable: &p.clearButton,
-		Text:      "Clear View",
-		Prefix:    "mdi:broom",
+		Text:      "mdi:broom",
+		Icon:      true,
 		Variant:   bareui.ButtonGhost,
+	}
+	statusText := "IDLE"
+	statusLive := false
+	if p.runnerStatus != nil {
+		statusText = "LIVE"
+		statusLive = true
 	}
 	if p.isCompactLayout(gtx) {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return p.layoutStatusPill(gtx, statusText, statusLive)
+					}),
+					layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body1(p.theme.Gio(), util.FirstNonEmpty(p.activeGameName, "No game selected"))
+						lbl.Color = p.theme.Color.Text
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return clearButton.Layout(gtx, p.theme, p.iconify)
+					}),
+				)
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -544,21 +554,26 @@ func (p *Page) layoutTranscriptActions(gtx layout.Context) layout.Dimensions {
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return syncButton.Layout(gtx, p.theme, p.iconify)
 					}),
-					layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return clearButton.Layout(gtx, p.theme, p.iconify)
-					}),
 				)
 			}),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body1(p.theme.Gio(), p.transcriptRunningStatusText())
-				lbl.Color = p.theme.Color.TextMuted
+				lbl := material.Body1(p.theme.Gio(), p.statusText)
+				lbl.Color = p.statusColor()
 				return lbl.Layout(gtx)
 			}),
 		)
 	}
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.layoutStatusPill(gtx, statusText, statusLive)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body1(p.theme.Gio(), p.transcriptRunningStatusText())
+			lbl.Color = p.theme.Color.TextMuted
+			return lbl.Layout(gtx)
+		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if p.runnerStatus != nil {
 				return launchButton.Layout(gtx.Disabled(), p.theme, p.iconify)
@@ -566,32 +581,781 @@ func (p *Page) layoutTranscriptActions(gtx layout.Context) layout.Dimensions {
 			return launchButton.Layout(gtx, p.theme, p.iconify)
 		}),
 		layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return syncButton.Layout(gtx, p.theme, p.iconify) }),
-		layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return clearButton.Layout(gtx, p.theme, p.iconify) }),
-		layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return syncButton.Layout(gtx, p.theme, p.iconify)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(4))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return clearButton.Layout(gtx, p.theme, p.iconify)
+		}),
+	)
+}
+
+func (p *Page) layoutStatusPill(gtx layout.Context, text string, live bool) layout.Dimensions {
+	bg := p.theme.Color.SurfaceAlt
+	fg := p.theme.Color.TextMuted
+	if live {
+		fg = p.theme.Color.Primary
+		bg = color.NRGBA{R: fg.R, G: fg.G, B: fg.B, A: 42}
+	}
+	return bareutils.RoundedSurface(gtx, bg, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{
+			Top:    unit.Dp(7),
+			Bottom: unit.Dp(7),
+			Left:   unit.Dp(10),
+			Right:  unit.Dp(10),
+		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(p.theme.Gio(), text)
+			lbl.Color = fg
+			return lbl.Layout(gtx)
+		})
+	})
+}
+
+func (p *Page) layoutTranscriptWorkspace(gtx layout.Context) layout.Dimensions {
+	if p.runnerStatus == nil || p.shouldStackTranscriptPage(gtx) {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min = gtx.Constraints.Max
+				return p.layoutTranscriptBodyPanel(gtx)
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if p.runnerStatus == nil {
+					return layout.Dimensions{}
+				}
+				return p.layoutFlashcardComposer(gtx)
+			}),
+		)
+	}
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body1(p.theme.Gio(), p.transcriptRunningStatusText())
+			gtx.Constraints.Min = gtx.Constraints.Max
+			return p.layoutTranscriptBodyPanel(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(14))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			width := p.transcriptComposerWidth(gtx)
+			gtx.Constraints.Min.X = width
+			gtx.Constraints.Max.X = width
+			gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+			return p.layoutContextRail(gtx)
+		}),
+	)
+}
+
+func (p *Page) layoutTranscriptBodyPanel(gtx layout.Context) layout.Dimensions {
+	gtx.Constraints.Min = gtx.Constraints.Max
+	liveRatio := p.transcriptFocusRatio()
+	focusedRatio := 1 - liveRatio
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Flexed(liveRatio, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min = gtx.Constraints.Max
+			return p.layoutLiveTranscriptCard(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.layoutTranscriptFocusResizeHandle(gtx)
+		}),
+		layout.Flexed(focusedRatio, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min = gtx.Constraints.Max
+			return p.layoutFocusedSentenceCard(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.layoutBottomActions(gtx)
+		}),
+	)
+}
+
+func (p *Page) layoutTranscriptFocusResizeHandle(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{
+		Top:    unit.Dp(8),
+		Bottom: unit.Dp(8),
+	}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return bareutils.RoundedSurface(gtx, p.theme.Color.SurfaceAlt, unit.Dp(p.theme.Radius.SM), func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{
+				Top:    unit.Dp(6),
+				Bottom: unit.Dp(6),
+				Left:   unit.Dp(12),
+				Right:  unit.Dp(12),
+			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(p.theme.Gio(), "Live")
+						lbl.Color = p.theme.Color.TextMuted
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						pointer.CursorRowResize.Add(gtx.Ops)
+						gtx.Constraints.Min.X = gtx.Constraints.Max.X
+						slider := material.Slider(p.theme.Gio(), &p.transcriptFocusSplit)
+						slider.Color = p.theme.Color.Primary
+						return slider.Layout(gtx)
+					}),
+					layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(p.theme.Gio(), "Focused")
+						lbl.Color = p.theme.Color.TextMuted
+						return lbl.Layout(gtx)
+					}),
+				)
+			})
+		})
+	})
+}
+
+func (p *Page) transcriptFocusRatio() float32 {
+	if p.transcriptFocusSplit.Value < 0.25 {
+		p.transcriptFocusSplit.Value = 0.25
+	}
+	if p.transcriptFocusSplit.Value > 0.75 {
+		p.transcriptFocusSplit.Value = 0.75
+	}
+	return p.transcriptFocusSplit.Value
+}
+
+func (p *Page) layoutLiveTranscriptCard(gtx layout.Context) layout.Dimensions {
+	return p.layoutTranscriptCard(gtx, p.theme.Color.Background, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutCardHeader(gtx, "Live Transcript", "Scanning mode: saved words are highlighted inline")
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min = gtx.Constraints.Max
+				if p.runnerStatus == nil {
+					return p.layoutTranscriptIdleState(gtx)
+				}
+				return p.layoutTranscriptEditor(gtx)
+			}),
+		)
+	})
+}
+
+func (p *Page) layoutFocusedSentenceCard(gtx layout.Context) layout.Dimensions {
+	return p.layoutTranscriptCard(gtx, p.theme.Color.Background, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutCardHeader(gtx, "Focused Sentence", "Select text, click a saved word, or use the latest transcript line")
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutFocusedSentenceText(gtx)
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutFocusedFuriganaControls(gtx)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				analysis, errText := p.currentStructureAnalysis()
+				if errText == "" && len(analysis.Tokens) == 0 {
+					return layout.Dimensions{}
+				}
+				return layout.Inset{Top: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return p.layoutFocusedSentenceChips(gtx, analysis, errText)
+				})
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutFocusedLookupBar(gtx)
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutFocusedTranslationSection(gtx)
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min = gtx.Constraints.Max
+				return p.layoutSentenceStructurePanel(gtx, true)
+			}),
+		)
+	})
+}
+
+func (p *Page) layoutFocusedSentenceText(gtx layout.Context) layout.Dimensions {
+	text := p.structureSourceText()
+	if text == "" {
+		text = "Start the game to inspect the latest sentence."
+	}
+	text = cleanInlineText(text)
+	p.syncFocusedSentenceView(text)
+	if p.focusedFuriganaMode != focusedFuriganaHidden {
+		return p.layoutFocusedSentenceWithFurigana(gtx, text)
+	}
+
+	lbl := material.H6(p.theme.Gio(), text)
+	lbl.Color = p.theme.Color.Text
+	lbl.TextSize = p.focusedSentenceTextSize(gtx)
+	lbl.State = &p.focusedSentenceView
+	return lbl.Layout(gtx)
+}
+
+func (p *Page) layoutFocusedSentenceWithFurigana(gtx layout.Context, sentence string) layout.Dimensions {
+	analysis, err := japanese.AnalyzeSentence(sentence)
+	if err != nil || len(analysis.Tokens) == 0 {
+		lbl := material.H6(p.theme.Gio(), sentence)
+		lbl.Color = p.theme.Color.Text
+		lbl.TextSize = p.focusedSentenceTextSize(gtx)
+		return lbl.Layout(gtx)
+	}
+	children := make([]layout.FlexChild, 0, len(analysis.Tokens))
+	for _, token := range analysis.Tokens {
+		token := token
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.layoutFocusedFuriganaToken(gtx, token)
+		}))
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+}
+
+func (p *Page) layoutFocusedFuriganaToken(gtx layout.Context, token japanese.Token) layout.Dimensions {
+	reading := focusedTokenReading(token)
+	surface := cleanInlineText(token.Surface)
+	if surface == "" {
+		return layout.Dimensions{}
+	}
+	children := make([]layout.FlexChild, 0, 3)
+	if p.focusedFuriganaMode == focusedFuriganaAbove {
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.layoutFocusedTokenReading(gtx, reading)
+		}), layout.Rigid(bareutils.SpacerH(unit.Dp(2))))
+	}
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		lbl := material.H6(p.theme.Gio(), surface)
+		lbl.Color = p.theme.Color.Text
+		lbl.TextSize = p.focusedSentenceTextSize(gtx)
+		return lbl.Layout(gtx)
+	}))
+	if p.focusedFuriganaMode == focusedFuriganaBelow {
+		children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(2))), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.layoutFocusedTokenReading(gtx, reading)
+		}))
+	}
+	return layout.Inset{Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx, children...)
+	})
+}
+
+func (p *Page) layoutFocusedTokenReading(gtx layout.Context, reading string) layout.Dimensions {
+	if reading == "" {
+		reading = " "
+	}
+	lbl := material.Body2(p.theme.Gio(), reading)
+	lbl.Color = p.theme.Color.Primary
+	return lbl.Layout(gtx)
+}
+
+func (p *Page) layoutFocusedFuriganaControls(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(p.theme.Gio(), "Furigana")
+			lbl.Color = p.theme.Color.TextMuted
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.layoutFuriganaModeButton(gtx, &p.furiganaHiddenButton, focusedFuriganaHidden, "Hide")
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(6))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.layoutFuriganaModeButton(gtx, &p.furiganaAboveButton, focusedFuriganaAbove, "Above")
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(6))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.layoutFuriganaModeButton(gtx, &p.furiganaBelowButton, focusedFuriganaBelow, "Below")
+		}),
+	)
+}
+
+func (p *Page) layoutFuriganaModeButton(gtx layout.Context, click *widget.Clickable, mode, label string) layout.Dimensions {
+	active := p.focusedFuriganaMode == mode
+	bg := p.theme.Color.Surface
+	fg := p.theme.Color.TextMuted
+	if active {
+		bg = p.theme.Color.Primary
+		fg = bareutils.ReadableOn(bg)
+	} else if click.Hovered() {
+		bg = p.theme.Color.SurfaceAlt
+		fg = p.theme.Color.Text
+	}
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		return bareutils.RoundedSurface(gtx, bg, unit.Dp(p.theme.Radius.SM), func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{
+				Top:    unit.Dp(6),
+				Bottom: unit.Dp(6),
+				Left:   unit.Dp(9),
+				Right:  unit.Dp(9),
+			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(p.theme.Gio(), label)
+				lbl.Color = fg
+				return lbl.Layout(gtx)
+			})
+		})
+	})
+}
+
+func (p *Page) layoutFocusedSentenceChips(gtx layout.Context, analysis japanese.Analysis, errText string) layout.Dimensions {
+	if errText != "" {
+		lbl := material.Body1(p.theme.Gio(), errText)
+		lbl.Color = p.theme.Color.Warning
+		return lbl.Layout(gtx)
+	}
+	children := make([]layout.FlexChild, 0, min(4, len(analysis.Tokens)))
+	for _, token := range focusTokens(analysis.Tokens, 4) {
+		token := token
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Right: unit.Dp(10), Bottom: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return p.layoutFocusChip(gtx, token)
+			})
+		}))
+	}
+	if len(children) == 0 {
+		return layout.Dimensions{}
+	}
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
+}
+
+func (p *Page) layoutFocusChip(gtx layout.Context, token japanese.Token) layout.Dimensions {
+	bg := barethemes.Mix(p.theme.Color.Primary, p.theme.Color.SurfaceAlt, 0.18)
+	return bareutils.RoundedSurface(gtx, bg, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{
+			Top:    unit.Dp(9),
+			Bottom: unit.Dp(9),
+			Left:   unit.Dp(12),
+			Right:  unit.Dp(12),
+		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(p.theme.Gio(), posMajorLabel(token.POSMajor()))
+					lbl.Color = p.theme.Color.TextMuted
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(p.theme.Gio(), structureFlashcardWord(token))
+					lbl.Color = p.theme.Color.Text
+					return lbl.Layout(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (p *Page) layoutFocusedLookupBar(gtx layout.Context) layout.Dimensions {
+	selected := p.selectedTranscriptText()
+	if selected == "" {
+		selected = "Highlight a word in the focused sentence to look it up."
+	}
+	lookupButton := bareui.Button{
+		Clickable: &p.focusedLookupButton,
+		Text:      "Lookup Selection",
+		Prefix:    "mdi:book-search-outline",
+		Variant:   bareui.ButtonSecondary,
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(p.theme.Gio(), selected)
+			lbl.Color = p.theme.Color.TextMuted
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if p.selectedTranscriptText() == "" {
+				return lookupButton.Layout(gtx.Disabled(), p.theme, p.iconify)
+			}
+			return lookupButton.Layout(gtx, p.theme, p.iconify)
+		}),
+	)
+}
+
+func (p *Page) layoutFocusedTranslationSection(gtx layout.Context) layout.Dimensions {
+	return bareutils.RoundedSurface(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			children := []layout.FlexChild{
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return p.layoutTranslationHeader(gtx)
+				}),
+			}
+			if !p.translationCollapsed {
+				children = append(children,
+					layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						editor := material.Editor(p.theme.Gio(), &p.translationEditor, "Type or edit the translation here")
+						editor.Color = p.theme.Color.Text
+						editor.HintColor = p.theme.Color.TextMuted
+						maxHeight := min(gtx.Constraints.Max.Y, gtx.Dp(unit.Dp(96)))
+						gtx.Constraints.Min.Y = min(maxHeight, gtx.Dp(unit.Dp(58)))
+						gtx.Constraints.Max.Y = maxHeight
+						return editor.Layout(gtx)
+					}),
+				)
+			}
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+		})
+	})
+}
+
+func (p *Page) layoutTranslationHeader(gtx layout.Context) layout.Dimensions {
+	chevron := "mdi:chevron-down"
+	if p.translationCollapsed {
+		chevron = "mdi:chevron-right"
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.translationToggleButton.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				pointer.CursorPointer.Add(gtx.Ops)
+				return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					if p.iconify == nil {
+						lbl := material.Body1(p.theme.Gio(), "+")
+						lbl.Color = p.theme.Color.Text
+						return lbl.Layout(gtx)
+					}
+					return p.iconify.Layout(gtx, chevron, unit.Dp(18), p.theme.Color.Text)
+				})
+			})
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body1(p.theme.Gio(), "Live Translation")
+			lbl.Color = p.theme.Color.Text
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(p.theme.Gio(), "to")
+			lbl.Color = p.theme.Color.TextMuted
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return p.targetLanguageDrop.Layout(gtx, p.theme, p.iconify, p.selectedTargetLanguage, func(gtx layout.Context) layout.Dimensions {
+				return gui.LayoutOptionMenu(gtx, p.targetLanguageOptions, p.selectedTargetLanguage, p.theme, p.iconify)
+			})
+		}),
+	)
+}
+
+func (p *Page) layoutTranscriptCard(gtx layout.Context, bg color.NRGBA, child layout.Widget) layout.Dimensions {
+	return bareutils.Panel(gtx, bg, unit.Dp(p.theme.Radius.LG), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(18)).Layout(gtx, child)
+	})
+}
+
+func (p *Page) layoutCardHeader(gtx layout.Context, title, hint string) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.H6(p.theme.Gio(), title)
+			lbl.Color = p.theme.Color.Text
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if p.isCompactLayout(gtx) {
+				return layout.Dimensions{}
+			}
+			lbl := material.Body2(p.theme.Gio(), hint)
 			lbl.Color = p.theme.Color.TextMuted
 			return lbl.Layout(gtx)
 		}),
 	)
 }
 
-func (p *Page) layoutTranscriptEditor(gtx layout.Context) layout.Dimensions {
-	return material.List(p.theme.Gio(), &p.transcriptList).Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-		return layout.Stack{}.Layout(gtx,
-			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-				return p.layoutTranscriptLabel(gtx, p.theme.Color.Text, &p.transcriptView)
+func (p *Page) focusedSentenceTextSize(gtx layout.Context) unit.Sp {
+	if p.isCompactLayout(gtx) {
+		return unit.Sp(20)
+	}
+	return unit.Sp(26)
+}
+
+func (p *Page) layoutBottomActions(gtx layout.Context) layout.Dimensions {
+	playButton := bareui.Button{
+		Clickable: &p.playSentenceButton,
+		Text:      "Play Audio",
+		Prefix:    "mdi:volume-high",
+		Variant:   bareui.ButtonSecondary,
+	}
+	structureButton := bareui.Button{
+		Clickable: &p.translateSentenceButton,
+		Text:      "Sentence Structure",
+		Prefix:    "mdi:translate",
+		Variant:   bareui.ButtonSecondary,
+	}
+	saveButton := bareui.Button{
+		Clickable: &p.saveSentenceButton,
+		Text:      "Save Sentence",
+		Prefix:    "mdi:heart-outline",
+		Variant:   bareui.ButtonSecondary,
+	}
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return playButton.Layout(gtx, p.theme, p.iconify) }),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return structureButton.Layout(gtx, p.theme, p.iconify) }),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return saveButton.Layout(gtx, p.theme, p.iconify) }),
+	)
+}
+
+func (p *Page) layoutContextRail(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Flexed(5, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min = gtx.Constraints.Max
+			return p.layoutWordDetailsCard(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+		layout.Flexed(4, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min = gtx.Constraints.Max
+			return p.layoutChoicesCard(gtx)
+		}),
+	)
+}
+
+func (p *Page) layoutWordDetailsCard(gtx layout.Context) layout.Dimensions {
+	card, hasCard := p.contextFlashcard()
+	title := "Vocabulary"
+	reading := "Select a saved word or run lookup"
+	meaning := "Word details appear here while the transcript stays readable."
+	meta := "No card selected"
+	if hasCard {
+		title = util.FirstNonEmpty(strings.TrimSpace(card.Text), strings.TrimSpace(p.popupWord), "Vocabulary")
+		reading = util.FirstNonEmpty(strings.TrimSpace(card.Reading), strings.TrimSpace(card.PronunciationText), "No reading saved")
+		meaning = util.FirstNonEmpty(strings.TrimSpace(card.Meaning), strings.TrimSpace(card.SourceLine), meaning)
+		meta = util.FirstNonEmpty(p.flashcardMetaText(card), "Saved flashcard")
+	} else if p.lookupResult != nil {
+		title = util.FirstNonEmpty(p.lookupResult.Query, p.lookupResult.Headword, p.lookupResult.Key)
+		reading = util.FirstNonEmpty(p.lookupResult.Reading, p.lookupResult.PronunciationText, "No reading found")
+		meaning = util.FirstNonEmpty(p.lookupResult.Meaning, meaning)
+		meta = "Dictionary lookup"
+	}
+	return p.layoutTranscriptCard(gtx, p.theme.Color.Background, func(gtx layout.Context) layout.Dimensions {
+		playButton := bareui.Button{Clickable: &p.playAudioButton, Text: "mdi:volume-high", Icon: true, Variant: bareui.ButtonSecondary}
+		lookupButton := bareui.Button{Clickable: &p.searchWordButton, Text: "Lookup", Prefix: "mdi:book-search-outline", Variant: bareui.ButtonSecondary}
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.H6(p.theme.Gio(), "Word Details")
+						lbl.Color = p.theme.Color.Text
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return p.layoutStatusPill(gtx, contextVocabPillText(hasCard), hasCard)
+					}),
+				)
 			}),
-			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				p.paintTranscriptHighlights(gtx)
-				return layout.Dimensions{}
+			layout.Rigid(bareutils.SpacerH(unit.Dp(18))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.H5(p.theme.Gio(), title)
+						lbl.Color = p.theme.Color.Text
+						lbl.TextSize = unit.Sp(32)
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return playButton.Layout(gtx, p.theme, p.iconify)
+					}),
+				)
 			}),
-			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				return p.layoutTranscriptPopup(gtx)
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body1(p.theme.Gio(), reading)
+				lbl.Color = p.theme.Color.TextMuted
+				return lbl.Layout(gtx)
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body1(p.theme.Gio(), meaning)
+				lbl.Color = p.theme.Color.Text
+				return lbl.Layout(gtx)
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(p.theme.Gio(), meta)
+				lbl.Color = p.theme.Color.TextMuted
+				return lbl.Layout(gtx)
+			}),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{} }),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return lookupButton.Layout(gtx, p.theme, p.iconify)
 			}),
 		)
+	})
+}
+
+func (p *Page) layoutChoicesCard(gtx layout.Context) layout.Dimensions {
+	return p.layoutTranscriptCard(gtx, p.theme.Color.Background, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutCardHeader(gtx, "Dialog Choices", "Structure")
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutChoiceRow(gtx, "1", "Inspect sentence structure")
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutChoiceRow(gtx, "2", "Create a flashcard from selected text")
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutChoiceRow(gtx, "3", "Review saved transcript vocabulary")
+			}),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{} }),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(p.theme.Gio(), "Highlight text in Focused Sentence, then use Lookup Selection or Word Details.")
+				lbl.Color = p.theme.Color.TextMuted
+				return lbl.Layout(gtx)
+			}),
+		)
+	})
+}
+
+func (p *Page) layoutChoiceRow(gtx layout.Context, number, text string) layout.Dimensions {
+	return bareutils.RoundedSurface(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{
+			Top:    unit.Dp(10),
+			Bottom: unit.Dp(10),
+			Left:   unit.Dp(12),
+			Right:  unit.Dp(12),
+		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return p.layoutStatusPill(gtx, number, false)
+				}),
+				layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(p.theme.Gio(), text)
+					lbl.Color = p.theme.Color.TextMuted
+					return lbl.Layout(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (p *Page) layoutTranscriptEditor(gtx layout.Context) layout.Dimensions {
+	rows := p.transcriptRows()
+	if len(rows) == 0 {
+		return p.layoutTranscriptIdleState(gtx)
+	}
+	return material.List(p.theme.Gio(), &p.transcriptList).Layout(gtx, len(rows), func(gtx layout.Context, index int) layout.Dimensions {
+		if index < 0 || index >= len(rows) {
+			return layout.Dimensions{}
+		}
+		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return p.layoutTranscriptRow(gtx, rows[index])
+		})
+	})
+}
+
+func (p *Page) layoutTranscriptRow(gtx layout.Context, row transcriptRow) layout.Dimensions {
+	click := p.transcriptRowClickable(row.Key)
+	selected := row.Key == p.currentTranscriptRowKey()
+	bg := p.theme.Color.Surface
+	fg := p.theme.Color.Text
+	timeColor := p.theme.Color.TextMuted
+	if selected {
+		bg = barethemes.Mix(p.theme.Color.Primary, p.theme.Color.SurfaceAlt, 0.22)
+		timeColor = p.theme.Color.Primary
+	}
+	if click.Hovered() && !selected {
+		bg = p.theme.Color.SurfaceAlt
+	}
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		return bareutils.RoundedSurface(gtx, bg, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{
+				Top:    unit.Dp(12),
+				Bottom: unit.Dp(12),
+				Left:   unit.Dp(14),
+				Right:  unit.Dp(12),
+			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints.Min.X = gtx.Dp(unit.Dp(78))
+						lbl := material.Body2(p.theme.Gio(), row.Time)
+						lbl.Color = timeColor
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(bareutils.SpacerW(unit.Dp(14))),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body1(p.theme.Gio(), row.Text)
+						lbl.Color = fg
+						lbl.TextSize = p.transcriptTextSize
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return p.layoutRowVocabIndicators(gtx, row.VocabWords)
+					}),
+					layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return p.layoutRowIcon(gtx, "mdi:translate")
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return p.layoutRowIcon(gtx, "mdi:volume-high")
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return p.layoutRowIcon(gtx, "mdi:heart-outline")
+					}),
+				)
+			})
+		})
+	})
+}
+
+func (p *Page) layoutRowVocabIndicators(gtx layout.Context, words []string) layout.Dimensions {
+	if len(words) == 0 {
+		return layout.Dimensions{}
+	}
+	visible := words
+	if len(visible) > 2 {
+		visible = visible[:2]
+	}
+	children := make([]layout.FlexChild, 0, len(visible)+1)
+	for _, word := range visible {
+		word := word
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return p.layoutVocabChip(gtx, word)
+			})
+		}))
+	}
+	if extra := len(words) - len(visible); extra > 0 {
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return p.layoutVocabChip(gtx, fmt.Sprintf("+%d", extra))
+			})
+		}))
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+}
+
+func (p *Page) layoutVocabChip(gtx layout.Context, text string) layout.Dimensions {
+	bg := color.NRGBA{R: p.theme.Color.Primary.R, G: p.theme.Color.Primary.G, B: p.theme.Color.Primary.B, A: 34}
+	return bareutils.RoundedSurface(gtx, bg, unit.Dp(p.theme.Radius.SM), func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{
+			Top:    unit.Dp(4),
+			Bottom: unit.Dp(4),
+			Left:   unit.Dp(7),
+			Right:  unit.Dp(7),
+		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(p.theme.Gio(), text)
+			lbl.Color = p.theme.Color.Primary
+			return lbl.Layout(gtx)
+		})
+	})
+}
+
+func (p *Page) layoutRowIcon(gtx layout.Context, icon string) layout.Dimensions {
+	if p.iconify == nil {
+		return layout.Dimensions{}
+	}
+	return layout.Inset{Left: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return bareutils.RoundedSurface(gtx, color.NRGBA{}, unit.Dp(p.theme.Radius.SM), func(gtx layout.Context) layout.Dimensions {
+			return layout.UniformInset(unit.Dp(5)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return p.iconify.Layout(gtx, icon, unit.Dp(16), p.theme.Color.TextMuted)
+			})
+		})
 	})
 }
 
@@ -770,7 +1534,7 @@ func (p *Page) popupHeightGuess(card flashcards.Flashcard) unit.Dp {
 }
 
 func (p *Page) shouldCollapseFlashcardComposer() bool {
-	if normalizeSelectionText(p.transcriptView.SelectedText()) != "" {
+	if p.selectedTranscriptText() != "" {
 		return false
 	}
 	if strings.TrimSpace(p.wordEditor.Text()) != "" {
@@ -806,7 +1570,7 @@ func (p *Page) syncComposerMinimized() {
 }
 
 func (p *Page) composerHasActiveContent() bool {
-	if normalizeSelectionText(p.transcriptView.SelectedText()) != "" {
+	if p.selectedTranscriptText() != "" {
 		return true
 	}
 	if strings.TrimSpace(p.wordEditor.Text()) != "" {
@@ -938,9 +1702,9 @@ func (p *Page) layoutFlashcardComposerForm(gtx layout.Context) layout.Dimensions
 	playButton := bareui.Button{Clickable: &p.playAudioButton, Text: "mdi:play-circle-outline", Icon: true, Prefix: "mdi:play-circle-outline", Variant: bareui.ButtonSecondary}
 	addAllButton := bareui.Button{Clickable: &p.addAllLookupButton, Text: "Add All Matches", Prefix: "mdi:playlist-plus", Variant: bareui.ButtonSecondary}
 
-	selected := normalizeSelectionText(p.transcriptView.SelectedText())
+	selected := p.selectedTranscriptText()
 	if selected == "" {
-		selected = "Select transcript text to prefill the flashcard word."
+		selected = "Select focused sentence or transcript text to prefill the flashcard word."
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -1288,27 +2052,225 @@ func (p *Page) structureTokenFlashcard(token japanese.Token) (flashcards.Flashca
 }
 
 func (p *Page) structureSourceText() string {
-	selected := normalizeSelectionText(p.transcriptView.SelectedText())
+	selected := p.selectedTranscriptText()
 	if selected != "" {
 		if sentence := japanese.ExtractSenNtence(p.displayTranscript, selected); sentence != "" {
-			return sentence
+			return cleanInlineText(sentence)
 		}
-		return selected
+		return cleanInlineText(selected)
+	}
+	if selected := strings.TrimSpace(p.selectedLineText); selected != "" {
+		return cleanInlineText(selected)
 	}
 	word := normalizeSelectionText(p.wordEditor.Text())
 	if word != "" {
 		if sentence := findFlashcardSourceLine(p.displayTranscript, word); sentence != "" {
-			return sentence
+			return cleanInlineText(sentence)
 		}
-		return word
+		return cleanInlineText(word)
 	}
 	lines := strings.Split(strings.TrimSpace(p.displayTranscript), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		if line := strings.TrimSpace(lines[i]); line != "" {
-			return line
+			return cleanInlineText(line)
 		}
 	}
 	return ""
+}
+
+func (p *Page) transcriptRows() []transcriptRow {
+	lines := strings.Split(strings.TrimSpace(p.displayTranscript), "\n")
+	rows := make([]transcriptRow, 0, len(lines))
+	for i, line := range lines {
+		text := cleanInlineText(line)
+		if text == "" {
+			continue
+		}
+		timestamp, body := splitTranscriptTimestamp(text)
+		body = cleanInlineText(body)
+		key := fmt.Sprintf("%d:%s", i, text)
+		rows = append(rows, transcriptRow{Key: key, Time: timestamp, Text: body, VocabWords: p.vocabWordsInText(body)})
+	}
+	p.pruneTranscriptRowClicks(rows)
+	return rows
+}
+
+func (p *Page) vocabWordsInText(text string) []string {
+	text = cleanInlineText(text)
+	if text == "" || len(p.flashcards) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(p.flashcards))
+	words := make([]string, 0, len(p.flashcards))
+	for _, card := range p.flashcards {
+		word := cleanInlineText(card.Text)
+		if word == "" {
+			continue
+		}
+		if _, ok := seen[word]; ok {
+			continue
+		}
+		seen[word] = struct{}{}
+		words = append(words, word)
+	}
+	sort.SliceStable(words, func(i, j int) bool {
+		return len([]rune(words[i])) > len([]rune(words[j]))
+	})
+	matches := flashcards.FindMatches(text, words)
+	if len(matches) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if _, ok := seen[match.Word]; !ok {
+			continue
+		}
+		out = append(out, match.Word)
+		delete(seen, match.Word)
+	}
+	return out
+}
+
+func (p *Page) currentTranscriptRowKey() string {
+	if p.selectedLineKey != "" {
+		return p.selectedLineKey
+	}
+	rows := p.transcriptRows()
+	if len(rows) == 0 {
+		return ""
+	}
+	return rows[len(rows)-1].Key
+}
+
+func (p *Page) selectTranscriptRow(key string) {
+	for _, row := range p.transcriptRows() {
+		if row.Key != key {
+			continue
+		}
+		p.selectedLineKey = row.Key
+		p.selectedLineText = row.Text
+		p.wordEditor.SetText("")
+		p.meaningEditor.SetText("")
+		p.lookupResult = nil
+		p.lookupResults = nil
+		p.DismissPopup()
+		return
+	}
+}
+
+func (p *Page) transcriptRowClickable(key string) *widget.Clickable {
+	if p.transcriptRowClicks == nil {
+		p.transcriptRowClicks = make(map[string]*widget.Clickable)
+	}
+	if p.transcriptRowClicks[key] == nil {
+		p.transcriptRowClicks[key] = new(widget.Clickable)
+	}
+	return p.transcriptRowClicks[key]
+}
+
+func (p *Page) pruneTranscriptRowClicks(rows []transcriptRow) {
+	valid := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		valid[row.Key] = struct{}{}
+	}
+	for key := range p.transcriptRowClicks {
+		if _, ok := valid[key]; !ok {
+			delete(p.transcriptRowClicks, key)
+		}
+	}
+	if p.selectedLineKey != "" {
+		if _, ok := valid[p.selectedLineKey]; !ok {
+			p.selectedLineKey = ""
+			p.selectedLineText = ""
+		}
+	}
+}
+
+func splitTranscriptTimestamp(line string) (string, string) {
+	line = strings.TrimSpace(line)
+	if len(line) >= len("15:04:05") {
+		candidate := line[:len("15:04:05")]
+		if isClockTimestamp(candidate) {
+			return candidate, strings.TrimSpace(line[len("15:04:05"):])
+		}
+	}
+	if strings.HasPrefix(line, "[") {
+		if end := strings.Index(line, "]"); end > 0 && end <= 12 {
+			return strings.TrimSpace(line[1:end]), strings.TrimSpace(line[end+1:])
+		}
+	}
+	return "--:--:--", line
+}
+
+func isClockTimestamp(value string) bool {
+	if len(value) != 8 {
+		return false
+	}
+	for i, r := range value {
+		switch i {
+		case 2, 5:
+			if r != ':' {
+				return false
+			}
+		default:
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (p *Page) contextFlashcard() (flashcards.Flashcard, bool) {
+	if p.popupFlashcard != nil {
+		return *p.popupFlashcard, true
+	}
+	word := strings.TrimSpace(p.wordEditor.Text())
+	if word == "" {
+		word = strings.TrimSpace(p.popupWord)
+	}
+	if word != "" {
+		for _, card := range p.flashcards {
+			if strings.EqualFold(strings.TrimSpace(card.Text), word) || strings.EqualFold(strings.TrimSpace(card.Reading), word) {
+				return card, true
+			}
+		}
+	}
+	if len(p.flashcards) > 0 {
+		return p.flashcards[0], true
+	}
+	return flashcards.Flashcard{}, false
+}
+
+func contextVocabPillText(hasCard bool) string {
+	if hasCard {
+		return "In Vocab"
+	}
+	return "Lookup"
+}
+
+func newTranslationLanguageOptions() []gui.DropdownOption {
+	labels := []string{
+		"English",
+		"Japanese",
+		"Spanish",
+		"French",
+		"German",
+		"Korean",
+		"Chinese",
+		"Italian",
+		"Portuguese",
+		"Russian",
+	}
+	options := make([]gui.DropdownOption, 0, len(labels))
+	for _, label := range labels {
+		options = append(options, gui.DropdownOption{
+			Label:     label,
+			Icon:      "mdi:translate",
+			Clickable: new(widget.Clickable),
+		})
+	}
+	return options
 }
 
 func tokenDetailText(token japanese.Token) string {
@@ -1368,6 +2330,60 @@ func structureTokenFlashcardCandidates(token japanese.Token) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func focusTokens(tokens []japanese.Token, limit int) []japanese.Token {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]japanese.Token, 0, limit)
+	preferred := map[string]bool{
+		"名詞":  true,
+		"動詞":  true,
+		"形容詞": true,
+		"副詞":  true,
+	}
+	for _, token := range tokens {
+		if !preferred[token.POSMajor()] || structureFlashcardWord(token) == "" {
+			continue
+		}
+		out = append(out, token)
+		if len(out) == limit {
+			return out
+		}
+	}
+	for _, token := range tokens {
+		if structureFlashcardWord(token) == "" {
+			continue
+		}
+		out = append(out, token)
+		if len(out) == limit {
+			return out
+		}
+	}
+	return out
+}
+
+func focusedTokenReading(token japanese.Token) string {
+	if !util.ContainsKanji(token.Surface) {
+		return ""
+	}
+	reading := cleanInlineText(token.Reading)
+	if reading == "" || reading == cleanInlineText(token.Surface) {
+		return ""
+	}
+	return katakanaToHiragana(reading)
+}
+
+func katakanaToHiragana(text string) string {
+	var b strings.Builder
+	for _, r := range text {
+		if r >= 'ァ' && r <= 'ヶ' {
+			r -= 0x60
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func normalizeStructureMatchText(value string) string {
@@ -1634,7 +2650,7 @@ func (p *Page) layoutLookupResultCard(gtx layout.Context, lookup dictionary.Look
 }
 
 func (p *Page) lookupCurrentWord() {
-	if selected := normalizeSelectionText(p.transcriptView.SelectedText()); selected != "" {
+	if selected := p.selectedTranscriptText(); selected != "" {
 		p.wordEditor.SetText(selected)
 	}
 	p.lookupResult = nil
@@ -1790,6 +2806,14 @@ func (p *Page) syncTranscriptEditor() {
 		p.transcriptView.SetCaret(runes, runes)
 	}
 	p.lastSyncedText = p.displayTranscript
+}
+
+func (p *Page) syncFocusedSentenceView(text string) {
+	if p.lastFocusedText == text {
+		return
+	}
+	p.focusedSentenceView.SetText(text)
+	p.lastFocusedText = text
 }
 
 func (p *Page) paintTranscriptHighlights(gtx layout.Context) {
@@ -1953,10 +2977,6 @@ func (p *Page) shouldStackTranscriptPage(gtx layout.Context) bool {
 	return gtx.Constraints.Max.X <= gtx.Dp(unit.Dp(transcriptStackWidth))
 }
 
-func (p *Page) shouldDockTranscriptComposer(gtx layout.Context) bool {
-	return gtx.Constraints.Max.X >= gtx.Dp(unit.Dp(transcriptDockedWidth))
-}
-
 func (p *Page) transcriptComposerWidth(gtx layout.Context) int {
 	if gtx.Constraints.Max.X <= gtx.Dp(unit.Dp(transcriptMediumWidth)) {
 		return gtx.Dp(unit.Dp(360))
@@ -1965,19 +2985,6 @@ func (p *Page) transcriptComposerWidth(gtx layout.Context) int {
 		return gtx.Dp(unit.Dp(380))
 	}
 	return gtx.Dp(unit.Dp(420))
-}
-
-func (p *Page) transcriptComposerOverlayWidth(gtx layout.Context) int {
-	if p.shouldCollapseFlashcardComposer() {
-		if p.isCompactLayout(gtx) {
-			return gtx.Dp(unit.Dp(280))
-		}
-		return gtx.Dp(unit.Dp(320))
-	}
-	if p.isCompactLayout(gtx) {
-		return gtx.Dp(unit.Dp(320))
-	}
-	return min(gtx.Dp(unit.Dp(420)), p.transcriptComposerWidth(gtx))
 }
 
 func (p *Page) transcriptLaunchButtonLabel() string {
@@ -2061,7 +3068,26 @@ func lookupResultKey(lookup dictionary.Lookup) string {
 	return util.FirstNonEmpty(lookup.Key, lookup.Query, lookup.Headword)
 }
 
+func (p *Page) selectedTranscriptText() string {
+	if selected := normalizeSelectionText(p.focusedSentenceView.SelectedText()); selected != "" {
+		return cleanInlineText(selected)
+	}
+	if selected := normalizeSelectionText(p.transcriptView.SelectedText()); selected != "" {
+		return cleanInlineText(selected)
+	}
+	return ""
+}
+
 func normalizeSelectionText(text string) string {
+	return cleanInlineText(text)
+}
+
+func cleanInlineText(text string) string {
+	text = strings.ReplaceAll(text, `\n`, " ")
+	text = strings.ReplaceAll(text, "\r\n", " ")
+	text = strings.ReplaceAll(text, "\r", " ")
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\t", " ")
 	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
 }
 
@@ -2084,6 +3110,7 @@ func findFlashcardSourceLine(transcriptText, word string) string {
 
 func sanitizeTranscriptForDisplay(text string) string {
 	text = ansiRE.ReplaceAllString(text, "")
+	text = strings.ReplaceAll(text, `\n`, "\n")
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
 	text = strings.ReplaceAll(text, "\t", "    ")
