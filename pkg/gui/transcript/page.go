@@ -87,6 +87,8 @@ type Page struct {
 	furiganaHiddenButton       widget.Clickable
 	furiganaAboveButton        widget.Clickable
 	furiganaBelowButton        widget.Clickable
+	focusedTokenAddButton      widget.Clickable
+	focusedTokenAudioButton    widget.Clickable
 
 	transcriptHighlightClicks map[string]*widget.Clickable
 	transcriptHighlightBounds map[string]image.Rectangle
@@ -95,6 +97,7 @@ type Page struct {
 	structureTokenAddClicks   map[string]*widget.Clickable
 	structureTokenPlayClicks  map[string]*widget.Clickable
 	transcriptRowClicks       map[string]*widget.Clickable
+	focusedTokenClicks        map[string]*widget.Clickable
 	targetLanguageOptions     []gui.DropdownOption
 
 	activeGameName         string
@@ -111,32 +114,34 @@ type Page struct {
 	autoPlayHighlightAudio bool
 	colorizeHighlights     bool
 
-	flashcards             []flashcards.Flashcard
-	lookupResult           *dictionary.Lookup
-	lookupResults          []dictionary.Lookup
-	displayTranscript      string
-	lastSyncedText         string
-	lastFocusedText        string
-	structureCacheKey      string
-	structureCache         japanese.Analysis
-	structureCacheErr      string
-	highlightCacheKey      string
-	highlightCache         []flashcards.Match
-	popupFlashcard         *flashcards.Flashcard
-	popupAnchor            image.Rectangle
-	popupBounds            image.Rectangle
-	popupMatchKey          string
-	popupWord              string
-	selectedLineKey        string
-	selectedLineText       string
-	translationCollapsed   bool
-	focusedFuriganaMode    string
-	selectedTargetLanguage string
-	composerFocus          string
-	composerMinimized      bool
-	composerLastUsed       time.Time
-	lastAutoWord           string
-	hideReadingSet         bool
+	flashcards               []flashcards.Flashcard
+	lookupResult             *dictionary.Lookup
+	lookupResults            []dictionary.Lookup
+	displayTranscript        string
+	lastSyncedText           string
+	lastFocusedText          string
+	structureCacheKey        string
+	structureCache           japanese.Analysis
+	structureCacheErr        string
+	highlightCacheKey        string
+	highlightCache           []flashcards.Match
+	popupFlashcard           *flashcards.Flashcard
+	popupAnchor              image.Rectangle
+	popupBounds              image.Rectangle
+	popupMatchKey            string
+	popupWord                string
+	selectedLineKey          string
+	selectedLineText         string
+	selectedFocusedTokenKey  string
+	selectedFocusedTokenWord string
+	translationCollapsed     bool
+	focusedFuriganaMode      string
+	selectedTargetLanguage   string
+	composerFocus            string
+	composerMinimized        bool
+	composerLastUsed         time.Time
+	lastAutoWord             string
+	hideReadingSet           bool
 
 	OnError  func(title, body string)
 	OnNotify func(title, body string, kind guitoast.NotificationType)
@@ -169,6 +174,7 @@ func New(theme barethemes.Theme) *Page {
 		structureTokenAddClicks:   make(map[string]*widget.Clickable),
 		structureTokenPlayClicks:  make(map[string]*widget.Clickable),
 		transcriptRowClicks:       make(map[string]*widget.Clickable),
+		focusedTokenClicks:        make(map[string]*widget.Clickable),
 	}
 	p.transcriptFocusSplit.Value = 0.5
 	p.wordEditor.SingleLine = true
@@ -336,6 +342,12 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 	for p.focusedLookupButton.Clicked(gtx) {
 		p.lookupCurrentWord()
 	}
+	for p.focusedTokenAddButton.Clicked(gtx) {
+		p.addFocusedTokenFlashcard()
+	}
+	for p.focusedTokenAudioButton.Clicked(gtx) {
+		p.playFocusedTokenAudio()
+	}
 	for p.translationToggleButton.Clicked(gtx) {
 		p.translationCollapsed = !p.translationCollapsed
 	}
@@ -392,6 +404,11 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 	for key, click := range p.transcriptRowClicks {
 		for click.Clicked(gtx) {
 			p.selectTranscriptRow(key)
+		}
+	}
+	for key, click := range p.focusedTokenClicks {
+		for click.Clicked(gtx) {
+			p.selectFocusedToken(key)
 		}
 	}
 	for p.transcriptPopupAudioButton.Clicked(gtx) {
@@ -747,6 +764,10 @@ func (p *Page) layoutFocusedSentenceCard(gtx layout.Context) layout.Dimensions {
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return p.layoutFocusedFuriganaControls(gtx)
 			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutFocusedTokenActions(gtx)
+			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				analysis, errText := p.currentStructureAnalysis()
 				if errText == "" && len(analysis.Tokens) == 0 {
@@ -799,23 +820,77 @@ func (p *Page) layoutFocusedSentenceWithFurigana(gtx layout.Context, sentence st
 		lbl.TextSize = p.focusedSentenceTextSize(gtx)
 		return lbl.Layout(gtx)
 	}
-	children := make([]layout.FlexChild, 0, len(analysis.Tokens))
-	for _, token := range analysis.Tokens {
-		token := token
+	lines := focusedSentenceTokenLines(gtx, analysis.Tokens)
+	children := make([]layout.FlexChild, 0, len(lines))
+	for i, line := range lines {
+		line := line
+		if i > 0 {
+			children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(5))))
+		}
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return p.layoutFocusedFuriganaToken(gtx, token)
+			lineChildren := make([]layout.FlexChild, 0, len(line))
+			for _, token := range line {
+				token := token
+				lineChildren = append(lineChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return p.layoutFocusedFuriganaToken(gtx, token)
+				}))
+			}
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, lineChildren...)
 		}))
 	}
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+	p.pruneFocusedTokenClicks(analysis.Tokens)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func focusedSentenceTokenLines(gtx layout.Context, tokens []japanese.Token) [][]japanese.Token {
+	maxWidth := gtx.Constraints.Max.X
+	if maxWidth <= 0 {
+		return [][]japanese.Token{tokens}
+	}
+	lines := make([][]japanese.Token, 0, 2)
+	line := make([]japanese.Token, 0, len(tokens))
+	lineWidth := 0
+	for _, token := range tokens {
+		tokenWidth := focusedSentenceTokenWidth(gtx, token)
+		if len(line) > 0 && lineWidth+tokenWidth > maxWidth {
+			lines = append(lines, line)
+			line = make([]japanese.Token, 0, len(tokens))
+			lineWidth = 0
+		}
+		line = append(line, token)
+		lineWidth += tokenWidth
+	}
+	if len(line) > 0 {
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func focusedSentenceTokenWidth(gtx layout.Context, token japanese.Token) int {
+	surfaceRunes := len([]rune(cleanInlineText(token.Surface)))
+	readingRunes := len([]rune(focusedTokenReading(token)))
+	runes := surfaceRunes
+	if readingRunes > runes {
+		runes = readingRunes
+	}
+	if runes <= 0 {
+		runes = 1
+	}
+	return gtx.Dp(unit.Dp(float32(runes*19 + 14)))
 }
 
 func (p *Page) layoutFocusedFuriganaToken(gtx layout.Context, token japanese.Token) layout.Dimensions {
+	key := structureTokenKey(token)
+	click := p.focusedTokenClickable(key)
 	reading := focusedTokenReading(token)
 	surface := cleanInlineText(token.Surface)
 	if surface == "" {
 		return layout.Dimensions{}
 	}
-	children := make([]layout.FlexChild, 0, 3)
+	_, inFlashcards := p.structureTokenFlashcard(token)
+	dictionaryReady := focusedTokenDictionaryReady(token)
+	bg := focusedTokenColor(p.theme, token, p.selectedFocusedTokenKey == key, inFlashcards, dictionaryReady)
+	children := make([]layout.FlexChild, 0, 4)
 	if p.focusedFuriganaMode == focusedFuriganaAbove {
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return p.layoutFocusedTokenReading(gtx, reading)
@@ -832,9 +907,42 @@ func (p *Page) layoutFocusedFuriganaToken(gtx layout.Context, token japanese.Tok
 			return p.layoutFocusedTokenReading(gtx, reading)
 		}))
 	}
-	return layout.Inset{Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx, children...)
+	if p.focusedFuriganaMode == focusedFuriganaAbove {
+		children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(3))), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.layoutFocusedTokenMarker(gtx, inFlashcards, dictionaryReady)
+		}))
+	}
+	return layout.Inset{Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			pointer.CursorPointer.Add(gtx.Ops)
+			return bareutils.RoundedSurface(gtx, bg, unit.Dp(p.theme.Radius.SM), func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{
+					Top:    unit.Dp(5),
+					Bottom: unit.Dp(5),
+					Left:   unit.Dp(6),
+					Right:  unit.Dp(6),
+				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx, children...)
+				})
+			})
+		})
 	})
+}
+
+func (p *Page) layoutFocusedTokenMarker(gtx layout.Context, inFlashcards, dictionaryReady bool) layout.Dimensions {
+	text := " "
+	fg := p.theme.Color.TextMuted
+	if inFlashcards {
+		text = "✓"
+		fg = p.theme.Color.Success
+	} else if dictionaryReady {
+		text = "·"
+		fg = p.theme.Color.Secondary
+	}
+	lbl := material.Body2(p.theme.Gio(), text)
+	lbl.Color = fg
+	lbl.TextSize = unit.Sp(12)
+	return lbl.Layout(gtx)
 }
 
 func (p *Page) layoutFocusedTokenReading(gtx layout.Context, reading string) layout.Dimensions {
@@ -842,7 +950,7 @@ func (p *Page) layoutFocusedTokenReading(gtx layout.Context, reading string) lay
 		reading = " "
 	}
 	lbl := material.Body2(p.theme.Gio(), reading)
-	lbl.Color = p.theme.Color.Primary
+	lbl.Color = color.NRGBA{R: 255, G: 137, B: 103, A: 255}
 	return lbl.Layout(gtx)
 }
 
@@ -866,6 +974,68 @@ func (p *Page) layoutFocusedFuriganaControls(gtx layout.Context) layout.Dimensio
 			return p.layoutFuriganaModeButton(gtx, &p.furiganaBelowButton, focusedFuriganaBelow, "Below")
 		}),
 	)
+}
+
+func (p *Page) layoutFocusedTokenActions(gtx layout.Context) layout.Dimensions {
+	word := util.FirstNonEmpty(p.selectedFocusedTokenWord, p.selectedTranscriptText())
+	meaning := "Click a word block above to inspect it."
+	existingCard, hasExistingCard := p.focusedSelectedTokenFlashcard(word)
+	if p.lookupResult != nil && cleanInlineText(p.lookupResult.Meaning) != "" {
+		meaning = cleanInlineText(p.lookupResult.Meaning)
+	} else if word != "" {
+		if hasExistingCard && cleanInlineText(existingCard.Meaning) != "" {
+			meaning = "Saved flashcard: " + cleanInlineText(existingCard.Meaning)
+		}
+	}
+	addButton := bareui.Button{
+		Clickable: &p.focusedTokenAddButton,
+		Text:      "Add Flashcard",
+		Prefix:    "mdi:plus-circle-outline",
+		Variant:   bareui.ButtonSecondary,
+	}
+	audioButton := bareui.Button{
+		Clickable: &p.focusedTokenAudioButton,
+		Text:      "Play Audio",
+		Prefix:    "mdi:volume-high",
+		Variant:   bareui.ButtonSecondary,
+	}
+	return bareutils.RoundedSurface(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{
+			Top:    unit.Dp(9),
+			Bottom: unit.Dp(9),
+			Left:   unit.Dp(10),
+			Right:  unit.Dp(10),
+		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(p.theme.Gio(), meaning)
+					lbl.Color = p.theme.Color.TextMuted
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if p.lookupResult == nil || hasExistingCard {
+						return addButton.Layout(gtx.Disabled(), p.theme, p.iconify)
+					}
+					return addButton.Layout(gtx, p.theme, p.iconify)
+				}),
+				layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					audioPath := ""
+					if p.lookupResult != nil {
+						audioPath = strings.TrimSpace(p.lookupResult.AudioPath)
+					}
+					if audioPath == "" && hasExistingCard {
+						audioPath = strings.TrimSpace(existingCard.AudioPath)
+					}
+					if audioPath == "" {
+						return audioButton.Layout(gtx.Disabled(), p.theme, p.iconify)
+					}
+					return audioButton.Layout(gtx, p.theme, p.iconify)
+				}),
+			)
+		})
+	})
 }
 
 func (p *Page) layoutFuriganaModeButton(gtx layout.Context, click *widget.Clickable, mode, label string) layout.Dimensions {
@@ -2018,6 +2188,114 @@ func (p *Page) structureTokenPlayClickable(key string) *widget.Clickable {
 	return p.structureTokenPlayClicks[key]
 }
 
+func (p *Page) focusedTokenClickable(key string) *widget.Clickable {
+	if p.focusedTokenClicks == nil {
+		p.focusedTokenClicks = make(map[string]*widget.Clickable)
+	}
+	if p.focusedTokenClicks[key] == nil {
+		p.focusedTokenClicks[key] = new(widget.Clickable)
+	}
+	return p.focusedTokenClicks[key]
+}
+
+func (p *Page) pruneFocusedTokenClicks(tokens []japanese.Token) {
+	valid := make(map[string]struct{}, len(tokens))
+	for _, token := range tokens {
+		valid[structureTokenKey(token)] = struct{}{}
+	}
+	for key := range p.focusedTokenClicks {
+		if _, ok := valid[key]; !ok {
+			delete(p.focusedTokenClicks, key)
+		}
+	}
+	if p.selectedFocusedTokenKey != "" {
+		if _, ok := valid[p.selectedFocusedTokenKey]; !ok {
+			p.selectedFocusedTokenKey = ""
+			p.selectedFocusedTokenWord = ""
+		}
+	}
+}
+
+func (p *Page) selectFocusedToken(key string) {
+	analysis, errText := p.currentStructureAnalysis()
+	if errText != "" {
+		p.showError("Dictionary Lookup Failed", errText)
+		return
+	}
+	for _, token := range analysis.Tokens {
+		if structureTokenKey(token) != key {
+			continue
+		}
+		word := structureFlashcardWord(token)
+		if word == "" {
+			word = strings.TrimSpace(token.Surface)
+		}
+		p.selectedFocusedTokenKey = key
+		p.selectedFocusedTokenWord = word
+		p.wordEditor.SetText(word)
+		p.meaningEditor.SetText("")
+		p.lookupResult = nil
+		p.lookupResults = nil
+		lookups, err := dictionary.LookupWords(word)
+		if err != nil {
+			p.showError("Dictionary Lookup Failed", err.Error())
+			return
+		}
+		if len(lookups) == 0 {
+			p.showError("Dictionary Lookup Failed", "No dictionary matches were found for "+word+".")
+			return
+		}
+		p.lookupResults = lookups
+		p.lookupResult = &lookups[0]
+		p.meaningEditor.SetText(lookups[0].Meaning)
+		return
+	}
+}
+
+func (p *Page) addFocusedTokenFlashcard() {
+	if p.lookupResult == nil {
+		p.showError("Create Flashcard Failed", "Click a word block before adding a flashcard.")
+		return
+	}
+	if _, ok := p.focusedSelectedTokenFlashcard(p.selectedFocusedTokenWord); ok {
+		p.showNotification("Flashcard Exists", p.selectedFocusedTokenWord+" is already in your flashcards.", guitoast.NotificationTypeInfo)
+		return
+	}
+	card := p.flashcardFromLookup(*p.lookupResult)
+	if err := flashcards.AddFlashcard(card); err != nil {
+		p.showError("Create Flashcard Failed", err.Error())
+		return
+	}
+	_ = p.ReloadFlashcards()
+	p.showNotification("Flashcard Created", card.Text+" was added.", guitoast.NotificationTypeSuccess)
+}
+
+func (p *Page) playFocusedTokenAudio() {
+	if p.lookupResult != nil && strings.TrimSpace(p.lookupResult.AudioPath) != "" {
+		if err := dictionary.PlayLookupAudio(*p.lookupResult); err != nil {
+			p.showError("Audio Playback Failed", err.Error())
+		}
+		return
+	}
+	card, ok := p.focusedSelectedTokenFlashcard(p.selectedFocusedTokenWord)
+	if !ok || strings.TrimSpace(card.AudioPath) == "" {
+		p.showError("Audio Playback Failed", "No audio is available for the selected word.")
+		return
+	}
+	if err := playFlashcardAudio(card); err != nil {
+		p.showError("Audio Playback Failed", err.Error())
+	}
+}
+
+func (p *Page) focusedSelectedTokenFlashcard(word string) (flashcards.Flashcard, bool) {
+	if p.selectedFocusedTokenKey != "" {
+		if card, ok := p.structureTokenFlashcardByKey(p.selectedFocusedTokenKey); ok {
+			return card, true
+		}
+	}
+	return p.flashcardForWordExact(word)
+}
+
 func (p *Page) structureTokenFlashcardByKey(key string) (flashcards.Flashcard, bool) {
 	analysis, _ := p.currentStructureAnalysis()
 	for _, token := range analysis.Tokens {
@@ -2229,15 +2507,34 @@ func (p *Page) contextFlashcard() (flashcards.Flashcard, bool) {
 	if word == "" {
 		word = strings.TrimSpace(p.popupWord)
 	}
+	return p.contextFlashcardForWord(word)
+}
+
+func (p *Page) contextFlashcardForWord(word string) (flashcards.Flashcard, bool) {
+	word = strings.TrimSpace(word)
 	if word != "" {
-		for _, card := range p.flashcards {
-			if strings.EqualFold(strings.TrimSpace(card.Text), word) || strings.EqualFold(strings.TrimSpace(card.Reading), word) {
-				return card, true
-			}
+		if card, ok := p.flashcardForWordExact(word); ok {
+			return card, true
 		}
 	}
 	if len(p.flashcards) > 0 {
 		return p.flashcards[0], true
+	}
+	return flashcards.Flashcard{}, false
+}
+
+func (p *Page) flashcardForWordExact(word string) (flashcards.Flashcard, bool) {
+	word = normalizeStructureMatchText(word)
+	if word == "" {
+		return flashcards.Flashcard{}, false
+	}
+	for _, card := range p.flashcards {
+		cardWords := []string{card.Text, card.Reading, card.PronunciationText}
+		for _, cardWord := range cardWords {
+			if normalizeStructureMatchText(cardWord) == word {
+				return card, true
+			}
+		}
 	}
 	return flashcards.Flashcard{}, false
 }
@@ -2373,6 +2670,34 @@ func focusedTokenReading(token japanese.Token) string {
 		return ""
 	}
 	return katakanaToHiragana(reading)
+}
+
+func focusedTokenDictionaryReady(token japanese.Token) bool {
+	return canCreateStructureFlashcard(token)
+}
+
+func focusedTokenColor(theme barethemes.Theme, token japanese.Token, selected, inFlashcards, dictionaryReady bool) color.NRGBA {
+	if selected {
+		return color.NRGBA{R: theme.Color.Primary.R, G: theme.Color.Primary.G, B: theme.Color.Primary.B, A: 88}
+	}
+	if inFlashcards {
+		return color.NRGBA{R: theme.Color.Primary.R, G: theme.Color.Primary.G, B: theme.Color.Primary.B, A: 54}
+	}
+	if dictionaryReady {
+		return color.NRGBA{R: theme.Color.SurfaceAlt.R, G: theme.Color.SurfaceAlt.G, B: theme.Color.SurfaceAlt.B, A: 210}
+	}
+	switch token.POSMajor() {
+	case "名詞":
+		return color.NRGBA{R: theme.Color.Secondary.R, G: theme.Color.Secondary.G, B: theme.Color.Secondary.B, A: 44}
+	case "動詞":
+		return color.NRGBA{R: theme.Color.Primary.R, G: theme.Color.Primary.G, B: theme.Color.Primary.B, A: 42}
+	case "形容詞", "副詞":
+		return color.NRGBA{R: theme.Color.Warning.R, G: theme.Color.Warning.G, B: theme.Color.Warning.B, A: 42}
+	case "助詞", "助動詞":
+		return color.NRGBA{R: theme.Color.Tertiary.R, G: theme.Color.Tertiary.G, B: theme.Color.Tertiary.B, A: 32}
+	default:
+		return color.NRGBA{R: theme.Color.SurfaceAlt.R, G: theme.Color.SurfaceAlt.G, B: theme.Color.SurfaceAlt.B, A: 180}
+	}
 }
 
 func katakanaToHiragana(text string) string {

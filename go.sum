@@ -12,8 +12,8 @@ github.com/DarlingGoose/jpndict v0.0.8 h1:xGKZyfH8b5RUWYOd/putiaE9zlYqnUP7aeWH+d
 github.com/DarlingGoose/jpndict v0.0.8/go.mod h1:wG2W4lv4E8s2V+a7n+e8ybrMW8WZQn2YZui/TEC1GSI=
 github.com/DarlingGoose/krkrxp3 v0.0.0-20260501002828-eeec57c77223 h1:1tic7U37R8qXALf0Vo/om/7vzhSPSnW1TM0svufkbn0=
 github.com/DarlingGoose/krkrxp3 v0.0.0-20260501002828-eeec57c77223/go.mod h1:4FKLMkDlp3ps7IO1SQG9zk7LwgvvzWZL2dByqvMci7k=
-github.com/DarlingGoose/vntext v0.0.3 h1:cg6okg9DjaiL8VTIc2khtFybIW+dsG5QLbptPFqHQJc=
-github.com/DarlingGoose/vntext v0.0.3/go.mod h1:fiv7giMHiMjvc6qM4m1p4kY0mxAnkvS+sStKjqUwyMc=
+github.com/DarlingGoose/vntext v0.0.4 h1:s/d2O9y/+etBUV0ZyR5sHo+FKmuwn7qkNw+8xSqKblY=
+github.com/DarlingGoose/vntext v0.0.4/go.mod h1:fiv7giMHiMjvc6qM4m1p4kY0mxAnkvS+sStKjqUwyMc=
 github.com/PuerkitoBio/goquery v1.12.0 h1:pAcL4g3WRXekcB9AU/y1mbKez2dbY2AajVhtkO8RIBo=
 github.com/PuerkitoBio/goquery v1.12.0/go.mod h1:802ej+gV2y7bbIhOIoPY5sT183ZW0YFofScC4q/hIpQ=
 github.com/andybalholm/cascadia v1.3.3 h1:AG2YHrzJIm4BZ19iwJ/DAua6Btl3IwJX+VI4kktS1LM=
