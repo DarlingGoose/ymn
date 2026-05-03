@@ -906,23 +906,31 @@ func (p *Page) layoutFocusedFuriganaToken(gtx layout.Context, token japanese.Tok
 	children := make([]layout.FlexChild, 0, 4)
 	if p.focusedFuriganaMode == focusedFuriganaAbove {
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return p.layoutFocusedTokenReading(gtx, reading)
+			return p.layoutFocusedTokenSlot(gtx, unit.Dp(18), func(gtx layout.Context) layout.Dimensions {
+				return p.layoutFocusedTokenReading(gtx, reading)
+			})
 		}), layout.Rigid(bareutils.SpacerH(unit.Dp(2))))
 	}
 	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-		lbl := material.H6(p.theme.Gio(), surface)
-		lbl.Color = p.theme.Color.Text
-		lbl.TextSize = p.focusedSentenceTextSize(gtx)
-		return lbl.Layout(gtx)
+		return p.layoutFocusedTokenSlot(gtx, p.focusedTokenSurfaceSlotHeight(gtx), func(gtx layout.Context) layout.Dimensions {
+			lbl := material.H6(p.theme.Gio(), surface)
+			lbl.Color = p.theme.Color.Text
+			lbl.TextSize = p.focusedSentenceTextSize(gtx)
+			return lbl.Layout(gtx)
+		})
 	}))
 	if p.focusedFuriganaMode == focusedFuriganaBelow {
 		children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(2))), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return p.layoutFocusedTokenReading(gtx, reading)
+			return p.layoutFocusedTokenSlot(gtx, unit.Dp(18), func(gtx layout.Context) layout.Dimensions {
+				return p.layoutFocusedTokenReading(gtx, reading)
+			})
 		}))
 	}
 	if p.focusedFuriganaMode == focusedFuriganaAbove {
 		children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(3))), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return p.layoutFocusedTokenMarker(gtx, inFlashcards, dictionaryReady)
+			return p.layoutFocusedTokenSlot(gtx, unit.Dp(14), func(gtx layout.Context) layout.Dimensions {
+				return p.layoutFocusedTokenMarker(gtx, inFlashcards, dictionaryReady)
+			})
 		}))
 	}
 	return layout.Inset{Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -940,6 +948,26 @@ func (p *Page) layoutFocusedFuriganaToken(gtx layout.Context, token japanese.Tok
 			})
 		})
 	})
+}
+
+func (p *Page) layoutFocusedTokenSlot(gtx layout.Context, height unit.Dp, w layout.Widget) layout.Dimensions {
+	slotHeight := gtx.Dp(height)
+	if slotHeight <= 0 {
+		return w(gtx)
+	}
+	local := gtx
+	local.Constraints.Min.Y = slotHeight
+	local.Constraints.Max.Y = slotHeight
+	dims := layout.Center.Layout(local, w)
+	dims.Size.Y = slotHeight
+	return dims
+}
+
+func (p *Page) focusedTokenSurfaceSlotHeight(gtx layout.Context) unit.Dp {
+	if p.isCompactLayout(gtx) {
+		return unit.Dp(30)
+	}
+	return unit.Dp(38)
 }
 
 func (p *Page) layoutFocusedTokenMarker(gtx layout.Context, inFlashcards, dictionaryReady bool) layout.Dimensions {

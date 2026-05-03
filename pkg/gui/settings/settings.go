@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -27,18 +28,14 @@ type Settings struct {
 	theme   barethemes.Theme
 	iconify *icons.Iconify
 
-	modeDropdown        bareui.Dropdown
-	paletteDropdown     bareui.Dropdown
 	textSizeDropdown    bareui.Dropdown
 	recentLinesDropdown bareui.Dropdown
 	furiganaDropdown    bareui.Dropdown
-	modeOptions         []gui.DropdownOption
-	paletteOptions      []gui.DropdownOption
 	textSizeOptions     []gui.DropdownOption
 	recentLineOptions   []gui.DropdownOption
 	furiganaOptions     []gui.DropdownOption
+	themeSelector       *barethemes.ThemeSelector
 
-	selectedModeName        string
 	selectedPaletteName     string
 	selectedTextSizeName    string
 	selectedRecentLinesName string
@@ -47,14 +44,11 @@ type Settings struct {
 	autoPlayHighlightAudio  widget.Bool
 	colorizeHighlightText   widget.Bool
 
-	themeMode          barethemes.Mode
-	themePalette       barethemes.PaletteName
+	themeConfig        barethemes.Config
 	systemDark         bool
 	transcriptTextSize unit.Sp
 	recentLineLimit    atomic.Int64
 
-	ThemeMode                   string `json:"theme_mode,omitempty"`
-	ThemePalette                string `json:"theme_palette,omitempty"`
 	TranscriptTextSize          string `json:"transcript_text_size,omitempty"`
 	VisibleTranscript           string `json:"visible_transcript,omitempty"`
 	FocusedFurigana             string `json:"focused_furigana,omitempty"`
@@ -65,17 +59,13 @@ type Settings struct {
 
 func defaultSettings() Settings {
 	return Settings{
-		selectedModeName:        "Dark",
-		selectedPaletteName:     "Sunset",
+		selectedPaletteName:     "Moonlit Library",
 		selectedTextSizeName:    "Medium",
 		selectedRecentLinesName: "Last 200 Lines",
 		selectedFuriganaName:    "Above",
 		focusedFuriganaMode:     "above",
-		themeMode:               barethemes.ModeDark,
-		themePalette:            barethemes.PaletteOcean,
+		themeConfig:             barethemes.DefaultConfig(),
 		transcriptTextSize:      unit.Sp(16),
-		ThemeMode:               "Dark",
-		ThemePalette:            "Sunset",
 		TranscriptTextSize:      "Medium",
 		VisibleTranscript:       "Last 200 Lines",
 		FocusedFurigana:         "Above",
@@ -89,6 +79,18 @@ func LoadSettings() (*Settings, error) {
 			return nil, fmt.Errorf("decode gui settings: %w", err)
 		}
 	}
+	err = barethemes.LoadCustomThemes()
+	if err != nil {
+		slog.Error("failed loading custom themes", "err", err)
+	}
+	config, err := barethemes.LoadConfig()
+	if err != nil {
+		slog.Error("failed loading theme config", "err", err)
+		config = barethemes.DefaultConfig()
+	}
+	settings.themeConfig = config
+	settings.themeSelector = barethemes.NewThemeSelector()
+
 	settings.applyLayout()
 	settings.applySavedSettings()
 	settings.applyTheme()
@@ -96,8 +98,6 @@ func LoadSettings() (*Settings, error) {
 }
 
 func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Window) {
-	g.modeDropdown.Update(gtx)
-	g.paletteDropdown.Update(gtx)
 	g.textSizeDropdown.Update(gtx)
 	g.recentLinesDropdown.Update(gtx)
 	g.furiganaDropdown.Update(gtx)
@@ -106,28 +106,6 @@ func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.
 	}
 	if g.colorizeHighlightText.Update(gtx) {
 		g.persistSettings()
-	}
-
-	for i := range g.modeOptions {
-		opt := &g.modeOptions[i]
-		for opt.Clickable.Clicked(gtx) {
-			g.themeMode = opt.Mode
-			g.selectedModeName = opt.Label
-			g.modeDropdown.Close()
-			g.applyTheme()
-			g.persistSettings()
-		}
-	}
-
-	for i := range g.paletteOptions {
-		opt := &g.paletteOptions[i]
-		for opt.Clickable.Clicked(gtx) {
-			g.themePalette = opt.Palette
-			g.selectedPaletteName = opt.Label
-			g.paletteDropdown.Close()
-			g.applyTheme()
-			g.persistSettings()
-		}
 	}
 
 	for i := range g.textSizeOptions {
@@ -162,16 +140,15 @@ func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.
 }
 
 func (g *Settings) applyLayout() {
-	gui.NewDropDownLayout(&g.modeDropdown, "mdi:theme-light-dark")
-	gui.NewDropDownLayout(&g.paletteDropdown, "mdi:palette-outline")
 	gui.NewDropDownLayout(&g.textSizeDropdown, "mdi:format-size")
 	gui.NewDropDownLayout(&g.recentLinesDropdown, "mdi:sort-clock-descending-outline")
 	gui.NewDropDownLayout(&g.furiganaDropdown, "mdi:ruby")
-	g.modeOptions = gui.NewModeOptions()
-	g.paletteOptions = gui.NewPaletteOptions()
 	g.textSizeOptions = gui.NewTranscriptSizeOptions()
 	g.recentLineOptions = gui.NewRecentLineOptions()
 	g.furiganaOptions = gui.NewFuriganaModeOptions()
+	if g.themeSelector == nil {
+		g.themeSelector = barethemes.NewThemeSelector()
+	}
 }
 
 func (g *Settings) WithIcon(icon *icons.Iconify) *Settings {
@@ -200,27 +177,7 @@ func (g *Settings) LayoutPage(gtx layout.Context) layout.Dimensions {
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return g.layoutSettingRow(gtx, "Mode", g.selectedModeName,
-						func(gtx layout.Context) layout.Dimensions {
-							return g.modeDropdown.Layout(gtx, g.theme, g.iconify, g.selectedModeName,
-								func(gtx layout.Context) layout.Dimensions {
-									return gui.LayoutOptionMenu(gtx,
-										g.modeOptions,
-										g.selectedModeName,
-										g.theme,
-										g.iconify,
-									)
-								},
-							)
-						})
-				}),
-				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return g.layoutSettingRow(gtx, "Palette", g.selectedPaletteName, func(gtx layout.Context) layout.Dimensions {
-						return g.paletteDropdown.Layout(gtx, g.theme, g.iconify, g.selectedPaletteName, func(gtx layout.Context) layout.Dimensions {
-							return gui.LayoutOptionMenu(gtx, g.paletteOptions, g.selectedPaletteName, g.theme, g.iconify)
-						})
-					})
+					return g.layoutBareThemeSelector(gtx)
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -303,14 +260,27 @@ func (g *Settings) layoutSettingRow(gtx layout.Context, label, current string, c
 	})
 }
 
+func (g *Settings) layoutBareThemeSelector(gtx layout.Context) layout.Dimensions {
+	if g.themeSelector == nil {
+		g.themeSelector = barethemes.NewThemeSelector()
+	}
+	nextTheme, dims := g.themeSelector.LayoutThemeSelector(gtx, g.theme, g.systemDark)
+	if nextTheme.Mode != g.theme.Mode || nextTheme.Palette != g.theme.Palette {
+		g.theme = nextTheme
+		g.themeConfig = barethemes.ConfigFromTheme(nextTheme)
+		if err := barethemes.SaveConfig(g.themeConfig); err != nil {
+			slog.Error("failed saving theme config", "err", err)
+		}
+	}
+	return dims
+}
+
 func (g *Settings) applyTheme() *Settings {
-	g.theme = barethemes.New(g.themeMode, g.themePalette, g.systemDark)
+	g.theme = g.themeConfig.Theme(g.systemDark)
 	return g
 }
 
 func (g *Settings) persistSettings() {
-	g.ThemeMode = g.selectedModeName
-	g.ThemePalette = g.selectedPaletteName
 	g.TranscriptTextSize = g.selectedTextSizeName
 	g.VisibleTranscript = g.selectedRecentLinesName
 	g.FocusedFurigana = g.selectedFuriganaName
@@ -320,22 +290,6 @@ func (g *Settings) persistSettings() {
 }
 
 func (g *Settings) applySavedSettings() {
-	for _, opt := range g.modeOptions {
-		if opt.Label == g.ThemeMode {
-			g.themeMode = opt.Mode
-			g.selectedModeName = opt.Label
-			break
-		}
-	}
-
-	for _, opt := range g.paletteOptions {
-		if opt.Label == g.ThemePalette {
-			g.themePalette = opt.Palette
-			g.selectedPaletteName = opt.Label
-			break
-		}
-	}
-
 	for _, opt := range g.textSizeOptions {
 		if opt.Label == g.TranscriptTextSize {
 			g.transcriptTextSize = opt.TextSize
