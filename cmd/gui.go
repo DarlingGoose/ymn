@@ -411,7 +411,7 @@ func (g *guiApp) layoutLeftSidebar(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.H5(g.theme.Gio(), "WGL")
+					lbl := material.H5(g.theme.Gio(), "VANTA")
 					lbl.Color = g.theme.Color.Text
 					return lbl.Layout(gtx)
 				}),
