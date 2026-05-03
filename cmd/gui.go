@@ -389,6 +389,7 @@ func (g *guiApp) syncPages() {
 			g.settingsPage.RecentLineLimit(),
 			g.settingsPage.RecentLineLabel(),
 		).
+		SetFocusedFuriganaDefault(g.settingsPage.FocusedFuriganaMode()).
 		SetAutoPlayHighlightAudio(g.settingsPage.AutoPlayHighlightAudio()).
 		SetColorizeHighlights(g.settingsPage.ColorizeHighlightText()).
 		SetStatus(statusText).

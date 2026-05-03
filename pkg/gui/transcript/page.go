@@ -134,8 +134,10 @@ type Page struct {
 	selectedLineText         string
 	selectedFocusedTokenKey  string
 	selectedFocusedTokenWord string
+	selectedFocusedTokenNote string
 	translationCollapsed     bool
 	focusedFuriganaMode      string
+	focusedFuriganaDefault   string
 	selectedTargetLanguage   string
 	composerFocus            string
 	composerMinimized        bool
@@ -163,6 +165,7 @@ func New(theme barethemes.Theme) *Page {
 		selectedRecentLines:       "All Lines",
 		transcriptTextSize:        unit.Sp(16),
 		focusedFuriganaMode:       focusedFuriganaHidden,
+		focusedFuriganaDefault:    focusedFuriganaHidden,
 		selectedTargetLanguage:    "English",
 		composerFocus:             composerFocusFlashcards,
 		composerMinimized:         true,
@@ -231,6 +234,16 @@ func (p *Page) SetTranscriptOptions(textSize unit.Sp, textSizeName string, recen
 	p.selectedTextSizeName = strings.TrimSpace(textSizeName)
 	p.recentLineLimit = recentLineLimit
 	p.selectedRecentLines = strings.TrimSpace(recentLinesName)
+	return p
+}
+
+func (p *Page) SetFocusedFuriganaDefault(mode string) *Page {
+	mode = normalizeFocusedFuriganaMode(mode)
+	oldDefault := p.focusedFuriganaDefault
+	if oldDefault == "" || p.focusedFuriganaMode == "" || p.focusedFuriganaMode == oldDefault {
+		p.focusedFuriganaMode = mode
+	}
+	p.focusedFuriganaDefault = mode
 	return p
 }
 
@@ -980,7 +993,9 @@ func (p *Page) layoutFocusedTokenActions(gtx layout.Context) layout.Dimensions {
 	word := util.FirstNonEmpty(p.selectedFocusedTokenWord, p.selectedTranscriptText())
 	meaning := "Click a word block above to inspect it."
 	existingCard, hasExistingCard := p.focusedSelectedTokenFlashcard(word)
-	if p.lookupResult != nil && cleanInlineText(p.lookupResult.Meaning) != "" {
+	if note := cleanInlineText(p.selectedFocusedTokenNote); note != "" {
+		meaning = note
+	} else if p.lookupResult != nil && cleanInlineText(p.lookupResult.Meaning) != "" {
 		meaning = cleanInlineText(p.lookupResult.Meaning)
 	} else if word != "" {
 		if hasExistingCard && cleanInlineText(existingCard.Meaning) != "" {
@@ -2212,6 +2227,7 @@ func (p *Page) pruneFocusedTokenClicks(tokens []japanese.Token) {
 		if _, ok := valid[p.selectedFocusedTokenKey]; !ok {
 			p.selectedFocusedTokenKey = ""
 			p.selectedFocusedTokenWord = ""
+			p.selectedFocusedTokenNote = ""
 		}
 	}
 }
@@ -2232,10 +2248,17 @@ func (p *Page) selectFocusedToken(key string) {
 		}
 		p.selectedFocusedTokenKey = key
 		p.selectedFocusedTokenWord = word
+		p.selectedFocusedTokenNote = ""
 		p.wordEditor.SetText(word)
 		p.meaningEditor.SetText("")
 		p.lookupResult = nil
 		p.lookupResults = nil
+		if isParticleToken(token) {
+			note := particleRole(token.Surface)
+			p.selectedFocusedTokenNote = note
+			p.meaningEditor.SetText(note)
+			return
+		}
 		lookups, err := dictionary.LookupWords(word)
 		if err != nil {
 			p.showError("Dictionary Lookup Failed", err.Error())
@@ -2674,6 +2697,21 @@ func focusedTokenReading(token japanese.Token) string {
 
 func focusedTokenDictionaryReady(token japanese.Token) bool {
 	return canCreateStructureFlashcard(token)
+}
+
+func isParticleToken(token japanese.Token) bool {
+	return token.POSMajor() == "助詞"
+}
+
+func normalizeFocusedFuriganaMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case focusedFuriganaAbove:
+		return focusedFuriganaAbove
+	case focusedFuriganaBelow:
+		return focusedFuriganaBelow
+	default:
+		return focusedFuriganaHidden
+	}
 }
 
 func focusedTokenColor(theme barethemes.Theme, token japanese.Token, selected, inFlashcards, dictionaryReady bool) color.NRGBA {

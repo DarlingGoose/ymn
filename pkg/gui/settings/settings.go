@@ -31,15 +31,19 @@ type Settings struct {
 	paletteDropdown     bareui.Dropdown
 	textSizeDropdown    bareui.Dropdown
 	recentLinesDropdown bareui.Dropdown
+	furiganaDropdown    bareui.Dropdown
 	modeOptions         []gui.DropdownOption
 	paletteOptions      []gui.DropdownOption
 	textSizeOptions     []gui.DropdownOption
 	recentLineOptions   []gui.DropdownOption
+	furiganaOptions     []gui.DropdownOption
 
 	selectedModeName        string
 	selectedPaletteName     string
 	selectedTextSizeName    string
 	selectedRecentLinesName string
+	selectedFuriganaName    string
+	focusedFuriganaMode     string
 	autoPlayHighlightAudio  widget.Bool
 	colorizeHighlightText   widget.Bool
 
@@ -53,6 +57,7 @@ type Settings struct {
 	ThemePalette                string `json:"theme_palette,omitempty"`
 	TranscriptTextSize          string `json:"transcript_text_size,omitempty"`
 	VisibleTranscript           string `json:"visible_transcript,omitempty"`
+	FocusedFurigana             string `json:"focused_furigana,omitempty"`
 	AutoPlayHighlightPopupAudio bool   `json:"auto_play_highlight_popup_audio,omitempty"`
 	ColorizeHighlightWords      bool   `json:"colorize_highlight_text,omitempty"`
 	LastSelectedGame            string `json:"last_selected_game,omitempty"`
@@ -64,6 +69,8 @@ func defaultSettings() Settings {
 		selectedPaletteName:     "Sunset",
 		selectedTextSizeName:    "Medium",
 		selectedRecentLinesName: "Last 200 Lines",
+		selectedFuriganaName:    "Above",
+		focusedFuriganaMode:     "above",
 		themeMode:               barethemes.ModeDark,
 		themePalette:            barethemes.PaletteOcean,
 		transcriptTextSize:      unit.Sp(16),
@@ -71,6 +78,7 @@ func defaultSettings() Settings {
 		ThemePalette:            "Sunset",
 		TranscriptTextSize:      "Medium",
 		VisibleTranscript:       "Last 200 Lines",
+		FocusedFurigana:         "Above",
 	}
 }
 func LoadSettings() (*Settings, error) {
@@ -92,6 +100,7 @@ func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.
 	g.paletteDropdown.Update(gtx)
 	g.textSizeDropdown.Update(gtx)
 	g.recentLinesDropdown.Update(gtx)
+	g.furiganaDropdown.Update(gtx)
 	if g.autoPlayHighlightAudio.Update(gtx) {
 		g.persistSettings()
 	}
@@ -140,6 +149,16 @@ func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.
 			g.persistSettings()
 		}
 	}
+
+	for i := range g.furiganaOptions {
+		opt := &g.furiganaOptions[i]
+		for opt.Clickable.Clicked(gtx) {
+			g.focusedFuriganaMode = opt.Value
+			g.selectedFuriganaName = opt.Label
+			g.furiganaDropdown.Close()
+			g.persistSettings()
+		}
+	}
 }
 
 func (g *Settings) applyLayout() {
@@ -147,10 +166,12 @@ func (g *Settings) applyLayout() {
 	gui.NewDropDownLayout(&g.paletteDropdown, "mdi:palette-outline")
 	gui.NewDropDownLayout(&g.textSizeDropdown, "mdi:format-size")
 	gui.NewDropDownLayout(&g.recentLinesDropdown, "mdi:sort-clock-descending-outline")
+	gui.NewDropDownLayout(&g.furiganaDropdown, "mdi:ruby")
 	g.modeOptions = gui.NewModeOptions()
 	g.paletteOptions = gui.NewPaletteOptions()
 	g.textSizeOptions = gui.NewTranscriptSizeOptions()
 	g.recentLineOptions = gui.NewRecentLineOptions()
+	g.furiganaOptions = gui.NewFuriganaModeOptions()
 }
 
 func (g *Settings) WithIcon(icon *icons.Iconify) *Settings {
@@ -214,6 +235,14 @@ func (g *Settings) LayoutPage(gtx layout.Context) layout.Dimensions {
 					return g.layoutSettingRow(gtx, "Visible Transcript", g.selectedRecentLinesName, func(gtx layout.Context) layout.Dimensions {
 						return g.recentLinesDropdown.Layout(gtx, g.theme, g.iconify, g.selectedRecentLinesName, func(gtx layout.Context) layout.Dimensions {
 							return gui.LayoutOptionMenu(gtx, g.recentLineOptions, g.selectedRecentLinesName, g.theme, g.iconify)
+						})
+					})
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return g.layoutSettingRow(gtx, "Focused Furigana", g.selectedFuriganaName, func(gtx layout.Context) layout.Dimensions {
+						return g.furiganaDropdown.Layout(gtx, g.theme, g.iconify, g.selectedFuriganaName, func(gtx layout.Context) layout.Dimensions {
+							return gui.LayoutOptionMenu(gtx, g.furiganaOptions, g.selectedFuriganaName, g.theme, g.iconify)
 						})
 					})
 				}),
@@ -284,6 +313,7 @@ func (g *Settings) persistSettings() {
 	g.ThemePalette = g.selectedPaletteName
 	g.TranscriptTextSize = g.selectedTextSizeName
 	g.VisibleTranscript = g.selectedRecentLinesName
+	g.FocusedFurigana = g.selectedFuriganaName
 	g.AutoPlayHighlightPopupAudio = g.autoPlayHighlightAudio.Value
 	g.ColorizeHighlightWords = g.colorizeHighlightText.Value
 	_ = g.saveSettings()
@@ -322,6 +352,14 @@ func (g *Settings) applySavedSettings() {
 		}
 	}
 
+	for _, opt := range g.furiganaOptions {
+		if opt.Label == g.FocusedFurigana || opt.Value == g.FocusedFurigana {
+			g.focusedFuriganaMode = opt.Value
+			g.selectedFuriganaName = opt.Label
+			break
+		}
+	}
+
 	g.autoPlayHighlightAudio.Value = g.AutoPlayHighlightPopupAudio
 	g.colorizeHighlightText.Value = g.ColorizeHighlightWords
 }
@@ -344,6 +382,14 @@ func (g *Settings) RecentLineLimit() int {
 
 func (g *Settings) RecentLineLabel() string {
 	return g.selectedRecentLinesName
+}
+
+func (g *Settings) FocusedFuriganaMode() string {
+	return g.focusedFuriganaMode
+}
+
+func (g *Settings) FocusedFuriganaLabel() string {
+	return g.selectedFuriganaName
 }
 
 func (g *Settings) AutoPlayHighlightAudio() bool {

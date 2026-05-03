@@ -24,6 +24,7 @@ type DropdownOption struct {
 	Palette         barethemes.PaletteName
 	TextSize        unit.Sp
 	RecentLineLimit int
+	Value           string
 	Clickable       *widget.Clickable
 }
 
@@ -104,6 +105,14 @@ func NewRecentLineOptions() []DropdownOption {
 		{Label: "Last 50 Lines", Icon: "mdi:numeric-50-box-outline", RecentLineLimit: 50, Clickable: new(widget.Clickable)},
 		{Label: "Last 100 Lines", Icon: "mdi:numeric-100-box-outline", RecentLineLimit: 100, Clickable: new(widget.Clickable)},
 		{Label: "Last 200 Lines", Icon: "mdi:numeric-200-box-outline", RecentLineLimit: 200, Clickable: new(widget.Clickable)},
+	}
+}
+
+func NewFuriganaModeOptions() []DropdownOption {
+	return []DropdownOption{
+		{Label: "Hide", Icon: "mdi:eye-off-outline", Value: "hidden", Clickable: new(widget.Clickable)},
+		{Label: "Above", Icon: "mdi:format-superscript", Value: "above", Clickable: new(widget.Clickable)},
+		{Label: "Below", Icon: "mdi:format-subscript", Value: "below", Clickable: new(widget.Clickable)},
 	}
 }
 
