@@ -23,6 +23,7 @@ sudo pacman -S go git wine gst-plugins-base gst-plugins-good gst-plugins-bad gst
 - `steam` if you want Steam/Proton launch flows
 - Proton installed through Steam if using Proton runner configs
 - `tesseract`, `grim`, `slurp`, and `hyprctl` for the older OCR workflow code paths
+- `ollama` for translating
 
 ## Build
 
