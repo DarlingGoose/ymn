@@ -59,6 +59,11 @@ func ParseLogLine(line string) (ParsedLine, error) {
 			case "speaker":
 				out.Speaker = strings.TrimSpace(val)
 			}
+		} else {
+			switch strings.ToLower(strings.TrimSpace(meta)) {
+			case "system", "new session":
+				out.Speaker = strings.TrimSpace(meta)
+			}
 		}
 
 		rest = strings.TrimSpace(next)

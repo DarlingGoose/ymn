@@ -170,6 +170,7 @@ type transcriptRow struct {
 	Key        string
 	Time       string
 	Text       string
+	Info       bool
 	VocabWords []string
 }
 
@@ -1628,6 +1629,9 @@ func (p *Page) layoutTranscriptEditor(gtx layout.Context) layout.Dimensions {
 }
 
 func (p *Page) layoutTranscriptRow(gtx layout.Context, row transcriptRow) layout.Dimensions {
+	if row.Info {
+		return p.layoutTranscriptInfoRow(gtx, row)
+	}
 	click := p.transcriptRowClickable(row.Key)
 	selected := row.Key == p.currentTranscriptRowKey()
 	bg := p.theme.Color.Surface
@@ -1679,6 +1683,37 @@ func (p *Page) layoutTranscriptRow(gtx layout.Context, row transcriptRow) layout
 					}),
 				)
 			})
+		})
+	})
+}
+
+func (p *Page) layoutTranscriptInfoRow(gtx layout.Context, row transcriptRow) layout.Dimensions {
+	return bareutils.RoundedSurface(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{
+			Top:    unit.Dp(9),
+			Bottom: unit.Dp(9),
+			Left:   unit.Dp(14),
+			Right:  unit.Dp(12),
+		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = gtx.Dp(unit.Dp(78))
+					lbl := material.Body2(p.theme.Gio(), row.Time)
+					lbl.Color = p.theme.Color.TextMuted
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(bareutils.SpacerW(unit.Dp(14))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return p.layoutRowIcon(gtx, "mdi:information-outline")
+				}),
+				layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(p.theme.Gio(), row.Text)
+					lbl.Color = p.theme.Color.TextMuted
+					lbl.TextSize = p.translateDetailTextSize()
+					return lbl.Layout(gtx)
+				}),
+			)
 		})
 	})
 }
@@ -2710,12 +2745,20 @@ func (p *Page) transcriptFocusTextForKey(key string) string {
 	if strings.TrimSpace(key) != "" {
 		for _, row := range rows {
 			if row.Key == key {
+				if row.Info {
+					return ""
+				}
 				return cleanInlineText(row.Text)
 			}
 		}
 		return ""
 	}
-	return cleanInlineText(rows[len(rows)-1].Text)
+	for i := len(rows) - 1; i >= 0; i-- {
+		if !rows[i].Info {
+			return cleanInlineText(rows[i].Text)
+		}
+	}
+	return ""
 }
 
 func (p *Page) transcriptRows() []transcriptRow {
@@ -2727,7 +2770,7 @@ func (p *Page) transcriptRows() []transcriptRow {
 		if text == "" {
 			continue
 		}
-		timestamp, body := splitTranscriptTimestamp(text)
+		timestamp, body, info := splitTranscriptRow(text)
 		if strings.HasPrefix(timestamp, "--") {
 			timestamp = previousTimestamp
 		} else {
@@ -2738,12 +2781,16 @@ func (p *Page) transcriptRows() []transcriptRow {
 			continue
 		}
 		key := fmt.Sprintf("%d:%s", i, text)
-		if len(rows) > 0 && timestamp != unknownTimestamp && rows[len(rows)-1].Time == timestamp {
+		if !info && len(rows) > 0 && !rows[len(rows)-1].Info && timestamp != unknownTimestamp && rows[len(rows)-1].Time == timestamp {
 			rows[len(rows)-1].Text = strings.TrimSpace(rows[len(rows)-1].Text + "\n" + body)
 			rows[len(rows)-1].VocabWords = p.vocabWordsInText(rows[len(rows)-1].Text)
 			continue
 		}
-		rows = append(rows, transcriptRow{Key: key, Time: timestamp, Text: body, VocabWords: p.vocabWordsInText(body)})
+		row := transcriptRow{Key: key, Time: timestamp, Text: body, Info: info}
+		if !info {
+			row.VocabWords = p.vocabWordsInText(body)
+		}
+		rows = append(rows, row)
 	}
 	p.pruneTranscriptRowClicks(rows)
 	return rows
@@ -2790,16 +2837,21 @@ func (p *Page) currentTranscriptRowKey() string {
 		return p.selectedLineKey
 	}
 	rows := p.transcriptRows()
-	if len(rows) == 0 {
-		return ""
+	for i := len(rows) - 1; i >= 0; i-- {
+		if !rows[i].Info {
+			return rows[i].Key
+		}
 	}
-	return rows[len(rows)-1].Key
+	return ""
 }
 
 func (p *Page) selectTranscriptRow(key string) {
 	for _, row := range p.transcriptRows() {
 		if row.Key != key {
 			continue
+		}
+		if row.Info {
+			return
 		}
 		p.selectedLineKey = row.Key
 		p.selectedLineText = row.Text
@@ -2825,7 +2877,9 @@ func (p *Page) transcriptRowClickable(key string) *widget.Clickable {
 func (p *Page) pruneTranscriptRowClicks(rows []transcriptRow) {
 	valid := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
-		valid[row.Key] = struct{}{}
+		if !row.Info {
+			valid[row.Key] = struct{}{}
+		}
 	}
 	for key := range p.transcriptRowClicks {
 		if _, ok := valid[key]; !ok {
@@ -2843,15 +2897,30 @@ func (p *Page) pruneTranscriptRowClicks(rows []transcriptRow) {
 const unknownTimestamp = "----:-- --:--:--"
 
 func splitTranscriptTimestamp(line string) (string, string) {
+	timestamp, body, _ := splitTranscriptRow(line)
+	return timestamp, body
+}
+
+func splitTranscriptRow(line string) (string, string, bool) {
 	line = strings.TrimSpace(line)
 	data, err := ParseLogLine(line)
 	if err != nil {
-		return unknownTimestamp, line
+		return unknownTimestamp, line, false
 	}
 	if data.RawTime == "" {
-		return unknownTimestamp, line
+		return unknownTimestamp, line, false
 	}
-	return data.Time.Format("2006/01 15:04:05"), data.Text
+	timestamp := data.Time.Format("2006/01 15:04:05")
+	switch strings.ToLower(strings.TrimSpace(data.Speaker)) {
+	case "system":
+		return timestamp, cleanInlineText(data.Text), true
+	case "new session":
+		return timestamp, "New session", true
+	}
+	if cleanInlineText(data.Text) == "" {
+		return timestamp, "New session", true
+	}
+	return timestamp, data.Text, false
 }
 
 func isClockTimestamp(value string) bool {
