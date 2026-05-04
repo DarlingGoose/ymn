@@ -868,23 +868,23 @@ func (p *Page) layoutFocusedSentenceCard(gtx layout.Context) layout.Dimensions {
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return p.layoutFocusedFuriganaControls(gtx)
 			}),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return p.layoutFocusedTokenActions(gtx)
-			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				analysis, errText := p.currentStructureAnalysis()
-				if errText == "" && len(analysis.Tokens) == 0 {
-					return layout.Dimensions{}
-				}
-				return layout.Inset{Top: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return p.layoutFocusedSentenceChips(gtx, analysis, errText)
-				})
-			}),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return p.layoutFocusedLookupBar(gtx)
-			}),
+			//layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+			//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			//	return p.layoutFocusedTokenActions(gtx)
+			//}),
+			//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			//	analysis, errText := p.currentStructureAnalysis()
+			//	if errText == "" && len(analysis.Tokens) == 0 {
+			//		return layout.Dimensions{}
+			//	}
+			//	return layout.Inset{Top: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			//		return p.layoutFocusedSentenceChips(gtx, analysis, errText)
+			//	})
+			//}),
+			//layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+			//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			//	return p.layoutFocusedLookupBar(gtx)
+			//}),
 			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return p.layoutFocusedTranslationSection(gtx)
@@ -1283,6 +1283,7 @@ func (p *Page) layoutFocusedLookupBar(gtx layout.Context) layout.Dimensions {
 
 func (p *Page) layoutFocusedTranslationSection(gtx layout.Context) layout.Dimensions {
 	p.syncTranslationEditor()
+
 	return bareutils.RoundedSurface(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			children := []layout.FlexChild{
@@ -2733,7 +2734,15 @@ func (p *Page) transcriptRows() []transcriptRow {
 			previousTimestamp = timestamp
 		}
 		body = cleanInlineText(body)
+		if body == "" {
+			continue
+		}
 		key := fmt.Sprintf("%d:%s", i, text)
+		if len(rows) > 0 && timestamp != unknownTimestamp && rows[len(rows)-1].Time == timestamp {
+			rows[len(rows)-1].Text = strings.TrimSpace(rows[len(rows)-1].Text + "\n" + body)
+			rows[len(rows)-1].VocabWords = p.vocabWordsInText(rows[len(rows)-1].Text)
+			continue
+		}
 		rows = append(rows, transcriptRow{Key: key, Time: timestamp, Text: body, VocabWords: p.vocabWordsInText(body)})
 	}
 	p.pruneTranscriptRowClicks(rows)
