@@ -25,6 +25,7 @@ import (
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
 	vngame "github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/vntext/pkg/runner"
+	vnutil "github.com/DarlingGoose/vntext/pkg/util"
 	"github.com/DarlingGoose/wgl/pkg/anki"
 	"github.com/DarlingGoose/wgl/pkg/dictionary"
 	flashcards "github.com/DarlingGoose/wgl/pkg/flashcard"
@@ -73,6 +74,7 @@ type Page struct {
 	launchGameButton     widget.Clickable
 	syncAnkiButton       widget.Clickable
 	clearButton          widget.Clickable
+	deleteLogButton      widget.Clickable
 
 	playSentenceButton         widget.Clickable
 	translateSentenceButton    widget.Clickable
@@ -156,8 +158,9 @@ type Page struct {
 	lastAutoWord              string
 	hideReadingSet            bool
 
-	OnError  func(title, body string)
-	OnNotify func(title, body string, kind guitoast.NotificationType)
+	OnError     func(title, body string)
+	OnNotify    func(title, body string, kind guitoast.NotificationType)
+	OnDeleteLog func(config *vngame.Game) error
 }
 
 type translationResult struct {
@@ -169,6 +172,7 @@ type translationResult struct {
 type transcriptRow struct {
 	Key        string
 	Time       string
+	Speaker    string
 	Text       string
 	Info       bool
 	VocabWords []string
@@ -378,6 +382,9 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 	}
 	for p.clearButton.Clicked(gtx) {
 		p.ClearTranscript()
+	}
+	for p.deleteLogButton.Clicked(gtx) {
+		p.deleteCurrentLog()
 	}
 	for p.playSentenceButton.Clicked(gtx) {
 		p.playCurrentLookupAudio()
@@ -595,6 +602,12 @@ func (p *Page) layoutTranscriptTopbar(gtx layout.Context) layout.Dimensions {
 		Icon:      true,
 		Variant:   bareui.ButtonGhost,
 	}
+	deleteLogButton := bareui.Button{
+		Clickable: &p.deleteLogButton,
+		Text:      "mdi:file-remove-outline",
+		Icon:      true,
+		Variant:   bareui.ButtonGhost,
+	}
 	statusText := "IDLE"
 	statusLive := false
 	if p.runnerStatus != nil {
@@ -615,7 +628,19 @@ func (p *Page) layoutTranscriptTopbar(gtx layout.Context) layout.Dimensions {
 						return lbl.Layout(gtx)
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(p.theme.Gio(), p.logSizeText())
+						lbl.Color = p.theme.Color.TextMuted
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return clearButton.Layout(gtx, p.theme, p.iconify)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if p.currentConfig == nil {
+							return deleteLogButton.Layout(gtx.Disabled(), p.theme, p.iconify)
+						}
+						return deleteLogButton.Layout(gtx, p.theme, p.iconify)
 					}),
 				)
 			}),
@@ -664,7 +689,19 @@ func (p *Page) layoutTranscriptTopbar(gtx layout.Context) layout.Dimensions {
 		}),
 		layout.Rigid(bareutils.SpacerW(unit.Dp(4))),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(p.theme.Gio(), p.logSizeText())
+			lbl.Color = p.theme.Color.TextMuted
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return clearButton.Layout(gtx, p.theme, p.iconify)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if p.currentConfig == nil {
+				return deleteLogButton.Layout(gtx.Disabled(), p.theme, p.iconify)
+			}
+			return deleteLogButton.Layout(gtx, p.theme, p.iconify)
 		}),
 	)
 }
@@ -1661,6 +1698,12 @@ func (p *Page) layoutTranscriptRow(gtx layout.Context, row transcriptRow) layout
 						return lbl.Layout(gtx)
 					}),
 					layout.Rigid(bareutils.SpacerW(unit.Dp(14))),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if strings.TrimSpace(row.Speaker) == "" {
+							return layout.Dimensions{}
+						}
+						return p.layoutTranscriptSpeaker(gtx, row.Speaker, selected)
+					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body1(p.theme.Gio(), row.Text)
 						lbl.Color = fg
@@ -1714,6 +1757,32 @@ func (p *Page) layoutTranscriptInfoRow(gtx layout.Context, row transcriptRow) la
 					return lbl.Layout(gtx)
 				}),
 			)
+		})
+	})
+}
+
+func (p *Page) layoutTranscriptSpeaker(gtx layout.Context, speaker string, selected bool) layout.Dimensions {
+	speaker = strings.TrimSpace(speaker)
+	if speaker == "" {
+		return layout.Dimensions{}
+	}
+	fg := p.theme.Color.Primary
+	bg := color.NRGBA{R: fg.R, G: fg.G, B: fg.B, A: 34}
+	if selected {
+		bg = color.NRGBA{R: fg.R, G: fg.G, B: fg.B, A: 54}
+	}
+	return layout.Inset{Right: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return RoundedSurfaceWrap(gtx, bg, unit.Dp(p.theme.Radius.SM), func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{
+				Top:    unit.Dp(4),
+				Bottom: unit.Dp(4),
+				Left:   unit.Dp(8),
+				Right:  unit.Dp(8),
+			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(p.theme.Gio(), speaker)
+				lbl.Color = fg
+				return lbl.Layout(gtx)
+			})
 		})
 	})
 }
@@ -2770,23 +2839,24 @@ func (p *Page) transcriptRows() []transcriptRow {
 		if text == "" {
 			continue
 		}
-		timestamp, body, info := splitTranscriptRow(text)
+		timestamp, body, speaker, info := splitTranscriptRow(text)
 		if strings.HasPrefix(timestamp, "--") {
 			timestamp = previousTimestamp
 		} else {
 			previousTimestamp = timestamp
 		}
+		speaker = cleanInlineText(speaker)
 		body = cleanInlineText(body)
 		if body == "" {
 			continue
 		}
 		key := fmt.Sprintf("%d:%s", i, text)
-		if !info && len(rows) > 0 && !rows[len(rows)-1].Info && timestamp != unknownTimestamp && rows[len(rows)-1].Time == timestamp {
+		if !info && len(rows) > 0 && !rows[len(rows)-1].Info && timestamp != unknownTimestamp && rows[len(rows)-1].Time == timestamp && rows[len(rows)-1].Speaker == speaker {
 			rows[len(rows)-1].Text = strings.TrimSpace(rows[len(rows)-1].Text + "\n" + body)
 			rows[len(rows)-1].VocabWords = p.vocabWordsInText(rows[len(rows)-1].Text)
 			continue
 		}
-		row := transcriptRow{Key: key, Time: timestamp, Text: body, Info: info}
+		row := transcriptRow{Key: key, Time: timestamp, Speaker: speaker, Text: body, Info: info}
 		if !info {
 			row.VocabWords = p.vocabWordsInText(body)
 		}
@@ -2897,30 +2967,31 @@ func (p *Page) pruneTranscriptRowClicks(rows []transcriptRow) {
 const unknownTimestamp = "----:-- --:--:--"
 
 func splitTranscriptTimestamp(line string) (string, string) {
-	timestamp, body, _ := splitTranscriptRow(line)
+	timestamp, body, _, _ := splitTranscriptRow(line)
 	return timestamp, body
 }
 
-func splitTranscriptRow(line string) (string, string, bool) {
+func splitTranscriptRow(line string) (string, string, string, bool) {
 	line = strings.TrimSpace(line)
 	data, err := ParseLogLine(line)
 	if err != nil {
-		return unknownTimestamp, line, false
+		return unknownTimestamp, line, "", false
 	}
 	if data.RawTime == "" {
-		return unknownTimestamp, line, false
+		return unknownTimestamp, line, "", false
 	}
 	timestamp := data.Time.Format("2006/01 15:04:05")
+	speaker := cleanInlineText(data.Speaker)
 	switch strings.ToLower(strings.TrimSpace(data.Speaker)) {
 	case "system":
-		return timestamp, cleanInlineText(data.Text), true
+		return timestamp, cleanInlineText(data.Text), "", true
 	case "new session":
-		return timestamp, "New session", true
+		return timestamp, "New session", "", true
 	}
 	if cleanInlineText(data.Text) == "" {
-		return timestamp, "New session", true
+		return timestamp, "New session", "", true
 	}
-	return timestamp, data.Text, false
+	return timestamp, data.Text, speaker, false
 }
 
 func isClockTimestamp(value string) bool {
@@ -3558,6 +3629,36 @@ func (p *Page) syncCurrentGameToAnki() error {
 	return p.ReloadFlashcards()
 }
 
+func (p *Page) deleteCurrentLog() {
+	if p.currentConfig == nil {
+		p.showError("Delete Log Failed", "Select a game before deleting its transcript log.")
+		return
+	}
+	if p.OnDeleteLog != nil {
+		if err := p.OnDeleteLog(p.currentConfig); err != nil {
+			p.showError("Delete Log Failed", err.Error())
+			return
+		}
+	} else if err := p.currentConfig.DeleteLog(); err != nil {
+		p.showError("Delete Log Failed", err.Error())
+		return
+	}
+	p.ClearTranscript()
+	p.statusText = "Transcript log deleted; waiting for new dialogue."
+	p.showNotification("Transcript Log Deleted", "The saved transcript log was removed.", guitoast.NotificationTypeSuccess)
+}
+
+func (p *Page) logSizeText() string {
+	if p.currentConfig == nil {
+		return "Log: 0 B"
+	}
+	size, err := p.currentConfig.LogSize()
+	if err != nil {
+		return "Log: unavailable"
+	}
+	return "Log: " + vnutil.ByteCountSI(size)
+}
+
 func (p *Page) launchCurrentGameInBackground() {
 	if p.runnerStatus != nil {
 		p.statusText = p.transcriptRunningStatusText()
@@ -3909,7 +4010,9 @@ func findFlashcardSourceLine(transcriptText, word string) string {
 
 func sanitizeTranscriptForDisplay(text string) string {
 	text = ansiRE.ReplaceAllString(text, "")
-	text = strings.ReplaceAll(text, `\n`, "\n")
+	text = strings.ReplaceAll(text, `\r\n`, " ")
+	text = strings.ReplaceAll(text, `\n`, " ")
+	text = strings.ReplaceAll(text, `\r`, " ")
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
 	text = strings.ReplaceAll(text, "\t", "    ")

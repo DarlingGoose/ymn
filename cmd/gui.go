@@ -197,6 +197,7 @@ func newGUI(configs []*game.Game, selectedName string, printExisting bool, pollI
 	pkggui.NewDropDownLayout(&app.gameDropdown, "mdi:controller-classic")
 	app.transcriptPage.OnError = app.showMessage
 	app.transcriptPage.OnNotify = app.showToast
+	app.transcriptPage.OnDeleteLog = app.deleteTranscriptLog
 	app.flashcardPage.OnError = app.showMessage
 	app.flashcardPage.OnNotify = app.showToast
 	app.gamePage.OnError = app.showMessage
@@ -597,6 +598,24 @@ func (g *guiApp) startWatching(ctx context.Context, gameName string, w *app.Wind
 	generation := g.watcherGeneration
 
 	go g.pollTranscript(watcherCtx, generation, cfg.TextHookLogFile, w)
+}
+
+func (g *guiApp) deleteTranscriptLog(cfg *game.Game) error {
+	if cfg == nil {
+		return errors.New("game config is not loaded")
+	}
+	if err := cfg.DeleteLog(); err != nil {
+		return err
+	}
+
+	g.mu.Lock()
+	if g.currentConfig != nil && strings.EqualFold(strings.TrimSpace(g.currentConfig.Name), strings.TrimSpace(cfg.Name)) {
+		g.rawTranscript = ""
+		g.offset = 0
+		g.statusText = "Transcript log deleted; waiting for new dialogue."
+	}
+	g.mu.Unlock()
+	return nil
 }
 
 func (g *guiApp) stopWatcher() context.CancelFunc {

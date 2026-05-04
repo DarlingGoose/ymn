@@ -38,8 +38,10 @@ type Page struct {
 	gameList     layout.List
 	configList   widget.List
 
-	runnerDropdown bareui.Dropdown
-	runnerOptions  []pkggui.DropdownOption
+	runnerDropdown  bareui.Dropdown
+	runnerOptions   []pkggui.DropdownOption
+	desktopDropdown bareui.Dropdown
+	desktopOptions  []pkggui.DropdownOption
 
 	gameSearchEditor widget.Editor
 	nameEditor       widget.Editor
@@ -60,13 +62,14 @@ type Page struct {
 	inspectHookButton   widget.Clickable
 	installHookButton   widget.Clickable
 
-	selectedRunner string
-	statusText     string
-	previewText    string
-	hookStatusText string
-	showBrowser    bool
-	installing     bool
-	installResult  chan gameInstallResult
+	selectedRunner  string
+	selectedDesktop string
+	statusText      string
+	previewText     string
+	hookStatusText  string
+	showBrowser     bool
+	installing      bool
+	installResult   chan gameInstallResult
 
 	currentConfigName string
 	loadedConfigName  string
@@ -99,6 +102,7 @@ func New(theme barethemes.Theme) *Page {
 		gameList:         layout.List{Axis: layout.Vertical},
 		configList:       widget.List{List: layout.List{Axis: layout.Vertical}},
 		selectedRunner:   "Auto",
+		selectedDesktop:  "Default",
 		showBrowser:      false,
 		statusText:       "Create or update a saved game config for transcript watching and launch flows.",
 		hookStatusText:   "Select a game or path to inspect text hook support.",
@@ -112,7 +116,9 @@ func New(theme barethemes.Theme) *Page {
 	p.iconPathEditor.SingleLine = true
 	p.imagePathEditor.SingleLine = true
 	p.runnerOptions = pkggui.NewGameRunnerOptions()
+	p.desktopOptions = pkggui.NewVirtualDesktopOptions()
 	pkggui.NewDropDownLayout(&p.runnerDropdown, "mdi:rocket-launch-outline")
+	pkggui.NewDropDownLayout(&p.desktopDropdown, "mdi:monitor")
 	p.fileBrowser.Extensions = []string{".exe", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
 	p.fileBrowser.ShowPreview = true
 	return p
@@ -163,6 +169,7 @@ func (p *Page) SetCurrentConfig(cfg *vngame.Game) *Page {
 	p.nameEditor.SetText(cfg.Name)
 	p.pathEditor.SetText(util.FirstNonEmpty(cfg.GamePath, cfg.Executable))
 	p.steamAppIDEditor.SetText(cfg.SteamAppID)
+	p.selectedDesktop = virtualDesktopLabel(cfg.VirtualDesktop)
 	p.iconPathEditor.SetText(cfg.IconPath)
 	p.imagePathEditor.SetText(cfg.ImagePath)
 	p.requiresSteam.Value = cfg.RequiresSteam
@@ -182,11 +189,19 @@ func (p *Page) SetCurrentConfig(cfg *vngame.Game) *Page {
 func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, w *app.Window) {
 	p.consumeInstallResult(w)
 	p.runnerDropdown.Update(gtx)
+	p.desktopDropdown.Update(gtx)
 	for i := range p.runnerOptions {
 		opt := &p.runnerOptions[i]
 		for opt.Clickable.Clicked(gtx) {
 			p.selectedRunner = opt.Label
 			p.runnerDropdown.Close()
+		}
+	}
+	for i := range p.desktopOptions {
+		opt := &p.desktopOptions[i]
+		for opt.Clickable.Clicked(gtx) {
+			p.selectedDesktop = opt.Label
+			p.desktopDropdown.Close()
 		}
 	}
 	for _, cfg := range p.filteredConfigs() {
@@ -499,6 +514,14 @@ func (p *Page) layoutConfigPanel(gtx layout.Context) layout.Dimensions {
 				},
 				bareutils.SpacerH(unit.Dp(12)),
 				steamAppIDEditor.Layout,
+				bareutils.SpacerH(unit.Dp(12)),
+				func(gtx layout.Context) layout.Dimensions {
+					return p.layoutInfoRow(gtx, "Wine Virtual Desktop", p.selectedDesktop, func(gtx layout.Context) layout.Dimensions {
+						return p.desktopDropdown.Layout(gtx, p.theme, p.iconify, p.selectedDesktop, func(gtx layout.Context) layout.Dimensions {
+							return pkggui.LayoutOptionMenu(gtx, p.desktopOptions, p.selectedDesktop, p.theme, p.iconify)
+						})
+					})
+				},
 				bareutils.SpacerH(unit.Dp(12)),
 				iconPathEditor.Layout,
 				bareutils.SpacerH(unit.Dp(8)),
@@ -863,6 +886,8 @@ func (p *Page) consumeInstallResult(w *app.Window) {
 		p.loadedConfigName = cfg.Name
 		p.nameEditor.SetText(cfg.Name)
 		p.pathEditor.SetText(util.FirstNonEmpty(cfg.GamePath, cfg.Executable))
+		p.steamAppIDEditor.SetText(cfg.SteamAppID)
+		p.selectedDesktop = virtualDesktopLabel(cfg.VirtualDesktop)
 		p.iconPathEditor.SetText(cfg.IconPath)
 		p.imagePathEditor.SetText(cfg.ImagePath)
 		if p.OnSaved != nil {
@@ -1131,6 +1156,7 @@ func (p *Page) draftFromForm(base *vngame.Game) *vngame.Game {
 	cfg.IconPath = strings.TrimSpace(p.iconPathEditor.Text())
 	cfg.ImagePath = strings.TrimSpace(p.imagePathEditor.Text())
 	cfg.SteamAppID = strings.TrimSpace(p.steamAppIDEditor.Text())
+	cfg.VirtualDesktop = virtualDesktopValueFromLabel(p.selectedDesktop)
 	cfg.RequiresSteam = p.requiresSteam.Value
 	if runner := runnerFromLabel(p.selectedRunner); runner != "" {
 		cfg.Runner = runner
@@ -1154,6 +1180,7 @@ func applyGameOverrides(cfg, overrides *vngame.Game) {
 	if strings.TrimSpace(overrides.SteamAppID) != "" {
 		cfg.SteamAppID = strings.TrimSpace(overrides.SteamAppID)
 	}
+	cfg.VirtualDesktop = strings.TrimSpace(overrides.VirtualDesktop)
 	cfg.RequiresSteam = overrides.RequiresSteam
 	if overrides.Runner != "" {
 		cfg.Runner = overrides.Runner
@@ -1184,6 +1211,31 @@ func runnerFromLabel(label string) vngame.RunnerType {
 	}
 }
 
+func virtualDesktopLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "Default"
+	}
+	switch strings.ToLower(value) {
+	case "off", "false", "none", "disabled", "disable", "0":
+		return "Off"
+	default:
+		return value
+	}
+}
+
+func virtualDesktopValueFromLabel(label string) string {
+	label = strings.TrimSpace(label)
+	switch strings.ToLower(label) {
+	case "", "default":
+		return ""
+	case "off":
+		return "off"
+	default:
+		return label
+	}
+}
+
 func gamePreviewText(cfg *vngame.Game) string {
 	if cfg == nil {
 		return ""
@@ -1194,6 +1246,7 @@ func gamePreviewText(cfg *vngame.Game) string {
 		"Executable: " + cfg.Executable,
 		"Working Dir: " + cfg.WorkingDir,
 		"Runner: " + string(cfg.Runner),
+		"Virtual Desktop: " + util.FirstNonEmpty(cfg.VirtualDesktop, "Default"),
 		"Engine: " + util.FirstNonEmpty(cfg.EngineName, "Unknown"),
 		"Icon: " + util.FirstNonEmpty(cfg.IconPath, "Unavailable"),
 		"Image: " + util.FirstNonEmpty(cfg.ImagePath, "Unavailable"),
@@ -1330,6 +1383,7 @@ func (p *Page) resetConfigForm() {
 	p.imagePathEditor.SetText("")
 	p.requiresSteam.Value = false
 	p.selectedRunner = "Auto"
+	p.selectedDesktop = "Default"
 }
 
 func (p *Page) browserButtonLabel() string {

@@ -130,3 +130,13 @@ func NewGameRunnerOptions() []DropdownOption {
 		{Label: "Steam", Icon: "mdi:steam", Clickable: new(widget.Clickable)},
 	}
 }
+
+func NewVirtualDesktopOptions() []DropdownOption {
+	return []DropdownOption{
+		{Label: "Default", Icon: "mdi:monitor", Value: "", Clickable: new(widget.Clickable)},
+		{Label: "1280x720", Icon: "mdi:monitor-small", Value: "1280x720", Clickable: new(widget.Clickable)},
+		{Label: "1600x900", Icon: "mdi:monitor", Value: "1600x900", Clickable: new(widget.Clickable)},
+		{Label: "1920x1080", Icon: "mdi:monitor-dashboard", Value: "1920x1080", Clickable: new(widget.Clickable)},
+		{Label: "Off", Icon: "mdi:monitor-off", Value: "off", Clickable: new(widget.Clickable)},
+	}
+}
