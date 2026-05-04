@@ -108,7 +108,7 @@ func (c *Client) AddNote(card flashcard.Flashcard) (int64, error) {
 				"allowDuplicate": false,
 				"duplicateScope": "deck",
 			},
-			"tags": []string{"wgl", util.SanitizeName(card.GameName)},
+			"tags": []string{"ymn", util.SanitizeName(card.GameName)},
 		},
 	}, &result)
 	if err != nil {
@@ -362,7 +362,7 @@ func ankiAudioFilename(card flashcard.Flashcard) string {
 	if ext == "" {
 		ext = ".mp3"
 	}
-	return fmt.Sprintf("wgl-%s-audio%s", util.SanitizeName(card.ID), ext)
+	return fmt.Sprintf("ymn-%s-audio%s", util.SanitizeName(card.ID), ext)
 }
 
 func exportFlashcardsToTSV(gameName string, cards []flashcard.Flashcard) (string, error) {

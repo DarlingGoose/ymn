@@ -31,6 +31,7 @@ import (
 	"github.com/DarlingGoose/wgl/pkg/gui"
 	guitoast "github.com/DarlingGoose/wgl/pkg/gui/toast"
 	"github.com/DarlingGoose/wgl/pkg/japanese"
+	"github.com/DarlingGoose/wgl/pkg/translation"
 	"github.com/DarlingGoose/wgl/pkg/util"
 )
 
@@ -84,6 +85,9 @@ type Page struct {
 	composerFlashcardsTab      widget.Clickable
 	composerSentenceTab        widget.Clickable
 	translationToggleButton    widget.Clickable
+	saveTranslationButton      widget.Clickable
+	generateTranslationButton  widget.Clickable
+	autoTranslateMissing       widget.Bool
 	furiganaHiddenButton       widget.Clickable
 	furiganaAboveButton        widget.Clickable
 	furiganaBelowButton        widget.Clickable
@@ -110,43 +114,56 @@ type Page struct {
 	selectedTextSizeName   string
 	selectedRecentLines    string
 	transcriptTextSize     unit.Sp
+	focusedTextSize        unit.Sp
+	translateDetailSize    unit.Sp
 	recentLineLimit        int
 	autoPlayHighlightAudio bool
 	colorizeHighlights     bool
 
-	flashcards               []flashcards.Flashcard
-	lookupResult             *dictionary.Lookup
-	lookupResults            []dictionary.Lookup
-	displayTranscript        string
-	lastSyncedText           string
-	lastFocusedText          string
-	structureCacheKey        string
-	structureCache           japanese.Analysis
-	structureCacheErr        string
-	highlightCacheKey        string
-	highlightCache           []flashcards.Match
-	popupFlashcard           *flashcards.Flashcard
-	popupAnchor              image.Rectangle
-	popupBounds              image.Rectangle
-	popupMatchKey            string
-	popupWord                string
-	selectedLineKey          string
-	selectedLineText         string
-	selectedFocusedTokenKey  string
-	selectedFocusedTokenWord string
-	selectedFocusedTokenNote string
-	translationCollapsed     bool
-	focusedFuriganaMode      string
-	focusedFuriganaDefault   string
-	selectedTargetLanguage   string
-	composerFocus            string
-	composerMinimized        bool
-	composerLastUsed         time.Time
-	lastAutoWord             string
-	hideReadingSet           bool
+	flashcards                []flashcards.Flashcard
+	lookupResult              *dictionary.Lookup
+	lookupResults             []dictionary.Lookup
+	displayTranscript         string
+	lastSyncedText            string
+	lastFocusedText           string
+	structureCacheKey         string
+	structureCache            japanese.Analysis
+	structureCacheErr         string
+	highlightCacheKey         string
+	highlightCache            []flashcards.Match
+	popupFlashcard            *flashcards.Flashcard
+	popupAnchor               image.Rectangle
+	popupBounds               image.Rectangle
+	popupMatchKey             string
+	popupWord                 string
+	selectedLineKey           string
+	selectedLineText          string
+	selectedFocusedTokenKey   string
+	selectedFocusedTokenWord  string
+	selectedFocusedTokenNote  string
+	translationCollapsed      bool
+	focusedFuriganaMode       string
+	focusedFuriganaDefault    string
+	selectedTargetLanguage    string
+	translationLoadedKey      string
+	translationGeneratingKey  string
+	autoTranslationAttemptKey string
+	translationResultCh       chan translationResult
+	translatorConfig          translation.Config
+	composerFocus             string
+	composerMinimized         bool
+	composerLastUsed          time.Time
+	lastAutoWord              string
+	hideReadingSet            bool
 
 	OnError  func(title, body string)
 	OnNotify func(title, body string, kind guitoast.NotificationType)
+}
+
+type translationResult struct {
+	Key   string
+	Entry translation.Entry
+	Err   error
 }
 
 type transcriptRow struct {
@@ -164,9 +181,13 @@ func New(theme barethemes.Theme) *Page {
 		selectedTextSizeName:      "Medium",
 		selectedRecentLines:       "All Lines",
 		transcriptTextSize:        unit.Sp(16),
+		focusedTextSize:           unit.Sp(26),
+		translateDetailSize:       unit.Sp(15),
 		focusedFuriganaMode:       focusedFuriganaHidden,
 		focusedFuriganaDefault:    focusedFuriganaHidden,
 		selectedTargetLanguage:    "English",
+		translationResultCh:       make(chan translationResult, 1),
+		translatorConfig:          translation.Config{Provider: translation.ProviderOllama},
 		composerFocus:             composerFocusFlashcards,
 		composerMinimized:         true,
 		composerLastUsed:          time.Now(),
@@ -234,6 +255,21 @@ func (p *Page) SetTranscriptOptions(textSize unit.Sp, textSizeName string, recen
 	p.selectedTextSizeName = strings.TrimSpace(textSizeName)
 	p.recentLineLimit = recentLineLimit
 	p.selectedRecentLines = strings.TrimSpace(recentLinesName)
+	return p
+}
+
+func (p *Page) SetTranslateTextOptions(focusedSize, detailSize unit.Sp) *Page {
+	if focusedSize > 0 {
+		p.focusedTextSize = focusedSize
+	}
+	if detailSize > 0 {
+		p.translateDetailSize = detailSize
+	}
+	return p
+}
+
+func (p *Page) SetTranslatorConfig(cfg translation.Config) *Page {
+	p.translatorConfig = cfg
 	return p
 }
 
@@ -320,7 +356,9 @@ func (p *Page) DismissPopup() {
 	p.popupWord = ""
 }
 
-func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window) {
+func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Window) {
+	p.drainTranslationResults()
+	p.maybeAutoGenerateTranslation(ctx, w)
 	if p.hideReadingInAnki.Update(gtx) {
 		p.hideReadingSet = true
 	}
@@ -365,6 +403,12 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 	for p.translationToggleButton.Clicked(gtx) {
 		p.translationCollapsed = !p.translationCollapsed
 	}
+	for p.saveTranslationButton.Clicked(gtx) {
+		p.saveCurrentTranslation()
+	}
+	for p.generateTranslationButton.Clicked(gtx) {
+		p.generateCurrentTranslation(ctx, w)
+	}
 	for p.furiganaHiddenButton.Clicked(gtx) {
 		p.focusedFuriganaMode = focusedFuriganaHidden
 	}
@@ -378,6 +422,8 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, _ *app.Window
 		opt := &p.targetLanguageOptions[i]
 		for opt.Clickable.Clicked(gtx) {
 			p.selectedTargetLanguage = opt.Label
+			p.translationLoadedKey = ""
+			p.autoTranslationAttemptKey = ""
 			p.targetLanguageDrop.Close()
 		}
 	}
@@ -686,12 +732,12 @@ func (p *Page) layoutTranscriptWorkspace(gtx layout.Context) layout.Dimensions {
 				return p.layoutTranscriptBodyPanel(gtx)
 			}),
 			layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if p.runnerStatus == nil {
-					return layout.Dimensions{}
-				}
-				return p.layoutFlashcardComposer(gtx)
-			}),
+			//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			//	if p.runnerStatus == nil {
+			//		return layout.Dimensions{}
+			//	}
+			//	return p.layoutFlashcardComposer(gtx)
+			//}),
 		)
 	}
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
@@ -878,7 +924,7 @@ func (p *Page) layoutFocusedSentenceWithFurigana(gtx layout.Context, sentence st
 		lbl.TextSize = p.focusedSentenceTextSize(gtx)
 		return lbl.Layout(gtx)
 	}
-	lines := focusedSentenceTokenLines(gtx, analysis.Tokens)
+	lines := p.focusedSentenceTokenLines(gtx, analysis.Tokens)
 	children := make([]layout.FlexChild, 0, len(lines))
 	for i, line := range lines {
 		line := line
@@ -900,7 +946,7 @@ func (p *Page) layoutFocusedSentenceWithFurigana(gtx layout.Context, sentence st
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
-func focusedSentenceTokenLines(gtx layout.Context, tokens []japanese.Token) [][]japanese.Token {
+func (p *Page) focusedSentenceTokenLines(gtx layout.Context, tokens []japanese.Token) [][]japanese.Token {
 	maxWidth := gtx.Constraints.Max.X
 	if maxWidth <= 0 {
 		return [][]japanese.Token{tokens}
@@ -909,7 +955,7 @@ func focusedSentenceTokenLines(gtx layout.Context, tokens []japanese.Token) [][]
 	line := make([]japanese.Token, 0, len(tokens))
 	lineWidth := 0
 	for _, token := range tokens {
-		tokenWidth := focusedSentenceTokenWidth(gtx, token)
+		tokenWidth := p.focusedSentenceTokenWidth(gtx, token)
 		if len(line) > 0 && lineWidth+tokenWidth > maxWidth {
 			lines = append(lines, line)
 			line = make([]japanese.Token, 0, len(tokens))
@@ -924,7 +970,7 @@ func focusedSentenceTokenLines(gtx layout.Context, tokens []japanese.Token) [][]
 	return lines
 }
 
-func focusedSentenceTokenWidth(gtx layout.Context, token japanese.Token) int {
+func (p *Page) focusedSentenceTokenWidth(gtx layout.Context, token japanese.Token) int {
 	surfaceRunes := len([]rune(cleanInlineText(token.Surface)))
 	readingRunes := len([]rune(focusedTokenReading(token)))
 	runes := surfaceRunes
@@ -934,7 +980,8 @@ func focusedSentenceTokenWidth(gtx layout.Context, token japanese.Token) int {
 	if runes <= 0 {
 		runes = 1
 	}
-	return gtx.Dp(unit.Dp(float32(runes*19 + 14)))
+	size := float32(p.focusedSentenceTextSize(gtx))
+	return gtx.Dp(unit.Dp(float32(runes)*size*0.72 + 16))
 }
 
 func (p *Page) layoutFocusedFuriganaToken(gtx layout.Context, token japanese.Token) layout.Dimensions {
@@ -1009,10 +1056,8 @@ func (p *Page) layoutFocusedTokenSlot(gtx layout.Context, height unit.Dp, w layo
 }
 
 func (p *Page) focusedTokenSurfaceSlotHeight(gtx layout.Context) unit.Dp {
-	if p.isCompactLayout(gtx) {
-		return unit.Dp(30)
-	}
-	return unit.Dp(38)
+	size := float32(p.focusedSentenceTextSize(gtx))
+	return unit.Dp(size + 12)
 }
 
 func (p *Page) layoutFocusedTokenMarker(gtx layout.Context, inFlashcards, dictionaryReady bool) layout.Dimensions {
@@ -1037,6 +1082,7 @@ func (p *Page) layoutFocusedTokenReading(gtx layout.Context, reading string) lay
 	}
 	lbl := material.Body2(p.theme.Gio(), reading)
 	lbl.Color = color.NRGBA{R: 255, G: 137, B: 103, A: 255}
+	lbl.TextSize = p.translateDetailTextSize()
 	return lbl.Layout(gtx)
 }
 
@@ -1045,6 +1091,7 @@ func (p *Page) layoutFocusedFuriganaControls(gtx layout.Context) layout.Dimensio
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(p.theme.Gio(), "Furigana")
 			lbl.Color = p.theme.Color.TextMuted
+			lbl.TextSize = p.translateDetailTextSize()
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
@@ -1098,6 +1145,7 @@ func (p *Page) layoutFocusedTokenActions(gtx layout.Context) layout.Dimensions {
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(p.theme.Gio(), meaning)
 					lbl.Color = p.theme.Color.TextMuted
+					lbl.TextSize = p.translateDetailTextSize()
 					return lbl.Layout(gtx)
 				}),
 				//p.layoutStatusPill(gtx, contextVocabPillText(hasCard), hasCard),
@@ -1149,6 +1197,7 @@ func (p *Page) layoutFuriganaModeButton(gtx layout.Context, click *widget.Clicka
 			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(p.theme.Gio(), label)
 				lbl.Color = fg
+				lbl.TextSize = p.translateDetailTextSize()
 				return lbl.Layout(gtx)
 			})
 		})
@@ -1159,6 +1208,7 @@ func (p *Page) layoutFocusedSentenceChips(gtx layout.Context, analysis japanese.
 	if errText != "" {
 		lbl := material.Body1(p.theme.Gio(), errText)
 		lbl.Color = p.theme.Color.Warning
+		lbl.TextSize = p.translateDetailTextSize()
 		return lbl.Layout(gtx)
 	}
 	children := make([]layout.FlexChild, 0, min(4, len(analysis.Tokens)))
@@ -1189,11 +1239,13 @@ func (p *Page) layoutFocusChip(gtx layout.Context, token japanese.Token) layout.
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(p.theme.Gio(), posMajorLabel(token.POSMajor()))
 					lbl.Color = p.theme.Color.TextMuted
+					lbl.TextSize = p.translateDetailTextSize()
 					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body1(p.theme.Gio(), structureFlashcardWord(token))
 					lbl.Color = p.theme.Color.Text
+					lbl.TextSize = p.translateDetailTextSize()
 					return lbl.Layout(gtx)
 				}),
 			)
@@ -1216,6 +1268,7 @@ func (p *Page) layoutFocusedLookupBar(gtx layout.Context) layout.Dimensions {
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(p.theme.Gio(), selected)
 			lbl.Color = p.theme.Color.TextMuted
+			lbl.TextSize = p.translateDetailTextSize()
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
@@ -1229,6 +1282,7 @@ func (p *Page) layoutFocusedLookupBar(gtx layout.Context) layout.Dimensions {
 }
 
 func (p *Page) layoutFocusedTranslationSection(gtx layout.Context) layout.Dimensions {
+	p.syncTranslationEditor()
 	return bareutils.RoundedSurface(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			children := []layout.FlexChild{
@@ -1243,6 +1297,7 @@ func (p *Page) layoutFocusedTranslationSection(gtx layout.Context) layout.Dimens
 						editor := material.Editor(p.theme.Gio(), &p.translationEditor, "Type or edit the translation here")
 						editor.Color = p.theme.Color.Text
 						editor.HintColor = p.theme.Color.TextMuted
+						editor.TextSize = p.translateDetailTextSize()
 						maxHeight := min(gtx.Constraints.Max.Y, gtx.Dp(unit.Dp(96)))
 						gtx.Constraints.Min.Y = min(maxHeight, gtx.Dp(unit.Dp(58)))
 						gtx.Constraints.Max.Y = maxHeight
@@ -1284,6 +1339,7 @@ func (p *Page) layoutTranslationHeader(gtx layout.Context) layout.Dimensions {
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(p.theme.Gio(), "to")
 			lbl.Color = p.theme.Color.TextMuted
+			lbl.TextSize = p.translateDetailTextSize()
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
@@ -1291,6 +1347,54 @@ func (p *Page) layoutTranslationHeader(gtx layout.Context) layout.Dimensions {
 			return p.targetLanguageDrop.Layout(gtx, p.theme, p.iconify, p.selectedTargetLanguage, func(gtx layout.Context) layout.Dimensions {
 				return gui.LayoutOptionMenu(gtx, p.targetLanguageOptions, p.selectedTargetLanguage, p.theme, p.iconify)
 			})
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			saveButton := bareui.Button{
+				Clickable: &p.saveTranslationButton,
+				Text:      "Save",
+				Prefix:    "mdi:content-save-outline",
+				Variant:   bareui.ButtonSecondary,
+			}
+			if strings.TrimSpace(p.translationEditor.Text()) == "" || strings.TrimSpace(p.structureSourceText()) == "" {
+				return saveButton.Layout(gtx.Disabled(), p.theme, p.iconify)
+			}
+			return saveButton.Layout(gtx, p.theme, p.iconify)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(p.theme.Gio(), "Auto")
+					lbl.Color = p.theme.Color.TextMuted
+					lbl.TextSize = p.translateDetailTextSize()
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(bareutils.SpacerW(unit.Dp(4))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					autoSwitch := material.Switch(p.theme.Gio(), &p.autoTranslateMissing, "Auto translate missing sentences")
+					autoSwitch.Color.Enabled = p.theme.Color.Primary
+					autoSwitch.Color.Disabled = p.theme.Color.Border
+					return autoSwitch.Layout(gtx)
+				}),
+			)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			text := "Generate"
+			if p.translationGeneratingKey != "" {
+				text = "Generating"
+			}
+			generateButton := bareui.Button{
+				Clickable: &p.generateTranslationButton,
+				Text:      text,
+				Prefix:    "mdi:creation-outline",
+				Variant:   bareui.ButtonPrimary,
+			}
+			if p.translationGeneratingKey != "" || strings.TrimSpace(p.structureSourceText()) == "" {
+				return generateButton.Layout(gtx.Disabled(), p.theme, p.iconify)
+			}
+			return generateButton.Layout(gtx, p.theme, p.iconify)
 		}),
 	)
 }
@@ -1314,16 +1418,27 @@ func (p *Page) layoutCardHeader(gtx layout.Context, title, hint string) layout.D
 			}
 			lbl := material.Body2(p.theme.Gio(), hint)
 			lbl.Color = p.theme.Color.TextMuted
+			lbl.TextSize = p.translateDetailTextSize()
 			return lbl.Layout(gtx)
 		}),
 	)
 }
 
 func (p *Page) focusedSentenceTextSize(gtx layout.Context) unit.Sp {
+	if p.focusedTextSize > 0 {
+		return p.focusedTextSize
+	}
 	if p.isCompactLayout(gtx) {
 		return unit.Sp(20)
 	}
 	return unit.Sp(26)
+}
+
+func (p *Page) translateDetailTextSize() unit.Sp {
+	if p.translateDetailSize > 0 {
+		return p.translateDetailSize
+	}
+	return unit.Sp(15)
 }
 
 func (p *Page) layoutBottomActions(gtx layout.Context) layout.Dimensions {
@@ -1418,18 +1533,21 @@ func (p *Page) layoutWordDetailsCard(gtx layout.Context) layout.Dimensions {
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body1(p.theme.Gio(), reading)
 				lbl.Color = p.theme.Color.TextMuted
+				lbl.TextSize = p.translateDetailTextSize()
 				return lbl.Layout(gtx)
 			}),
 			layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body1(p.theme.Gio(), meaning)
 				lbl.Color = p.theme.Color.Text
+				lbl.TextSize = p.translateDetailTextSize()
 				return lbl.Layout(gtx)
 			}),
 			layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(p.theme.Gio(), meta)
 				lbl.Color = p.theme.Color.TextMuted
+				lbl.TextSize = p.translateDetailTextSize()
 				return lbl.Layout(gtx)
 			}),
 			//layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{} }),
@@ -1462,6 +1580,7 @@ func (p *Page) layoutChoicesCard(gtx layout.Context) layout.Dimensions {
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(p.theme.Gio(), "Highlight text in Focused Sentence, then use Lookup Selection or Word Details.")
 				lbl.Color = p.theme.Color.TextMuted
+				lbl.TextSize = p.translateDetailTextSize()
 				return lbl.Layout(gtx)
 			}),
 		)
@@ -1484,6 +1603,7 @@ func (p *Page) layoutChoiceRow(gtx layout.Context, number, text string) layout.D
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body1(p.theme.Gio(), text)
 					lbl.Color = p.theme.Color.TextMuted
+					lbl.TextSize = p.translateDetailTextSize()
 					return lbl.Layout(gtx)
 				}),
 			)
@@ -2430,27 +2550,171 @@ func (p *Page) structureSourceText() string {
 	selected := p.selectedTranscriptText()
 	if selected != "" {
 		if sentence := japanese.ExtractSenNtence(p.displayTranscript, selected); sentence != "" {
-			return cleanInlineText(sentence)
+			return cleanTranscriptFocusText(sentence)
 		}
-		return cleanInlineText(selected)
+		return cleanTranscriptFocusText(selected)
 	}
-	if selected := strings.TrimSpace(p.selectedLineText); selected != "" {
-		return cleanInlineText(selected)
+	if p.selectedLineKey != "" {
+		if selected := p.transcriptFocusTextForKey(p.selectedLineKey); selected != "" {
+			return selected
+		}
 	}
 	word := normalizeSelectionText(p.wordEditor.Text())
 	if word != "" {
 		if sentence := findFlashcardSourceLine(p.displayTranscript, word); sentence != "" {
-			return cleanInlineText(sentence)
+			return cleanTranscriptFocusText(sentence)
 		}
 		return cleanInlineText(word)
 	}
-	lines := strings.Split(strings.TrimSpace(p.displayTranscript), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if line := strings.TrimSpace(lines[i]); line != "" {
-			return cleanInlineText(line)
-		}
+	if latest := p.transcriptFocusTextForKey(""); latest != "" {
+		return latest
 	}
 	return ""
+}
+
+func (p *Page) translationCacheKey() string {
+	source := p.structureSourceText()
+	if strings.TrimSpace(source) == "" || strings.TrimSpace(p.selectedTargetLanguage) == "" {
+		return ""
+	}
+	return strings.TrimSpace(p.activeGameName) + "\x00" + cleanInlineText(source) + "\x00" + strings.ToLower(strings.TrimSpace(p.selectedTargetLanguage))
+}
+
+func (p *Page) syncTranslationEditor() {
+	key := p.translationCacheKey()
+	if key == p.translationLoadedKey {
+		return
+	}
+	p.translationLoadedKey = key
+	if key == "" {
+		p.translationEditor.SetText("")
+		return
+	}
+	entry, ok, err := translation.Load(p.activeGameName, p.structureSourceText(), p.selectedTargetLanguage)
+	if err != nil {
+		p.showError("Translation Cache Failed", err.Error())
+		return
+	}
+	if !ok {
+		p.translationEditor.SetText("")
+		return
+	}
+	p.translationEditor.SetText(entry.Translation)
+}
+
+func (p *Page) maybeAutoGenerateTranslation(ctx context.Context, w *app.Window) {
+	if !p.autoTranslateMissing.Value || p.translationGeneratingKey != "" {
+		return
+	}
+	key := p.translationCacheKey()
+	if key == "" || key == p.autoTranslationAttemptKey {
+		return
+	}
+	entry, ok, err := translation.Load(p.activeGameName, p.structureSourceText(), p.selectedTargetLanguage)
+	if err != nil {
+		p.autoTranslationAttemptKey = key
+		p.showError("Translation Cache Failed", err.Error())
+		return
+	}
+	if ok {
+		p.translationLoadedKey = key
+		p.translationEditor.SetText(entry.Translation)
+		return
+	}
+	p.autoTranslationAttemptKey = key
+	p.generateCurrentTranslation(ctx, w)
+}
+
+func (p *Page) saveCurrentTranslation() {
+	source := p.structureSourceText()
+	if strings.TrimSpace(source) == "" {
+		p.showError("Save Translation Failed", "There is no focused sentence to save.")
+		return
+	}
+	entry := translation.Entry{
+		GameName:       p.activeGameName,
+		SourceText:     source,
+		TargetLanguage: p.selectedTargetLanguage,
+		Translation:    p.translationEditor.Text(),
+	}
+	if err := translation.Save(entry); err != nil {
+		p.showError("Save Translation Failed", err.Error())
+		return
+	}
+	p.translationLoadedKey = p.translationCacheKey()
+	p.autoTranslationAttemptKey = p.translationLoadedKey
+	p.showNotification("Translation Saved", "Saved translation for "+p.selectedTargetLanguage+".", guitoast.NotificationTypeSuccess)
+}
+
+func (p *Page) generateCurrentTranslation(ctx context.Context, w *app.Window) {
+	source := p.structureSourceText()
+	if strings.TrimSpace(source) == "" {
+		p.showError("Generate Translation Failed", "There is no focused sentence to translate.")
+		return
+	}
+	key := p.translationCacheKey()
+	if key == "" || p.translationGeneratingKey != "" {
+		return
+	}
+	p.translationGeneratingKey = key
+	p.translationEditor.SetText("Generating translation...")
+
+	gameName := p.activeGameName
+	targetLanguage := p.selectedTargetLanguage
+	cfg := p.translatorConfig
+	go func() {
+		entry, err := translation.Generate(ctx, cfg, gameName, source, targetLanguage)
+		result := translationResult{Key: key, Entry: entry, Err: err}
+		select {
+		case p.translationResultCh <- result:
+		case <-ctx.Done():
+		}
+		if w != nil {
+			w.Invalidate()
+		}
+	}()
+}
+
+func (p *Page) drainTranslationResults() {
+	for {
+		select {
+		case result := <-p.translationResultCh:
+			if result.Key != p.translationGeneratingKey {
+				continue
+			}
+			p.translationGeneratingKey = ""
+			if result.Key != p.translationCacheKey() {
+				continue
+			}
+			if result.Err != nil {
+				p.translationEditor.SetText("")
+				p.showError("Generate Translation Failed", result.Err.Error())
+				continue
+			}
+			p.translationLoadedKey = result.Key
+			p.autoTranslationAttemptKey = result.Key
+			p.translationEditor.SetText(result.Entry.Translation)
+			p.showNotification("Translation Generated", "Generated and cached translation for "+result.Entry.TargetLanguage+".", guitoast.NotificationTypeSuccess)
+		default:
+			return
+		}
+	}
+}
+
+func (p *Page) transcriptFocusTextForKey(key string) string {
+	rows := p.transcriptRows()
+	if len(rows) == 0 {
+		return ""
+	}
+	if strings.TrimSpace(key) != "" {
+		for _, row := range rows {
+			if row.Key == key {
+				return cleanInlineText(row.Text)
+			}
+		}
+		return ""
+	}
+	return cleanInlineText(rows[len(rows)-1].Text)
 }
 
 func (p *Page) transcriptRows() []transcriptRow {
@@ -3530,6 +3794,22 @@ func cleanInlineText(text string) string {
 	text = strings.ReplaceAll(text, "\n", " ")
 	text = strings.ReplaceAll(text, "\t", " ")
 	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+}
+
+func cleanTranscriptFocusText(text string) string {
+	parts := make([]string, 0, 1)
+	for _, line := range strings.Split(strings.TrimSpace(text), "\n") {
+		line = cleanInlineText(line)
+		if line == "" {
+			continue
+		}
+		_, body := splitTranscriptTimestamp(line)
+		body = cleanInlineText(body)
+		if body != "" {
+			parts = append(parts, body)
+		}
+	}
+	return cleanInlineText(strings.Join(parts, " "))
 }
 
 func findFlashcardSourceLine(transcriptText, word string) string {

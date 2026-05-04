@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	DefaultAnkiModel = "WGL Flashcard"
+	DefaultAnkiModel = "Yomuna Flashcard"
 )
 
 type Flashcard struct {

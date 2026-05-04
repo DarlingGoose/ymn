@@ -263,7 +263,7 @@ func (g *guiApp) Run(ctx context.Context) error {
 
 	go func() {
 		w := new(app.Window)
-		w.Option(app.Title("WGL"), app.Size(unit.Dp(1440), unit.Dp(920)))
+		w.Option(app.Title("Yomuna"), app.Size(unit.Dp(1440), unit.Dp(920)))
 
 		if g.activeGameName != "" {
 			g.startWatching(ctx, g.activeGameName, w)
@@ -389,6 +389,11 @@ func (g *guiApp) syncPages() {
 			g.settingsPage.RecentLineLimit(),
 			g.settingsPage.RecentLineLabel(),
 		).
+		SetTranslateTextOptions(
+			g.settingsPage.FocusedSentenceSize(),
+			g.settingsPage.TranslateDetailSize(),
+		).
+		SetTranslatorConfig(g.settingsPage.TranslatorConfig()).
 		SetFocusedFuriganaDefault(g.settingsPage.FocusedFuriganaMode()).
 		SetAutoPlayHighlightAudio(g.settingsPage.AutoPlayHighlightAudio()).
 		SetColorizeHighlights(g.settingsPage.ColorizeHighlightText()).
@@ -411,7 +416,7 @@ func (g *guiApp) layoutLeftSidebar(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.H5(g.theme.Gio(), "VANTA")
+					lbl := material.H5(g.theme.Gio(), "YMN")
 					lbl.Color = g.theme.Color.Text
 					return lbl.Layout(gtx)
 				}),
@@ -529,7 +534,17 @@ func (g *guiApp) layoutGameDropdownMenu(gtx layout.Context) layout.Dimensions {
 }
 
 func (g *guiApp) selectedGameLabel() string {
-	return util.FirstNonEmpty(g.activeGameName, "Select game")
+	return truncateGameDropdownLabel(util.FirstNonEmpty(g.activeGameName, "Select game"))
+}
+
+func truncateGameDropdownLabel(label string) string {
+	label = strings.TrimSpace(label)
+	const maxRunes = 22
+	runes := []rune(label)
+	if len(runes) <= maxRunes {
+		return label
+	}
+	return string(runes[:maxRunes-1]) + "…"
 }
 
 func (g *guiApp) showMessage(title, body string) {

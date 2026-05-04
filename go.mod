@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	gioui.org v0.9.0
 	github.com/DarlingGoose/bare v0.0.6
-	github.com/DarlingGoose/jpndict v0.0.8
+	github.com/DarlingGoose/jpndict v0.0.9
 	github.com/DarlingGoose/vntext v0.0.5
 	github.com/ikawaha/kagome-dict/ipa v1.2.6
 	github.com/ikawaha/kagome/v2 v2.11.0

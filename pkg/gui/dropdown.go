@@ -78,6 +78,24 @@ func NewTranscriptSizeOptions() []DropdownOption {
 	}
 }
 
+func NewFocusedSentenceSizeOptions() []DropdownOption {
+	return []DropdownOption{
+		{Label: "Small", Icon: "mdi:format-font-size-decrease", TextSize: unit.Sp(20), Clickable: new(widget.Clickable)},
+		{Label: "Medium", Icon: "mdi:format-size", TextSize: unit.Sp(26), Clickable: new(widget.Clickable)},
+		{Label: "Large", Icon: "mdi:format-font-size-increase", TextSize: unit.Sp(32), Clickable: new(widget.Clickable)},
+		{Label: "XL", Icon: "mdi:format-letter-case", TextSize: unit.Sp(38), Clickable: new(widget.Clickable)},
+	}
+}
+
+func NewTranslateDetailSizeOptions() []DropdownOption {
+	return []DropdownOption{
+		{Label: "Small", Icon: "mdi:format-font-size-decrease", TextSize: unit.Sp(13), Clickable: new(widget.Clickable)},
+		{Label: "Medium", Icon: "mdi:format-size", TextSize: unit.Sp(15), Clickable: new(widget.Clickable)},
+		{Label: "Large", Icon: "mdi:format-font-size-increase", TextSize: unit.Sp(18), Clickable: new(widget.Clickable)},
+		{Label: "XL", Icon: "mdi:format-letter-case", TextSize: unit.Sp(21), Clickable: new(widget.Clickable)},
+	}
+}
+
 func NewRecentLineOptions() []DropdownOption {
 	return []DropdownOption{
 		{Label: "All Lines", Icon: "mdi:unfold-more-horizontal", RecentLineLimit: 0, Clickable: new(widget.Clickable)},
@@ -92,6 +110,15 @@ func NewFuriganaModeOptions() []DropdownOption {
 		{Label: "Hide", Icon: "mdi:eye-off-outline", Value: "hidden", Clickable: new(widget.Clickable)},
 		{Label: "Above", Icon: "mdi:format-superscript", Value: "above", Clickable: new(widget.Clickable)},
 		{Label: "Below", Icon: "mdi:format-subscript", Value: "below", Clickable: new(widget.Clickable)},
+	}
+}
+
+func NewTranslatorProviderOptions() []DropdownOption {
+	return []DropdownOption{
+		{Label: "Ollama", Icon: "mdi:server-network", Value: "ollama", Clickable: new(widget.Clickable)},
+		{Label: "OpenAI", Icon: "mdi:creation", Value: "openai", Clickable: new(widget.Clickable)},
+		{Label: "Gemini", Icon: "mdi:google", Value: "gemini", Clickable: new(widget.Clickable)},
+		{Label: "OpenAI Compatible", Icon: "mdi:api", Value: "openai_compatible", Clickable: new(widget.Clickable)},
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/DarlingGoose/wgl/pkg/util"
 )
@@ -55,5 +56,51 @@ func SaveFlashcards(gameName string, cards []Flashcard) error {
 	if err := os.WriteFile(flashcardPath(gameName), append(data, '\n'), 0o644); err != nil {
 		return fmt.Errorf("write flashcards: %w", err)
 	}
+	return nil
+}
+
+func RenameGameFlashcards(oldGameName, newGameName string) error {
+	oldGameName = strings.TrimSpace(oldGameName)
+	newGameName = strings.TrimSpace(newGameName)
+	if oldGameName == "" || newGameName == "" || strings.EqualFold(oldGameName, newGameName) {
+		return nil
+	}
+
+	oldPath := flashcardPath(oldGameName)
+	newPath := flashcardPath(newGameName)
+	if oldPath == newPath {
+		return nil
+	}
+
+	oldCards, err := LoadFlashcards(oldGameName)
+	if err != nil {
+		return err
+	}
+	if len(oldCards) == 0 {
+		return nil
+	}
+
+	newCards, err := LoadFlashcards(newGameName)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, len(newCards)+len(oldCards))
+	for _, card := range newCards {
+		seen[card.DuplicateKey()] = struct{}{}
+	}
+	for _, card := range oldCards {
+		card.GameName = newGameName
+		card.AnkiDeck = util.AnkiDeckName(newGameName)
+		card.NormalizeFlashcard()
+		if _, ok := seen[card.DuplicateKey()]; ok {
+			continue
+		}
+		seen[card.DuplicateKey()] = struct{}{}
+		newCards = append(newCards, card)
+	}
+	if err := SaveFlashcards(newGameName, newCards); err != nil {
+		return err
+	}
+	_ = os.Remove(oldPath)
 	return nil
 }

@@ -364,7 +364,7 @@ package cmd
 //
 //func runOCRLoop(cmd *cobra.Command, match windowMatch, renderer ocrOutputRenderer) error {
 //	reader := bufio.NewReader(os.Stdin)
-//	tempDir, err := os.MkdirTemp("", "wgl-ocr-*")
+//	tempDir, err := os.MkdirTemp("", "ymn-ocr-*")
 //	if err != nil {
 //		return fmt.Errorf("create temp directory: %w", err)
 //	}

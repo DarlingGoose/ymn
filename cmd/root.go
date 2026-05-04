@@ -11,14 +11,12 @@ import (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "wgl",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
+	Use:     "yomuna",
+	Aliases: []string{"ymn"},
+	Short:   "Yomuna visual novel transcript and flashcard tool",
+	Long: `Yomuna (YMN) is a visual novel game launcher and transcript/flashcard tool.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+Use it to launch games, follow live transcripts, look up Japanese text, and build flashcards.`,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	// Run: func(cmd *cobra.Command, args []string) { },

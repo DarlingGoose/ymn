@@ -22,6 +22,7 @@ import (
 	"github.com/DarlingGoose/vntext/pkg/engine/auto"
 	vngame "github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/vntext/pkg/gameConfig"
+	flashcards "github.com/DarlingGoose/wgl/pkg/flashcard"
 	pkggui "github.com/DarlingGoose/wgl/pkg/gui"
 	"github.com/DarlingGoose/wgl/pkg/util"
 )
@@ -799,6 +800,9 @@ func installGameConfig(inputPath string, installHook bool, overrides *vngame.Gam
 	if err := gameConfig.WriteGameConfig(gameConfig.DefaultGameConfigPath(cfg), cfg); err != nil {
 		return gameInstallResult{title: "Save Game Failed", err: err}
 	}
+	if err := renameGameFlashcards(oldName, cfg.Name); err != nil {
+		return gameInstallResult{title: "Move Flashcards Failed", err: err}
+	}
 	cleanupOldGameConfig(oldName, cfg)
 	cleanupDuplicateGameConfigs(cfg)
 	preview := gamePreviewText(cfg)
@@ -823,6 +827,9 @@ func installHookPlugin(cfg *vngame.Game, oldName string) gameInstallResult {
 	}
 	if err := gameConfig.WriteGameConfig(gameConfig.DefaultGameConfigPath(cfg), cfg); err != nil {
 		return gameInstallResult{title: "Save Game Failed", err: err}
+	}
+	if err := renameGameFlashcards(oldName, cfg.Name); err != nil {
+		return gameInstallResult{title: "Move Flashcards Failed", err: err}
 	}
 	cleanupOldGameConfig(oldName, cfg)
 	cleanupDuplicateGameConfigs(cfg)
@@ -889,6 +896,11 @@ func (p *Page) saveConfig() {
 	if err := gameConfig.WriteGameConfig(gameConfig.DefaultGameConfigPath(cfg), cfg); err != nil {
 		p.statusText = err.Error()
 		p.showError("Save Game Failed", err.Error())
+		return
+	}
+	if err := renameGameFlashcards(oldName, cfg.Name); err != nil {
+		p.statusText = err.Error()
+		p.showError("Move Flashcards Failed", err.Error())
 		return
 	}
 	cleanupOldGameConfig(oldName, cfg)
@@ -1186,6 +1198,15 @@ func gamePreviewText(cfg *vngame.Game) string {
 		"Icon: " + util.FirstNonEmpty(cfg.IconPath, "Unavailable"),
 		"Image: " + util.FirstNonEmpty(cfg.ImagePath, "Unavailable"),
 	}, "\n")
+}
+
+func renameGameFlashcards(oldName, newName string) error {
+	oldName = strings.TrimSpace(oldName)
+	newName = strings.TrimSpace(newName)
+	if oldName == "" || newName == "" || strings.EqualFold(oldName, newName) {
+		return nil
+	}
+	return flashcards.RenameGameFlashcards(oldName, newName)
 }
 
 func cleanupOldGameConfig(oldName string, cfg *vngame.Game) {
