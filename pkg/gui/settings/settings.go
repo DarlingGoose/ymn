@@ -57,6 +57,8 @@ type Settings struct {
 	focusedFuriganaMode     string
 	autoPlayHighlightAudio  widget.Bool
 	colorizeHighlightText   widget.Bool
+	speakerOnlyTranscript   widget.Bool
+	compactTimestamps       widget.Bool
 	openAIAPIKeyEditor      widget.Editor
 	openAIModelEditor       widget.Editor
 	openAIBaseURLEditor     widget.Editor
@@ -97,6 +99,8 @@ type Settings struct {
 	FocusedFurigana             string `json:"focused_furigana,omitempty"`
 	AutoPlayHighlightPopupAudio bool   `json:"auto_play_highlight_popup_audio,omitempty"`
 	ColorizeHighlightWords      bool   `json:"colorize_highlight_text,omitempty"`
+	SpeakerOnlyTranscriptLines  bool   `json:"speaker_only_transcript_lines,omitempty"`
+	CompactTranscriptTimestamps bool   `json:"compact_transcript_timestamps,omitempty"`
 	LastSelectedGame            string `json:"last_selected_game,omitempty"`
 }
 
@@ -188,6 +192,12 @@ func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.
 		g.persistSettings()
 	}
 	if g.colorizeHighlightText.Update(gtx) {
+		g.persistSettings()
+	}
+	if g.speakerOnlyTranscript.Update(gtx) {
+		g.persistSettings()
+	}
+	if g.compactTimestamps.Update(gtx) {
 		g.persistSettings()
 	}
 
@@ -373,6 +383,20 @@ func (g *Settings) settingsRows() []layout.Widget {
 			})
 		},
 		func(gtx layout.Context) layout.Dimensions {
+			return g.layoutSettingRow(gtx, "Speaker Lines Only", util.BoolSettingLabel(g.speakerOnlyTranscript.Value), func(gtx layout.Context) layout.Dimensions {
+				check := material.CheckBox(g.theme.Gio(), &g.speakerOnlyTranscript, "Only show transcript lines that include a speaker")
+				check.Color = g.theme.Color.Text
+				return check.Layout(gtx)
+			})
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return g.layoutSettingRow(gtx, "Compact Timestamps", util.BoolSettingLabel(g.compactTimestamps.Value), func(gtx layout.Context) layout.Dimensions {
+				check := material.CheckBox(g.theme.Gio(), &g.compactTimestamps, "Show shorter timestamps in the live transcript")
+				check.Color = g.theme.Color.Text
+				return check.Layout(gtx)
+			})
+		},
+		func(gtx layout.Context) layout.Dimensions {
 			lbl := material.H5(g.theme.Gio(), "Translator")
 			lbl.Color = g.theme.Color.Text
 			return lbl.Layout(gtx)
@@ -540,6 +564,8 @@ func (g *Settings) persistSettings() {
 	g.FocusedFurigana = g.selectedFuriganaName
 	g.AutoPlayHighlightPopupAudio = g.autoPlayHighlightAudio.Value
 	g.ColorizeHighlightWords = g.colorizeHighlightText.Value
+	g.SpeakerOnlyTranscriptLines = g.speakerOnlyTranscript.Value
+	g.CompactTranscriptTimestamps = g.compactTimestamps.Value
 	_ = g.saveSettings()
 }
 
@@ -636,6 +662,8 @@ func (g *Settings) applySavedSettings() {
 
 	g.autoPlayHighlightAudio.Value = g.AutoPlayHighlightPopupAudio
 	g.colorizeHighlightText.Value = g.ColorizeHighlightWords
+	g.speakerOnlyTranscript.Value = g.SpeakerOnlyTranscriptLines
+	g.compactTimestamps.Value = g.CompactTranscriptTimestamps
 }
 
 func (g *Settings) Theme() barethemes.Theme {
@@ -731,6 +759,14 @@ func (g *Settings) AutoPlayHighlightAudio() bool {
 
 func (g *Settings) ColorizeHighlightText() bool {
 	return g.colorizeHighlightText.Value
+}
+
+func (g *Settings) ShowSpeakerOnlyTranscriptLines() bool {
+	return g.speakerOnlyTranscript.Value
+}
+
+func (g *Settings) UseCompactTranscriptTimestamps() bool {
+	return g.compactTimestamps.Value
 }
 
 func (g *Settings) LastGame() string {

@@ -131,6 +131,8 @@ type Page struct {
 	recentLineLimit        int
 	autoPlayHighlightAudio bool
 	colorizeHighlights     bool
+	speakerOnlyRows        bool
+	compactTimestamps      bool
 
 	flashcards                []flashcards.Flashcard
 	lookupResult              *dictionary.Lookup
@@ -298,6 +300,12 @@ func (p *Page) SetTranscriptOptions(textSize unit.Sp, textSizeName string, recen
 	p.selectedTextSizeName = strings.TrimSpace(textSizeName)
 	p.recentLineLimit = recentLineLimit
 	p.selectedRecentLines = strings.TrimSpace(recentLinesName)
+	return p
+}
+
+func (p *Page) SetTranscriptDisplayOptions(speakerOnlyRows, compactTimestamps bool) *Page {
+	p.speakerOnlyRows = speakerOnlyRows
+	p.compactTimestamps = compactTimestamps
 	return p
 }
 
@@ -1977,8 +1985,8 @@ func (p *Page) layoutTranscriptRow(gtx layout.Context, row transcriptRow) layout
 			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints.Min.X = gtx.Dp(unit.Dp(78))
-						lbl := material.Body2(p.theme.Gio(), row.Time)
+						gtx.Constraints.Min.X = gtx.Dp(p.transcriptTimestampWidth())
+						lbl := material.Body2(p.theme.Gio(), p.transcriptTimestampText(row.Time))
 						lbl.Color = timeColor
 						return lbl.Layout(gtx)
 					}),
@@ -2028,8 +2036,8 @@ func (p *Page) layoutTranscriptInfoRow(gtx layout.Context, row transcriptRow) la
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints.Min.X = gtx.Dp(unit.Dp(78))
-					lbl := material.Body2(p.theme.Gio(), row.Time)
+					gtx.Constraints.Min.X = gtx.Dp(p.transcriptTimestampWidth())
+					lbl := material.Body2(p.theme.Gio(), p.transcriptTimestampText(row.Time))
 					lbl.Color = p.theme.Color.TextMuted
 					return lbl.Layout(gtx)
 				}),
@@ -2047,6 +2055,28 @@ func (p *Page) layoutTranscriptInfoRow(gtx layout.Context, row transcriptRow) la
 			)
 		})
 	})
+}
+
+func (p *Page) transcriptTimestampWidth() unit.Dp {
+	if p.compactTimestamps {
+		return unit.Dp(54)
+	}
+	return unit.Dp(78)
+}
+
+func (p *Page) transcriptTimestampText(timestamp string) string {
+	timestamp = strings.TrimSpace(timestamp)
+	if timestamp == "" {
+		return ""
+	}
+	if !p.compactTimestamps {
+		return timestamp
+	}
+	fields := strings.Fields(timestamp)
+	if len(fields) > 0 {
+		return fields[len(fields)-1]
+	}
+	return timestamp
 }
 
 func (p *Page) layoutTranscriptSpeaker(gtx layout.Context, speaker string, selected bool) layout.Dimensions {
@@ -3281,6 +3311,9 @@ func (p *Page) transcriptRows() []transcriptRow {
 		voice = strings.TrimSpace(voice)
 		body = cleanInlineText(body)
 		if body == "" {
+			continue
+		}
+		if p.speakerOnlyRows && (info || strings.TrimSpace(speaker) == "") {
 			continue
 		}
 		key := fmt.Sprintf("%d:%s", i, text)

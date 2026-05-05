@@ -409,6 +409,10 @@ func (g *guiApp) syncPages() {
 			g.settingsPage.RecentLineLimit(),
 			g.settingsPage.RecentLineLabel(),
 		).
+		SetTranscriptDisplayOptions(
+			g.settingsPage.ShowSpeakerOnlyTranscriptLines(),
+			g.settingsPage.UseCompactTranscriptTimestamps(),
+		).
 		SetTranslateTextOptions(
 			g.settingsPage.FocusedSentenceSize(),
 			g.settingsPage.TranslateDetailSize(),
