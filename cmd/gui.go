@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"os"
 	"os/signal"
@@ -22,6 +23,7 @@ import (
 	"gioui.org/widget/material"
 	bareui "github.com/DarlingGoose/bare/pkg/ui"
 	"github.com/DarlingGoose/bare/pkg/ui/icons"
+	"github.com/DarlingGoose/bare/pkg/ui/media"
 	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
 	"github.com/DarlingGoose/vntext/pkg/game"
@@ -104,13 +106,14 @@ type guiApp struct {
 	printExisting bool
 	pollInterval  time.Duration
 
-	shell        bareui.AppShell
-	iconify      *icons.Iconify
-	pageTabs     *bareui.Tabs
-	gameDropdown bareui.Dropdown
-	messageModal bareui.Modal
-	exitButton   widget.Clickable
-	toast        *guitoast.Toast
+	shell               bareui.AppShell
+	iconify             *icons.Iconify
+	pageTabs            *bareui.Tabs
+	gameDropdown        bareui.Dropdown
+	messageModal        bareui.Modal
+	exitButton          widget.Clickable
+	sidebarToggleButton widget.Clickable
+	toast               *guitoast.Toast
 
 	settingsPage   *guisettings.Settings
 	transcriptPage *guitranscript.Page
@@ -119,7 +122,10 @@ type guiApp struct {
 
 	theme barethemes.Theme
 
-	gameOptionClicks map[string]*widget.Clickable
+	gameOptionClicks      map[string]*widget.Clickable
+	sidebarTabClicks      map[string]*widget.Clickable
+	sidebarGameImageViews map[string]*media.ImageView
+	sidebarCollapsed      bool
 
 	activeGameName string
 	currentConfig  *game.Game
@@ -159,6 +165,12 @@ func newGUI(configs []*game.Game, selectedName string, printExisting bool, pollI
 	for _, cfg := range configs {
 		gameClicks[cfg.Name] = new(widget.Clickable)
 	}
+	sidebarTabClicks := map[string]*widget.Clickable{
+		guiPageTranscript: new(widget.Clickable),
+		guiPageFlashcards: new(widget.Clickable),
+		guiPageGame:       new(widget.Clickable),
+		guiPageSettings:   new(widget.Clickable),
+	}
 
 	pageTabs := bareui.NewTabs([]bareui.TabItem{
 		{ID: guiPageTranscript, Label: "Transcript", Icon: "mdi:text-box-outline"},
@@ -176,22 +188,24 @@ func newGUI(configs []*game.Game, selectedName string, printExisting bool, pollI
 	theme := settingsPage.Theme()
 
 	app := &guiApp{
-		configs:          configs,
-		printExisting:    printExisting,
-		pollInterval:     pollInterval,
-		shell:            bareui.AppShell{SidebarWidth: unit.Dp(232)},
-		iconify:          iconify,
-		pageTabs:         pageTabs,
-		gameOptionClicks: gameClicks,
-		activeGameName:   activeGame,
-		messageModal:     bareui.Modal{CloseOnScrim: true},
-		toast:            guitoast.New(),
-		settingsPage:     settingsPage,
-		transcriptPage:   guitranscript.New(theme).WithIcon(iconify),
-		flashcardPage:    guiflashcard.New(theme).WithIcon(iconify),
-		gamePage:         guigame.New(theme).WithIcon(iconify),
-		theme:            theme,
-		statusText:       "Select a game to start watching its transcript.",
+		configs:               configs,
+		printExisting:         printExisting,
+		pollInterval:          pollInterval,
+		shell:                 bareui.AppShell{SidebarWidth: unit.Dp(232)},
+		iconify:               iconify,
+		pageTabs:              pageTabs,
+		gameOptionClicks:      gameClicks,
+		sidebarTabClicks:      sidebarTabClicks,
+		sidebarGameImageViews: map[string]*media.ImageView{},
+		activeGameName:        activeGame,
+		messageModal:          bareui.Modal{CloseOnScrim: true},
+		toast:                 guitoast.New(),
+		settingsPage:          settingsPage,
+		transcriptPage:        guitranscript.New(theme).WithIcon(iconify),
+		flashcardPage:         guiflashcard.New(theme).WithIcon(iconify),
+		gamePage:              guigame.New(theme).WithIcon(iconify),
+		theme:                 theme,
+		statusText:            "Select a game to start watching its transcript.",
 	}
 
 	pkggui.NewDropDownLayout(&app.gameDropdown, "mdi:controller-classic")
@@ -328,6 +342,11 @@ func (g *guiApp) layout(gtx layout.Context, ctx context.Context, w *app.Window) 
 				}),
 			)
 		}
+		if g.sidebarCollapsed {
+			g.shell.SidebarWidth = unit.Dp(76)
+		} else {
+			g.shell.SidebarWidth = unit.Dp(232)
+		}
 		return g.shell.Layout(gtx, g.layoutLeftSidebar, g.layoutMain, g.layoutOverlay)
 	})
 }
@@ -413,13 +432,32 @@ func (g *guiApp) syncPages() {
 }
 
 func (g *guiApp) layoutLeftSidebar(gtx layout.Context) layout.Dimensions {
+	if g.sidebarCollapsed {
+		return g.layoutCollapsedSidebar(gtx)
+	}
 	return bareutils.Panel(gtx, g.theme.Color.Surface, 0, func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.H5(g.theme.Gio(), "YMN")
-					lbl.Color = g.theme.Color.Text
-					return lbl.Layout(gtx)
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.H5(g.theme.Gio(), "YMN")
+							lbl.Color = g.theme.Color.Text
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							for g.sidebarToggleButton.Clicked(gtx) {
+								g.sidebarCollapsed = true
+							}
+							btn := bareui.Button{
+								Clickable: &g.sidebarToggleButton,
+								Text:      "mdi:chevron-left",
+								Icon:      true,
+								Variant:   bareui.ButtonGhost,
+							}
+							return btn.Layout(gtx, g.theme, g.iconify)
+						}),
+					)
 				}),
 				layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -448,6 +486,147 @@ func (g *guiApp) layoutLeftSidebar(gtx layout.Context) layout.Dimensions {
 					return btn.Layout(gtx, g.theme, g.iconify)
 				}),
 			)
+		})
+	})
+}
+
+func (g *guiApp) layoutCollapsedSidebar(gtx layout.Context) layout.Dimensions {
+	return bareutils.Panel(gtx, g.theme.Color.Surface, 0, func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					for g.sidebarToggleButton.Clicked(gtx) {
+						g.sidebarCollapsed = false
+					}
+					btn := bareui.Button{
+						Clickable: &g.sidebarToggleButton,
+						Text:      "mdi:chevron-right",
+						Icon:      true,
+						Variant:   bareui.ButtonGhost,
+					}
+					return btn.Layout(gtx, g.theme, g.iconify)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return g.layoutCollapsedGamePicker(gtx)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(18))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return g.layoutCollapsedTabs(gtx)
+				}),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return layout.Dimensions{}
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					btn := bareui.Button{
+						Clickable: &g.exitButton,
+						Text:      "mdi:exit-to-app",
+						Icon:      true,
+						Variant:   bareui.ButtonGhost,
+					}
+					return btn.Layout(gtx, g.theme, g.iconify)
+				}),
+			)
+		})
+	})
+}
+
+func (g *guiApp) layoutCollapsedTabs(gtx layout.Context) layout.Dimensions {
+	children := make([]layout.FlexChild, 0, len(g.pageTabs.Items))
+	for _, item := range g.pageTabs.Items {
+		item := item
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return g.layoutCollapsedTab(gtx, item)
+			})
+		}))
+	}
+	return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx, children...)
+}
+
+func (g *guiApp) layoutCollapsedTab(gtx layout.Context, item bareui.TabItem) layout.Dimensions {
+	click := g.sidebarTabClicks[item.ID]
+	if click == nil {
+		click = new(widget.Clickable)
+		g.sidebarTabClicks[item.ID] = click
+	}
+	for click.Clicked(gtx) {
+		g.pageTabs.Active = item.ID
+	}
+	active := item.ID == g.pageTabs.Active
+	bg := g.theme.Color.Surface
+	fg := g.theme.Color.TextMuted
+	if active {
+		bg = g.theme.Color.Primary
+		fg = bareutils.ReadableOn(g.theme.Color.Primary)
+	} else if click.Hovered() {
+		bg = barethemes.Mix(g.theme.Color.SurfaceAlt, g.theme.Color.Surface, 0.75)
+		fg = g.theme.Color.Text
+	}
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min = image.Pt(gtx.Dp(unit.Dp(44)), gtx.Dp(unit.Dp(44)))
+		gtx.Constraints.Max = gtx.Constraints.Min
+		return bareutils.RoundedSurface(gtx, bg, unit.Dp(g.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if g.iconify == nil {
+					return layout.Dimensions{}
+				}
+				return g.iconify.Layout(gtx, item.Icon, unit.Dp(20), fg)
+			})
+		})
+	})
+}
+
+func (g *guiApp) layoutCollapsedGamePicker(gtx layout.Context) layout.Dimensions {
+	return layout.Stack{}.Layout(gtx,
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return g.gameDropdown.Toggle.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				for g.gameDropdown.Toggle.Clicked(gtx) {
+					g.gameDropdown.Open = !g.gameDropdown.Open
+				}
+				return g.layoutGameAvatar(gtx, g.currentConfig, g.gameDropdown.Toggle.Hovered())
+			})
+		}),
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			if !g.gameDropdown.Open {
+				return layout.Dimensions{}
+			}
+			macro := op.Record(gtx.Ops)
+			offset := op.Offset(image.Pt(gtx.Dp(unit.Dp(56)), 0)).Push(gtx.Ops)
+			menuGTX := gtx
+			menuGTX.Constraints.Min = image.Point{}
+			menuGTX.Constraints.Max = image.Pt(gtx.Dp(unit.Dp(260)), gtx.Dp(unit.Dp(360)))
+			bareutils.Panel(menuGTX, g.theme.Color.Surface, unit.Dp(g.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+				return layout.UniformInset(unit.Dp(8)).Layout(gtx, g.layoutGameDropdownMenu)
+			})
+			offset.Pop()
+			op.Defer(gtx.Ops, macro.Stop())
+			return layout.Dimensions{}
+		}),
+	)
+}
+
+func (g *guiApp) layoutGameAvatar(gtx layout.Context, cfg *game.Game, hovered bool) layout.Dimensions {
+	bg := g.theme.Color.SurfaceAlt
+	if hovered {
+		bg = barethemes.Mix(g.theme.Color.Primary, g.theme.Color.SurfaceAlt, 0.18)
+	}
+	gtx.Constraints.Min = image.Pt(gtx.Dp(unit.Dp(46)), gtx.Dp(unit.Dp(46)))
+	gtx.Constraints.Max = gtx.Constraints.Min
+	return bareutils.RoundedSurface(gtx, bg, unit.Dp(g.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		if path := gameAvatarPath(cfg); path != "" {
+			view := g.sidebarGameImageView(path)
+			view.Path = path
+			dims := view.Draw(gtx)
+			if dims.Size.X > 0 && dims.Size.Y > 0 {
+				return dims
+			}
+		}
+		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			initials := gameInitials(util.FirstNonEmpty(g.activeGameName, "YMN"))
+			lbl := material.Body1(g.theme.Gio(), initials)
+			lbl.Color = g.theme.Color.Text
+			return lbl.Layout(gtx)
 		})
 	})
 }
@@ -532,6 +711,55 @@ func (g *guiApp) layoutGameDropdownMenu(gtx layout.Context) layout.Dimensions {
 		}))
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func (g *guiApp) sidebarGameImageView(path string) *media.ImageView {
+	if g.sidebarGameImageViews == nil {
+		g.sidebarGameImageViews = map[string]*media.ImageView{}
+	}
+	if g.sidebarGameImageViews[path] == nil {
+		g.sidebarGameImageViews[path] = &media.ImageView{Path: path}
+	}
+	return g.sidebarGameImageViews[path]
+}
+
+func gameAvatarPath(cfg *game.Game) string {
+	if cfg == nil {
+		return ""
+	}
+	for _, path := range []string{cfg.IconPath, cfg.ImagePath} {
+		path = strings.TrimSpace(path)
+		if path == "" || !util.IsExistingFile(path) {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+			return path
+		}
+	}
+	return ""
+}
+
+func gameInitials(name string) string {
+	fields := strings.Fields(strings.TrimSpace(name))
+	if len(fields) == 0 {
+		return "?"
+	}
+	var b strings.Builder
+	for _, field := range fields {
+		for _, r := range field {
+			b.WriteRune(r)
+			break
+		}
+		if b.Len() >= 2 {
+			break
+		}
+	}
+	out := strings.ToUpper(b.String())
+	if strings.TrimSpace(out) == "" {
+		return "?"
+	}
+	return out
 }
 
 func (g *guiApp) selectedGameLabel() string {

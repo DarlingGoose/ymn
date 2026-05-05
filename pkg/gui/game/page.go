@@ -30,6 +30,12 @@ import (
 
 var _ pkggui.EvenHandler = &Page{}
 
+const (
+	browserTargetGame  = "game"
+	browserTargetIcon  = "icon"
+	browserTargetImage = "image"
+)
+
 type Page struct {
 	theme   barethemes.Theme
 	iconify *icons.Iconify
@@ -69,6 +75,7 @@ type Page struct {
 	statusText      string
 	previewText     string
 	hookStatusText  string
+	browserTarget   string
 	showBrowser     bool
 	installing      bool
 	installResult   chan gameInstallResult
@@ -105,6 +112,7 @@ func New(theme barethemes.Theme) *Page {
 		configList:       widget.List{List: layout.List{Axis: layout.Vertical}},
 		selectedRunner:   "Auto",
 		selectedDesktop:  "Default",
+		browserTarget:    browserTargetGame,
 		showBrowser:      false,
 		statusText:       "Create or update a saved game config for transcript watching and launch flows.",
 		hookStatusText:   "Select a game or path to inspect text hook support.",
@@ -239,17 +247,24 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, w *app.Window
 		if p.installing {
 			continue
 		}
-		p.showBrowser = true
-		p.browserModal.Open = true
+		p.openBrowserFor(browserTargetGame)
 	}
 	for p.useSelectionButton.Clicked(gtx) {
 		p.useBrowserSelection()
 	}
 	for p.useIconButton.Clicked(gtx) {
-		p.useBrowserAssetSelection(&p.iconPathEditor, "icon")
+		if p.showBrowser && p.browserTarget == browserTargetIcon {
+			p.useBrowserAssetSelection(&p.iconPathEditor, "icon")
+			continue
+		}
+		p.openBrowserFor(browserTargetIcon)
 	}
 	for p.useImageButton.Clicked(gtx) {
-		p.useBrowserAssetSelection(&p.imagePathEditor, "image")
+		if p.showBrowser && p.browserTarget == browserTargetImage {
+			p.useBrowserAssetSelection(&p.imagePathEditor, "image")
+			continue
+		}
+		p.openBrowserFor(browserTargetImage)
 	}
 	for p.analyzeButton.Clicked(gtx) {
 		p.startInstallGame(w, false)
@@ -312,7 +327,7 @@ func (p *Page) LayoutPage(gtx layout.Context) layout.Dimensions {
 			})
 		}),
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			dims := p.browserModal.Layout(gtx, p.theme, "Browse Game Files", func(gtx layout.Context) layout.Dimensions {
+			dims := p.browserModal.Layout(gtx, p.theme, p.browserModalTitle(), func(gtx layout.Context) layout.Dimensions {
 				return p.layoutBrowserModalContent(gtx)
 			})
 			p.showBrowser = p.browserModal.Open
@@ -439,10 +454,9 @@ func (p *Page) layoutConfigPanel(gtx layout.Context) layout.Dimensions {
 	imagePathEditor.Color = p.theme.Color.Text
 	imagePathEditor.HintColor = p.theme.Color.TextMuted
 
-	useSelection := bareui.Button{Clickable: &p.useSelectionButton, Text: "Use as Game Path", Prefix: "mdi:folder-check-outline", Variant: bareui.ButtonSecondary}
-	useIconSelection := bareui.Button{Clickable: &p.useIconButton, Text: "Use as Icon", Prefix: "mdi:image-filter-center-focus", Variant: bareui.ButtonSecondary}
-	useImageSelection := bareui.Button{Clickable: &p.useImageButton, Text: "Use as Image", Prefix: "mdi:image-outline", Variant: bareui.ButtonSecondary}
-	toggleBrowser := bareui.Button{Clickable: &p.toggleBrowserButton, Text: p.browserButtonLabel(), Prefix: p.browserButtonIcon(), Variant: bareui.ButtonSecondary}
+	setIcon := bareui.Button{Clickable: &p.useIconButton, Text: "Set Icon", Prefix: "mdi:image-filter-center-focus", Variant: bareui.ButtonSecondary}
+	setImage := bareui.Button{Clickable: &p.useImageButton, Text: "Set Image", Prefix: "mdi:image-outline", Variant: bareui.ButtonSecondary}
+	toggleBrowser := bareui.Button{Clickable: &p.toggleBrowserButton, Text: "Choose Game", Prefix: "mdi:folder-open-outline", Variant: bareui.ButtonSecondary}
 	install := bareui.Button{Clickable: &p.analyzeButton, Text: p.installActionLabel("Install"), Prefix: p.installActionIcon("mdi:download-box-outline"), Variant: bareui.ButtonPrimary}
 	saveChanges := bareui.Button{Clickable: &p.saveButton, Text: "Save Changes", Prefix: "mdi:content-save-outline", Variant: bareui.ButtonSecondary}
 	installHook := bareui.Button{Clickable: &p.installHookButton, Text: p.installActionLabel("Install/Reinstall Hook Plugin"), Prefix: p.installActionIcon("mdi:puzzle-plus-outline"), Variant: bareui.ButtonSecondary}
@@ -465,21 +479,34 @@ func (p *Page) layoutConfigPanel(gtx layout.Context) layout.Dimensions {
 				},
 				bareutils.SpacerH(unit.Dp(14)),
 				func(gtx layout.Context) layout.Dimensions {
-					if p.installing {
-						return toggleBrowser.Layout(gtx.Disabled(), p.theme, p.iconify)
-					}
-					return toggleBrowser.Layout(gtx, p.theme, p.iconify)
+					return p.layoutGamePathPicker(gtx, pathEditor.Layout, toggleBrowser)
 				},
 				bareutils.SpacerH(unit.Dp(12)),
 				func(gtx layout.Context) layout.Dimensions {
+					if !p.hasGameTarget() {
+						return p.layoutConfigEmptyState(gtx)
+					}
+					return layout.Dimensions{}
+				},
+				bareutils.SpacerH(unit.Dp(12)),
+				func(gtx layout.Context) layout.Dimensions {
+					if !p.hasGameTarget() {
+						return layout.Dimensions{}
+					}
+					return p.layoutConfigOverview(gtx)
+				},
+				bareutils.SpacerH(unit.Dp(12)),
+				func(gtx layout.Context) layout.Dimensions {
+					if !p.hasGameTarget() {
+						return layout.Dimensions{}
+					}
 					return p.layoutEditorRow(gtx, "Game Name / Rename", "Saved config name", nameEditor.Layout)
 				},
 				bareutils.SpacerH(unit.Dp(12)),
 				func(gtx layout.Context) layout.Dimensions {
-					return p.layoutEditorRow(gtx, "Game Path", "Folder or executable used for install", pathEditor.Layout)
-				},
-				bareutils.SpacerH(unit.Dp(12)),
-				func(gtx layout.Context) layout.Dimensions {
+					if !p.hasGameTarget() {
+						return layout.Dimensions{}
+					}
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							if p.installing {
@@ -494,21 +521,13 @@ func (p *Page) layoutConfigPanel(gtx layout.Context) layout.Dimensions {
 							}
 							return saveChanges.Layout(gtx, p.theme, p.iconify)
 						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							if !p.showBrowser {
-								return layout.Dimensions{}
-							}
-							return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								if p.installing {
-									return useSelection.Layout(gtx.Disabled(), p.theme, p.iconify)
-								}
-								return useSelection.Layout(gtx, p.theme, p.iconify)
-							})
-						}),
 					)
 				},
 				bareutils.SpacerH(unit.Dp(12)),
 				func(gtx layout.Context) layout.Dimensions {
+					if !p.hasGameTarget() {
+						return layout.Dimensions{}
+					}
 					return p.layoutInfoRow(gtx, "Runner", p.selectedRunner, func(gtx layout.Context) layout.Dimensions {
 						return p.runnerDropdown.Layout(gtx, p.theme, p.iconify, p.selectedRunner, func(gtx layout.Context) layout.Dimensions {
 							return pkggui.LayoutOptionMenu(gtx, p.runnerOptions, p.selectedRunner, p.theme, p.iconify)
@@ -517,14 +536,25 @@ func (p *Page) layoutConfigPanel(gtx layout.Context) layout.Dimensions {
 				},
 				bareutils.SpacerH(unit.Dp(12)),
 				func(gtx layout.Context) layout.Dimensions {
+					if !p.hasGameTarget() {
+						return layout.Dimensions{}
+					}
 					check := material.CheckBox(p.theme.Gio(), &p.requiresSteam, "Requires Steam")
 					check.Color = p.theme.Color.Text
 					return check.Layout(gtx)
 				},
 				bareutils.SpacerH(unit.Dp(12)),
-				steamAppIDEditor.Layout,
+				func(gtx layout.Context) layout.Dimensions {
+					if !p.hasGameTarget() {
+						return layout.Dimensions{}
+					}
+					return steamAppIDEditor.Layout(gtx)
+				},
 				bareutils.SpacerH(unit.Dp(12)),
 				func(gtx layout.Context) layout.Dimensions {
+					if !p.hasGameTarget() {
+						return layout.Dimensions{}
+					}
 					return p.layoutInfoRow(gtx, "Wine Virtual Desktop", p.selectedDesktop, func(gtx layout.Context) layout.Dimensions {
 						return p.desktopDropdown.Layout(gtx, p.theme, p.iconify, p.selectedDesktop, func(gtx layout.Context) layout.Dimensions {
 							return pkggui.LayoutOptionMenu(gtx, p.desktopOptions, p.selectedDesktop, p.theme, p.iconify)
@@ -532,33 +562,38 @@ func (p *Page) layoutConfigPanel(gtx layout.Context) layout.Dimensions {
 					})
 				},
 				bareutils.SpacerH(unit.Dp(12)),
-				iconPathEditor.Layout,
-				bareutils.SpacerH(unit.Dp(8)),
 				func(gtx layout.Context) layout.Dimensions {
-					if !p.showBrowser {
+					if !p.hasGameTarget() {
 						return layout.Dimensions{}
 					}
-					return useIconSelection.Layout(gtx, p.theme, p.iconify)
+					return p.layoutAssetPickerRow(gtx, "Icon Path", "Image used for small launcher/list artwork", iconPathEditor.Layout, setIcon)
 				},
 				bareutils.SpacerH(unit.Dp(12)),
-				imagePathEditor.Layout,
-				bareutils.SpacerH(unit.Dp(8)),
 				func(gtx layout.Context) layout.Dimensions {
-					if !p.showBrowser {
+					if !p.hasGameTarget() {
 						return layout.Dimensions{}
 					}
-					return useImageSelection.Layout(gtx, p.theme, p.iconify)
+					return p.layoutAssetPickerRow(gtx, "Image Path", "Larger artwork shown in the game list and summary", imagePathEditor.Layout, setImage)
 				},
 				bareutils.SpacerH(unit.Dp(14)),
 				func(gtx layout.Context) layout.Dimensions {
+					if !p.hasGameTarget() {
+						return layout.Dimensions{}
+					}
 					return p.layoutSummaryPanel(gtx, "Preview", p.previewText)
 				},
 				bareutils.SpacerH(unit.Dp(14)),
 				func(gtx layout.Context) layout.Dimensions {
+					if !p.hasGameTarget() {
+						return layout.Dimensions{}
+					}
 					return p.layoutSummaryPanel(gtx, "Text Hook", p.hookStatusText)
 				},
 				bareutils.SpacerH(unit.Dp(14)),
 				func(gtx layout.Context) layout.Dimensions {
+					if !p.hasGameTarget() {
+						return layout.Dimensions{}
+					}
 					return p.layoutGameCachePanel(gtx, clearCacheButton)
 				},
 				bareutils.SpacerH(unit.Dp(14)),
@@ -618,12 +653,10 @@ func (p *Page) layoutBrowserModalContent(gtx layout.Context) layout.Dimensions {
 	if gtx.Constraints.Max.Y > 0 {
 		gtx.Constraints.Min.Y = min(gtx.Constraints.Max.Y, gtx.Dp(unit.Dp(560)))
 	}
-	usePath := bareui.Button{Clickable: &p.useSelectionButton, Text: "Use as Game Path", Prefix: "mdi:folder-check-outline", Variant: bareui.ButtonPrimary}
-	useIcon := bareui.Button{Clickable: &p.useIconButton, Text: "Use as Icon", Prefix: "mdi:image-filter-center-focus", Variant: bareui.ButtonSecondary}
-	useImage := bareui.Button{Clickable: &p.useImageButton, Text: "Use as Image", Prefix: "mdi:image-outline", Variant: bareui.ButtonSecondary}
+	action := bareui.Button{Clickable: p.browserActionClickable(), Text: p.browserActionLabel(), Prefix: p.browserActionIcon(), Variant: bareui.ButtonPrimary}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(p.theme.Gio(), "Select a game folder, .exe, or image. Use the buttons below to copy the selection into the form.")
+			lbl := material.Body2(p.theme.Gio(), p.browserModalHelp())
 			lbl.Color = p.theme.Color.TextMuted
 			return lbl.Layout(gtx)
 		}),
@@ -635,15 +668,7 @@ func (p *Page) layoutBrowserModalContent(gtx layout.Context) layout.Dimensions {
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return usePath.Layout(gtx, p.theme, p.iconify)
-				}),
-				layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return useIcon.Layout(gtx, p.theme, p.iconify)
-				}),
-				layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return useImage.Layout(gtx, p.theme, p.iconify)
+					return action.Layout(gtx, p.theme, p.iconify)
 				}),
 			)
 		}),
@@ -664,6 +689,125 @@ func (p *Page) layoutSummaryPanel(gtx layout.Context, title, body string) layout
 					lbl := material.Body1(p.theme.Gio(), util.FirstNonEmpty(body, "No data yet."))
 					lbl.Color = p.theme.Color.Text
 					return lbl.Layout(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (p *Page) layoutGamePathPicker(gtx layout.Context, editor layout.Widget, browseButton bareui.Button) layout.Dimensions {
+	return bareutils.Panel(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(p.theme.Gio(), "Game Folder / Executable")
+					lbl.Color = p.theme.Color.TextMuted
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Flexed(1, editor),
+						layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if p.installing {
+								return browseButton.Layout(gtx.Disabled(), p.theme, p.iconify)
+							}
+							return browseButton.Layout(gtx, p.theme, p.iconify)
+						}),
+					)
+				}),
+			)
+		})
+	})
+}
+
+func (p *Page) layoutConfigEmptyState(gtx layout.Context) layout.Dimensions {
+	return bareutils.Panel(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if p.iconify == nil {
+						return layout.Dimensions{}
+					}
+					return p.iconify.LayoutWithSize(gtx, "mdi:folder-search-outline", unit.Dp(34), p.theme.Color.Primary)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.H6(p.theme.Gio(), "Choose a game folder or .exe")
+					lbl.Color = p.theme.Color.Text
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(p.theme.Gio(), "After a target is selected, the game name, runner, artwork, cache, and hook controls will appear here.")
+					lbl.Color = p.theme.Color.TextMuted
+					return lbl.Layout(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (p *Page) layoutConfigOverview(gtx layout.Context) layout.Dimensions {
+	cfg := p.draftFromForm(p.draftConfig)
+	return bareutils.Panel(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return p.layoutGameArtwork(gtx, cfg)
+				}),
+				layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.H6(p.theme.Gio(), util.FirstNonEmpty(cfg.Name, filepath.Base(cfg.GamePath), "Untitled Game"))
+							lbl.Color = p.theme.Color.Text
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(bareutils.SpacerH(unit.Dp(4))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(p.theme.Gio(), p.configOverviewMeta(cfg))
+							lbl.Color = p.theme.Color.TextMuted
+							return lbl.Layout(gtx)
+						}),
+					)
+				}),
+			)
+		})
+	})
+}
+
+func (p *Page) layoutAssetPickerRow(gtx layout.Context, label, hint string, editor layout.Widget, button bareui.Button) layout.Dimensions {
+	return bareutils.Panel(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(p.theme.Gio(), label)
+					lbl.Color = p.theme.Color.TextMuted
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if strings.TrimSpace(hint) == "" {
+						return layout.Dimensions{}
+					}
+					return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(p.theme.Gio(), hint)
+						lbl.Color = p.theme.Color.TextMuted
+						return lbl.Layout(gtx)
+					})
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Flexed(1, editor),
+						layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if p.installing {
+								return button.Layout(gtx.Disabled(), p.theme, p.iconify)
+							}
+							return button.Layout(gtx, p.theme, p.iconify)
+						}),
+					)
 				}),
 			)
 		})
@@ -767,6 +911,19 @@ func (p *Page) useBrowserSelection() {
 	p.inspectHook()
 }
 
+func (p *Page) openBrowserFor(target string) {
+	p.browserTarget = target
+	switch target {
+	case browserTargetIcon, browserTargetImage:
+		p.fileBrowser.Extensions = []string{".png", ".jpg", ".jpeg", ".webp", ".gif", ".ico", ".svg"}
+	default:
+		p.browserTarget = browserTargetGame
+		p.fileBrowser.Extensions = []string{".exe", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
+	}
+	p.showBrowser = true
+	p.browserModal.Open = true
+}
+
 func (p *Page) useBrowserAssetSelection(editor *widget.Editor, label string) {
 	if p.installing {
 		return
@@ -784,6 +941,61 @@ func (p *Page) useBrowserAssetSelection(editor *widget.Editor, label string) {
 	p.showBrowser = false
 	p.browserModal.Open = false
 	p.statusText = "Selected game " + label + "."
+}
+
+func (p *Page) browserActionClickable() *widget.Clickable {
+	switch p.browserTarget {
+	case browserTargetIcon:
+		return &p.useIconButton
+	case browserTargetImage:
+		return &p.useImageButton
+	default:
+		return &p.useSelectionButton
+	}
+}
+
+func (p *Page) browserActionLabel() string {
+	switch p.browserTarget {
+	case browserTargetIcon:
+		return "Set Icon"
+	case browserTargetImage:
+		return "Set Image"
+	default:
+		return "Use as Game Path"
+	}
+}
+
+func (p *Page) browserActionIcon() string {
+	switch p.browserTarget {
+	case browserTargetIcon:
+		return "mdi:image-filter-center-focus"
+	case browserTargetImage:
+		return "mdi:image-outline"
+	default:
+		return "mdi:folder-check-outline"
+	}
+}
+
+func (p *Page) browserModalTitle() string {
+	switch p.browserTarget {
+	case browserTargetIcon:
+		return "Select Game Icon"
+	case browserTargetImage:
+		return "Select Game Image"
+	default:
+		return "Select Game Folder or Executable"
+	}
+}
+
+func (p *Page) browserModalHelp() string {
+	switch p.browserTarget {
+	case browserTargetIcon:
+		return "Choose an image file to use as the game icon."
+	case browserTargetImage:
+		return "Choose an image file to use as the game artwork."
+	default:
+		return "Choose the game folder or a specific .exe to start the config flow."
+	}
 }
 
 func (p *Page) browserSelectedPath() string {
@@ -999,25 +1211,35 @@ func (p *Page) clearCurrentGameCache() {
 }
 
 func (p *Page) deleteConfig() {
-	// todo
-	//name := strings.TrimSpace(p.currentConfigName)
-	//if name == "" {
-	//	p.showError("Delete Game Failed", "Load a saved game config before deleting it.")
-	//	return
-	//}
-	//if err := gameconfig.DeleteGameConfig(name); err != nil {
-	//	p.statusText = err.Error()
-	//	p.showError("Delete Game Failed", err.Error())
-	//	return
-	//}
-	//p.resetConfigForm()
-	//p.showBrowser = true
-	//p.previewText = ""
-	//p.hookStatusText = "Select a game or path to inspect text hook support."
-	//p.statusText = fmt.Sprintf("Deleted %q.", name)
-	//if p.OnDeleted != nil {
-	//	p.OnDeleted(name)
-	//}
+	name := strings.TrimSpace(p.currentConfigName)
+	if name == "" && p.draftConfig != nil {
+		name = strings.TrimSpace(p.draftConfig.Name)
+	}
+	if name == "" {
+		p.showError("Delete Game Failed", "Load a saved game config before deleting it.")
+		return
+	}
+
+	if err := deleteGameConfigFiles(name); err != nil {
+		p.statusText = err.Error()
+		p.showError("Delete Game Failed", err.Error())
+		return
+	}
+	if err := util.ClearGameVoiceCache(name); err != nil {
+		p.statusText = err.Error()
+		p.showError("Delete Game Cache Failed", err.Error())
+		return
+	}
+
+	p.resetConfigForm()
+	p.showBrowser = false
+	p.browserModal.Open = false
+	p.previewText = ""
+	p.hookStatusText = "Select a game or path to inspect text hook support."
+	p.statusText = fmt.Sprintf("Deleted %q.", name)
+	if p.OnDeleted != nil {
+		p.OnDeleted(name)
+	}
 }
 
 func (p *Page) inspectHook() {
@@ -1333,6 +1555,40 @@ func (p *Page) cacheGameName() string {
 	return strings.TrimSpace(p.nameEditor.Text())
 }
 
+func (p *Page) hasGameTarget() bool {
+	if strings.TrimSpace(p.pathEditor.Text()) != "" {
+		return true
+	}
+	if p.draftConfig == nil {
+		return false
+	}
+	return strings.TrimSpace(p.draftConfig.GamePath) != "" || strings.TrimSpace(p.draftConfig.Executable) != ""
+}
+
+func (p *Page) configOverviewMeta(cfg *vngame.Game) string {
+	if cfg == nil {
+		return ""
+	}
+	parts := make([]string, 0, 4)
+	if strings.TrimSpace(string(cfg.Runner)) != "" {
+		parts = append(parts, "Runner: "+string(cfg.Runner))
+	}
+	if strings.TrimSpace(cfg.VirtualDesktop) != "" {
+		parts = append(parts, "Desktop: "+cfg.VirtualDesktop)
+	} else {
+		parts = append(parts, "Desktop: Default")
+	}
+	if cfg.RequiresSteam {
+		parts = append(parts, "Steam required")
+	} else if strings.TrimSpace(cfg.SteamAppID) != "" {
+		parts = append(parts, "Steam: "+cfg.SteamAppID)
+	}
+	if strings.TrimSpace(cfg.EngineName) != "" {
+		parts = append(parts, "Engine: "+cfg.EngineName)
+	}
+	return strings.Join(parts, " · ")
+}
+
 func renameGameFlashcards(oldName, newName string) error {
 	oldName = strings.TrimSpace(oldName)
 	newName = strings.TrimSpace(newName)
@@ -1340,6 +1596,29 @@ func renameGameFlashcards(oldName, newName string) error {
 		return nil
 	}
 	return flashcards.RenameGameFlashcards(oldName, newName)
+}
+
+func deleteGameConfigFiles(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("game name is required")
+	}
+	filename := util.SanitizeName(name) + ".json"
+	var removed bool
+	for _, dir := range gameConfigSearchDirs() {
+		path := filepath.Join(dir, filename)
+		if err := os.Remove(path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("delete game config %s: %w", path, err)
+		}
+		removed = true
+	}
+	if !removed {
+		return fmt.Errorf("game config %q was not found", name)
+	}
+	return nil
 }
 
 func cleanupOldGameConfig(oldName string, cfg *vngame.Game) {

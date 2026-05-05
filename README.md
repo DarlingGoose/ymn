@@ -58,3 +58,7 @@ namcap *.pkg.tar.zst
 * would love option to delete all flashcards
 * need to improve ux for game adding setup, specifliy the config and changing files and browsing
 * 
+
+
+
+* would also love a in game timer, so it logs how much time you spent in game     
