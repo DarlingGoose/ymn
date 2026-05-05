@@ -104,16 +104,17 @@ type Page struct {
 	focusedTokenAddButton      widget.Clickable
 	focusedTokenAudioButton    widget.Clickable
 
-	transcriptHighlightClicks map[string]*widget.Clickable
-	transcriptHighlightBounds map[string]image.Rectangle
-	lookupResultAddClicks     map[string]*widget.Clickable
-	lookupResultPlayClicks    map[string]*widget.Clickable
-	structureTokenAddClicks   map[string]*widget.Clickable
-	structureTokenPlayClicks  map[string]*widget.Clickable
-	transcriptRowClicks       map[string]*widget.Clickable
-	transcriptRowVoiceClicks  map[string]*widget.Clickable
-	focusedTokenClicks        map[string]*widget.Clickable
-	targetLanguageOptions     []gui.DropdownOption
+	transcriptHighlightClicks    map[string]*widget.Clickable
+	transcriptHighlightBounds    map[string]image.Rectangle
+	lookupResultAddClicks        map[string]*widget.Clickable
+	lookupResultPlayClicks       map[string]*widget.Clickable
+	structureTokenAddClicks      map[string]*widget.Clickable
+	structureTokenPlayClicks     map[string]*widget.Clickable
+	transcriptRowClicks          map[string]*widget.Clickable
+	transcriptRowTranslateClicks map[string]*widget.Clickable
+	transcriptRowVoiceClicks     map[string]*widget.Clickable
+	focusedTokenClicks           map[string]*widget.Clickable
+	targetLanguageOptions        []gui.DropdownOption
 
 	activeGameName         string
 	logPath                string
@@ -156,16 +157,23 @@ type Page struct {
 	focusedFuriganaMode       string
 	focusedFuriganaDefault    string
 	selectedTargetLanguage    string
+	defaultTargetLanguage     string
+	targetLanguageUserSet     bool
 	translationLoadedKey      string
 	translationGeneratingKey  string
 	autoTranslationAttemptKey string
 	translationResultCh       chan translationResult
+	rowTranslationResultCh    chan rowTranslationResult
+	audioResultCh             chan audioPlaybackResult
 	translatorConfig          translation.Config
 	composerFocus             string
 	composerMinimized         bool
 	composerLastUsed          time.Time
 	lastAutoWord              string
 	hideReadingSet            bool
+	rowTranslations           map[string]string
+	rowTranslationShown       map[string]bool
+	rowTranslationGenerating  map[string]bool
 
 	OnError     func(title, body string)
 	OnNotify    func(title, body string, kind guitoast.NotificationType)
@@ -175,6 +183,18 @@ type Page struct {
 type translationResult struct {
 	Key   string
 	Entry translation.Entry
+	Err   error
+}
+
+type rowTranslationResult struct {
+	Key    string
+	RowKey string
+	Entry  translation.Entry
+	Err    error
+}
+
+type audioPlaybackResult struct {
+	Title string
 	Err   error
 }
 
@@ -190,31 +210,38 @@ type transcriptRow struct {
 
 func New(theme barethemes.Theme) *Page {
 	p := &Page{
-		theme:                     theme,
-		pushSync:                  true,
-		statusText:                "Start the game to show live transcript text here.",
-		selectedTextSizeName:      "Medium",
-		selectedRecentLines:       "All Lines",
-		transcriptTextSize:        unit.Sp(16),
-		focusedTextSize:           unit.Sp(26),
-		translateDetailSize:       unit.Sp(15),
-		focusedFuriganaMode:       focusedFuriganaHidden,
-		focusedFuriganaDefault:    focusedFuriganaHidden,
-		selectedTargetLanguage:    "English",
-		translationResultCh:       make(chan translationResult, 1),
-		translatorConfig:          translation.Config{Provider: translation.ProviderOllama},
-		composerFocus:             composerFocusFlashcards,
-		composerMinimized:         true,
-		composerLastUsed:          time.Now(),
-		transcriptHighlightClicks: make(map[string]*widget.Clickable),
-		transcriptHighlightBounds: make(map[string]image.Rectangle),
-		lookupResultAddClicks:     make(map[string]*widget.Clickable),
-		lookupResultPlayClicks:    make(map[string]*widget.Clickable),
-		structureTokenAddClicks:   make(map[string]*widget.Clickable),
-		structureTokenPlayClicks:  make(map[string]*widget.Clickable),
-		transcriptRowClicks:       make(map[string]*widget.Clickable),
-		transcriptRowVoiceClicks:  make(map[string]*widget.Clickable),
-		focusedTokenClicks:        make(map[string]*widget.Clickable),
+		theme:                        theme,
+		pushSync:                     true,
+		statusText:                   "Start the game to show live transcript text here.",
+		selectedTextSizeName:         "Medium",
+		selectedRecentLines:          "All Lines",
+		transcriptTextSize:           unit.Sp(16),
+		focusedTextSize:              unit.Sp(26),
+		translateDetailSize:          unit.Sp(15),
+		focusedFuriganaMode:          focusedFuriganaHidden,
+		focusedFuriganaDefault:       focusedFuriganaHidden,
+		selectedTargetLanguage:       util.DefaultTranslationLanguage,
+		defaultTargetLanguage:        util.DefaultTranslationLanguage,
+		translationResultCh:          make(chan translationResult, 1),
+		rowTranslationResultCh:       make(chan rowTranslationResult, 8),
+		audioResultCh:                make(chan audioPlaybackResult, 8),
+		translatorConfig:             translation.Config{Provider: translation.ProviderOllama},
+		composerFocus:                composerFocusFlashcards,
+		composerMinimized:            true,
+		composerLastUsed:             time.Now(),
+		transcriptHighlightClicks:    make(map[string]*widget.Clickable),
+		transcriptHighlightBounds:    make(map[string]image.Rectangle),
+		lookupResultAddClicks:        make(map[string]*widget.Clickable),
+		lookupResultPlayClicks:       make(map[string]*widget.Clickable),
+		structureTokenAddClicks:      make(map[string]*widget.Clickable),
+		structureTokenPlayClicks:     make(map[string]*widget.Clickable),
+		transcriptRowClicks:          make(map[string]*widget.Clickable),
+		transcriptRowTranslateClicks: make(map[string]*widget.Clickable),
+		transcriptRowVoiceClicks:     make(map[string]*widget.Clickable),
+		focusedTokenClicks:           make(map[string]*widget.Clickable),
+		rowTranslations:              make(map[string]string),
+		rowTranslationShown:          make(map[string]bool),
+		rowTranslationGenerating:     make(map[string]bool),
 	}
 	p.transcriptFocusSplit.Value = 0.5
 	p.wordEditor.SingleLine = true
@@ -223,7 +250,7 @@ func New(theme barethemes.Theme) *Page {
 	gui.NewDropDownLayout(&p.targetLanguageDrop, "mdi:translate")
 	p.targetLanguageDrop.Width = unit.Dp(190)
 	p.targetLanguageDrop.OffsetY = unit.Dp(42)
-	p.targetLanguageOptions = newTranslationLanguageOptions()
+	p.targetLanguageOptions = gui.NewTranslationLanguageOptions()
 	p.transcriptList.Axis = layout.Vertical
 	p.transcriptList.ScrollToEnd = true
 	p.structureList.Axis = layout.Vertical
@@ -286,6 +313,20 @@ func (p *Page) SetTranslateTextOptions(focusedSize, detailSize unit.Sp) *Page {
 
 func (p *Page) SetTranslatorConfig(cfg translation.Config) *Page {
 	p.translatorConfig = cfg
+	return p
+}
+
+func (p *Page) SetDefaultTargetLanguage(language string) *Page {
+	language = util.ResolveTranslationLanguage(language)
+	if strings.TrimSpace(language) == "" {
+		language = util.DefaultTranslationLanguage
+	}
+	if p.selectedTargetLanguage == "" || !p.targetLanguageUserSet || p.selectedTargetLanguage == p.defaultTargetLanguage {
+		p.selectedTargetLanguage = language
+		p.translationLoadedKey = ""
+		p.autoTranslationAttemptKey = ""
+	}
+	p.defaultTargetLanguage = language
 	return p
 }
 
@@ -374,6 +415,8 @@ func (p *Page) DismissPopup() {
 
 func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Window) {
 	p.drainTranslationResults()
+	p.drainRowTranslationResults()
+	p.drainAudioResults()
 	p.maybeAutoGenerateTranslation(ctx, w)
 	if p.hideReadingInAnki.Update(gtx) {
 		p.hideReadingSet = true
@@ -398,7 +441,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 		p.deleteCurrentLog()
 	}
 	for p.playSentenceButton.Clicked(gtx) {
-		p.playCurrentLookupAudio()
+		p.playCurrentLookupAudio(w)
 	}
 	for p.translateSentenceButton.Clicked(gtx) {
 		p.composerFocus = composerFocusSentenceStructure
@@ -417,7 +460,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 		p.addFocusedTokenFlashcard()
 	}
 	for p.focusedTokenAudioButton.Clicked(gtx) {
-		p.playFocusedTokenAudio()
+		p.playFocusedTokenAudio(w)
 	}
 	for p.translationToggleButton.Clicked(gtx) {
 		p.translationCollapsed = !p.translationCollapsed
@@ -441,6 +484,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 		opt := &p.targetLanguageOptions[i]
 		for opt.Clickable.Clicked(gtx) {
 			p.selectedTargetLanguage = opt.Label
+			p.targetLanguageUserSet = true
 			p.translationLoadedKey = ""
 			p.autoTranslationAttemptKey = ""
 			p.targetLanguageDrop.Close()
@@ -450,7 +494,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 		p.lookupCurrentWord()
 	}
 	for p.playAudioButton.Clicked(gtx) {
-		p.playCurrentLookupAudio()
+		p.playCurrentLookupAudio(w)
 	}
 	for p.addAllLookupButton.Clicked(gtx) {
 		p.addAllLookupFlashcards()
@@ -462,7 +506,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 	}
 	for key, click := range p.lookupResultPlayClicks {
 		for click.Clicked(gtx) {
-			p.playLookupAudioByKey(key)
+			p.playLookupAudioByKey(w, key)
 		}
 	}
 	for key, click := range p.structureTokenAddClicks {
@@ -472,7 +516,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 	}
 	for key, click := range p.structureTokenPlayClicks {
 		for click.Clicked(gtx) {
-			p.playStructureTokenAudio(key)
+			p.playStructureTokenAudio(w, key)
 		}
 	}
 	for key, click := range p.transcriptHighlightClicks {
@@ -485,9 +529,14 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 			p.selectTranscriptRow(key)
 		}
 	}
+	for key, click := range p.transcriptRowTranslateClicks {
+		for click.Clicked(gtx) {
+			p.toggleTranscriptRowTranslation(ctx, w, key)
+		}
+	}
 	for key, click := range p.transcriptRowVoiceClicks {
 		for click.Clicked(gtx) {
-			p.playTranscriptRowVoice(key)
+			p.playTranscriptRowVoice(w, key)
 		}
 	}
 	for key, click := range p.focusedTokenClicks {
@@ -500,9 +549,10 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 			p.showError("Audio Playback Failed", "No flashcard is selected.")
 			continue
 		}
-		if err := playFlashcardAudio(*p.popupFlashcard); err != nil {
-			p.showError("Audio Playback Failed", err.Error())
-		}
+		card := *p.popupFlashcard
+		p.startAudioPlayback(w, "Audio Playback Failed", func() error {
+			return playFlashcardAudio(card)
+		})
 	}
 	for p.transcriptPopupCloseButton.Clicked(gtx) {
 		p.DismissPopup()
@@ -514,6 +564,41 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 	for i := range p.popupDismissClicks {
 		for p.popupDismissClicks[i].Clicked(gtx) {
 			p.DismissPopup()
+		}
+	}
+}
+
+func (p *Page) startAudioPlayback(w *app.Window, title string, play func() error) {
+	if play == nil {
+		return
+	}
+	if strings.TrimSpace(title) == "" {
+		title = "Audio Playback Failed"
+	}
+	go func() {
+		if err := play(); err != nil {
+			result := audioPlaybackResult{Title: title, Err: err}
+			select {
+			case p.audioResultCh <- result:
+			default:
+				slog.Warn("audio playback error dropped", "title", title, "error", err)
+			}
+			if w != nil {
+				w.Invalidate()
+			}
+		}
+	}()
+}
+
+func (p *Page) drainAudioResults() {
+	for {
+		select {
+		case result := <-p.audioResultCh:
+			if result.Err != nil {
+				p.showError(util.FirstNonEmpty(result.Title, "Audio Playback Failed"), result.Err.Error())
+			}
+		default:
+			return
 		}
 	}
 }
@@ -1880,6 +1965,7 @@ func (p *Page) layoutTranscriptRow(gtx layout.Context, row transcriptRow) layout
 	if click.Hovered() && !selected {
 		bg = p.theme.Color.SurfaceAlt
 	}
+	displayText := p.transcriptRowDisplayText(row)
 	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
 		return bareutils.RoundedSurface(gtx, bg, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
@@ -1904,8 +1990,11 @@ func (p *Page) layoutTranscriptRow(gtx layout.Context, row transcriptRow) layout
 						return p.layoutTranscriptSpeaker(gtx, row.Speaker, selected)
 					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body1(p.theme.Gio(), row.Text)
+						lbl := material.Body1(p.theme.Gio(), displayText)
 						lbl.Color = fg
+						if p.isTranscriptRowTranslationShown(row) {
+							lbl.Color = p.theme.Color.Primary
+						}
 						lbl.TextSize = p.transcriptTextSize
 						return lbl.Layout(gtx)
 					}),
@@ -1915,7 +2004,7 @@ func (p *Page) layoutTranscriptRow(gtx layout.Context, row transcriptRow) layout
 					}),
 					layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return p.layoutRowIcon(gtx, "mdi:translate", true)
+						return p.layoutTranscriptTranslateIcon(gtx, row)
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return p.layoutTranscriptVoiceIcon(gtx, row)
@@ -2054,6 +2143,22 @@ func (p *Page) layoutTranscriptVoiceIcon(gtx layout.Context, row transcriptRow) 
 	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
 		return p.layoutRowIcon(gtx, "mdi:volume-high", true)
+	})
+}
+
+func (p *Page) layoutTranscriptTranslateIcon(gtx layout.Context, row transcriptRow) layout.Dimensions {
+	enabled := strings.TrimSpace(row.Text) != "" && strings.TrimSpace(p.selectedTargetLanguage) != ""
+	if !enabled {
+		return p.layoutRowIcon(gtx, "mdi:translate", false)
+	}
+	click := p.transcriptRowTranslateClickable(row.Key)
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		icon := "mdi:translate"
+		if p.isTranscriptRowTranslationShown(row) {
+			icon = "mdi:translate-off"
+		}
+		return p.layoutRowIcon(gtx, icon, true)
 	})
 }
 
@@ -2692,7 +2797,7 @@ func (p *Page) structureTokenAddClickable(key string) *widget.Clickable {
 	return p.structureTokenAddClicks[key]
 }
 
-func (p *Page) playStructureTokenAudio(key string) {
+func (p *Page) playStructureTokenAudio(w *app.Window, key string) {
 	tokenCard, ok := p.structureTokenFlashcardByKey(key)
 	if !ok {
 		return
@@ -2701,9 +2806,9 @@ func (p *Page) playStructureTokenAudio(key string) {
 		p.showError("Audio Playback Failed", "No audio is available for this flashcard.")
 		return
 	}
-	if err := playFlashcardAudio(tokenCard); err != nil {
-		p.showError("Audio Playback Failed", err.Error())
-	}
+	p.startAudioPlayback(w, "Audio Playback Failed", func() error {
+		return playFlashcardAudio(tokenCard)
+	})
 }
 
 func (p *Page) structureTokenPlayClickable(key string) *widget.Clickable {
@@ -2806,11 +2911,12 @@ func (p *Page) addFocusedTokenFlashcard() {
 	p.showNotification("Flashcard Created", card.Text+" was added.", guitoast.NotificationTypeSuccess)
 }
 
-func (p *Page) playFocusedTokenAudio() {
+func (p *Page) playFocusedTokenAudio(w *app.Window) {
 	if p.lookupResult != nil && strings.TrimSpace(p.lookupResult.AudioPath) != "" {
-		if err := dictionary.PlayLookupAudio(*p.lookupResult); err != nil {
-			p.showError("Audio Playback Failed", err.Error())
-		}
+		lookup := *p.lookupResult
+		p.startAudioPlayback(w, "Audio Playback Failed", func() error {
+			return dictionary.PlayLookupAudio(lookup)
+		})
 		return
 	}
 	card, ok := p.focusedSelectedTokenFlashcard(p.selectedFocusedTokenWord)
@@ -2818,9 +2924,9 @@ func (p *Page) playFocusedTokenAudio() {
 		p.showError("Audio Playback Failed", "No audio is available for the selected word.")
 		return
 	}
-	if err := playFlashcardAudio(card); err != nil {
-		p.showError("Audio Playback Failed", err.Error())
-	}
+	p.startAudioPlayback(w, "Audio Playback Failed", func() error {
+		return playFlashcardAudio(card)
+	})
 }
 
 func (p *Page) focusedSelectedTokenFlashcard(word string) (flashcards.Flashcard, bool) {
@@ -3020,6 +3126,118 @@ func (p *Page) drainTranslationResults() {
 	}
 }
 
+func (p *Page) toggleTranscriptRowTranslation(ctx context.Context, w *app.Window, rowKey string) {
+	row, ok := p.transcriptRowByKey(rowKey)
+	if !ok || row.Info {
+		return
+	}
+	if p.rowTranslationShown[row.Key] {
+		p.rowTranslationShown[row.Key] = false
+		return
+	}
+	key := p.rowTranslationCacheKey(row)
+	if key == "" {
+		p.showError("Translate Row Failed", "Select a target language before translating a row.")
+		return
+	}
+	if _, ok := p.rowTranslations[key]; ok {
+		p.rowTranslationShown[row.Key] = true
+		return
+	}
+	entry, ok, err := translation.Load(p.activeGameName, row.Text, p.selectedTargetLanguage)
+	if err != nil {
+		p.showError("Translate Row Failed", err.Error())
+		return
+	}
+	if ok {
+		p.rowTranslations[key] = entry.Translation
+		p.rowTranslationShown[row.Key] = true
+		return
+	}
+	p.rowTranslationShown[row.Key] = true
+	p.generateTranscriptRowTranslation(ctx, w, row, key)
+}
+
+func (p *Page) generateTranscriptRowTranslation(ctx context.Context, w *app.Window, row transcriptRow, key string) {
+	if key == "" || p.rowTranslationGenerating[key] {
+		return
+	}
+	source := cleanInlineText(row.Text)
+	if source == "" {
+		return
+	}
+	p.rowTranslationGenerating[key] = true
+	gameName := p.activeGameName
+	targetLanguage := p.selectedTargetLanguage
+	cfg := p.translatorConfig
+	go func() {
+		entry, err := translation.Generate(ctx, cfg, gameName, source, targetLanguage)
+		result := rowTranslationResult{Key: key, RowKey: row.Key, Entry: entry, Err: err}
+		select {
+		case p.rowTranslationResultCh <- result:
+		case <-ctx.Done():
+		}
+		if w != nil {
+			w.Invalidate()
+		}
+	}()
+}
+
+func (p *Page) drainRowTranslationResults() {
+	for {
+		select {
+		case result := <-p.rowTranslationResultCh:
+			delete(p.rowTranslationGenerating, result.Key)
+			if result.Err != nil {
+				p.rowTranslationShown[result.RowKey] = false
+				p.showError("Translate Row Failed", result.Err.Error())
+				continue
+			}
+			p.rowTranslations[result.Key] = result.Entry.Translation
+			p.rowTranslationShown[result.RowKey] = true
+			p.showNotification("Translation Generated", "Generated row translation for "+result.Entry.TargetLanguage+".", guitoast.NotificationTypeSuccess)
+		default:
+			return
+		}
+	}
+}
+
+func (p *Page) transcriptRowByKey(key string) (transcriptRow, bool) {
+	for _, row := range p.transcriptRows() {
+		if row.Key == key {
+			return row, true
+		}
+	}
+	return transcriptRow{}, false
+}
+
+func (p *Page) transcriptRowDisplayText(row transcriptRow) string {
+	if !p.isTranscriptRowTranslationShown(row) {
+		return row.Text
+	}
+	key := p.rowTranslationCacheKey(row)
+	if p.rowTranslationGenerating[key] {
+		return "Translating..."
+	}
+	if text := strings.TrimSpace(p.rowTranslations[key]); text != "" {
+		return text
+	}
+	return row.Text
+}
+
+func (p *Page) isTranscriptRowTranslationShown(row transcriptRow) bool {
+	return p.rowTranslationShown[row.Key]
+}
+
+func (p *Page) rowTranslationCacheKey(row transcriptRow) string {
+	source := cleanInlineText(row.Text)
+	targetLanguage := strings.TrimSpace(p.selectedTargetLanguage)
+	if source == "" || targetLanguage == "" {
+		return ""
+	}
+	return strings.TrimSpace(p.activeGameName) + "\x00" + source + "\x00" + strings.ToLower(targetLanguage)
+}
+
 func (p *Page) transcriptFocusTextForKey(key string) string {
 	rows := p.transcriptRows()
 	if len(rows) == 0 {
@@ -3149,7 +3367,7 @@ func (p *Page) selectTranscriptRow(key string) {
 	}
 }
 
-func (p *Page) playTranscriptRowVoice(key string) {
+func (p *Page) playTranscriptRowVoice(w *app.Window, key string) {
 	for _, row := range p.transcriptRows() {
 		if row.Key != key {
 			continue
@@ -3158,53 +3376,60 @@ func (p *Page) playTranscriptRowVoice(key string) {
 			p.showError("Voice Playback Failed", "No voice file is available for this line.")
 			return
 		}
-		path, err := p.cachedTranscriptVoicePath(row.Voice)
-		if err != nil {
-			p.showError("Voice Playback Failed", err.Error())
+		if p.currentConfig == nil {
+			p.showError("Voice Playback Failed", "Game config is not loaded.")
 			return
 		}
-		player, err := audioplayer.NewPlayer(audioplayer.Config{Backend: audioplayer.BackendAuto})
-		if err != nil {
-			p.showError("Voice Playback Failed", err.Error())
-			return
-		}
-		err = audioplayer.PlayAudioFile(player, path, true)
-		if err != nil {
-			p.showError("Voice Playback Failed", err.Error())
-		}
+		voice := row.Voice
+		cfg := *p.currentConfig
+		p.startAudioPlayback(w, "Voice Playback Failed", func() error {
+			path, err := cachedTranscriptVoicePathForConfig(&cfg, voice)
+			if err != nil {
+				return err
+			}
+			player, err := audioplayer.NewPlayer(audioplayer.Config{Backend: audioplayer.BackendAuto})
+			if err != nil {
+				return err
+			}
+			return audioplayer.PlayAudioFile(player, path, true)
+		})
 		return
 	}
 }
 
 func (p *Page) cachedTranscriptVoicePath(voice string) (string, error) {
+	return cachedTranscriptVoicePathForConfig(p.currentConfig, voice)
+}
+
+func cachedTranscriptVoicePathForConfig(cfg *vngame.Game, voice string) (string, error) {
 	voice = strings.TrimSpace(voice)
 	if voice == "" {
 		return "", fmt.Errorf("voice file is empty")
 	}
-	if p.currentConfig == nil {
+	if cfg == nil {
 		return "", fmt.Errorf("game config is not loaded")
 	}
 	initialExt := filepath.Ext(voice)
-	cachePath, err := util.VoiceCachePath(p.currentConfig.Name, voice, initialExt)
+	cachePath, err := util.VoiceCachePath(cfg.Name, voice, initialExt)
 	if err != nil {
 		return "", err
 	}
 	if initialExt != "" && util.IsExistingFile(cachePath) {
 		return cachePath, nil
 	}
-	inputPath := util.FirstNonEmpty(p.currentConfig.GamePath, p.currentConfig.Executable, p.currentConfig.WorkingDir)
+	inputPath := util.FirstNonEmpty(cfg.GamePath, cfg.Executable, cfg.WorkingDir)
 	eng, err := auto.SelectEngine(inputPath)
 	if err != nil {
 		return "", err
 	}
-	fileInfo, err := eng.GetFile(p.currentConfig, voice)
+	fileInfo, err := eng.GetFile(cfg, voice)
 	if err != nil {
 		return "", err
 	}
 	if fileInfo == nil {
 		return "", fmt.Errorf("voice file %q was not returned", voice)
 	}
-	cachePath, err = util.VoiceCachePath(p.currentConfig.Name, voice, engineFileCacheExt(fileInfo))
+	cachePath, err = util.VoiceCachePath(cfg.Name, voice, engineFileCacheExt(fileInfo))
 	if err != nil {
 		return "", err
 	}
@@ -3236,6 +3461,16 @@ func (p *Page) transcriptRowClickable(key string) *widget.Clickable {
 	return p.transcriptRowClicks[key]
 }
 
+func (p *Page) transcriptRowTranslateClickable(key string) *widget.Clickable {
+	if p.transcriptRowTranslateClicks == nil {
+		p.transcriptRowTranslateClicks = make(map[string]*widget.Clickable)
+	}
+	if p.transcriptRowTranslateClicks[key] == nil {
+		p.transcriptRowTranslateClicks[key] = new(widget.Clickable)
+	}
+	return p.transcriptRowTranslateClicks[key]
+}
+
 func (p *Page) transcriptRowVoiceClickable(key string) *widget.Clickable {
 	if p.transcriptRowVoiceClicks == nil {
 		p.transcriptRowVoiceClicks = make(map[string]*widget.Clickable)
@@ -3260,6 +3495,12 @@ func (p *Page) pruneTranscriptRowClicks(rows []transcriptRow) {
 	for key := range p.transcriptRowClicks {
 		if _, ok := valid[key]; !ok {
 			delete(p.transcriptRowClicks, key)
+		}
+	}
+	for key := range p.transcriptRowTranslateClicks {
+		if _, ok := valid[key]; !ok {
+			delete(p.transcriptRowTranslateClicks, key)
+			delete(p.rowTranslationShown, key)
 		}
 	}
 	for key := range p.transcriptRowVoiceClicks {
@@ -3825,14 +4066,15 @@ func (p *Page) lookupCurrentWord() {
 	p.syncHideReadingDefault()
 }
 
-func (p *Page) playCurrentLookupAudio() {
+func (p *Page) playCurrentLookupAudio(w *app.Window) {
 	if p.lookupResult == nil || strings.TrimSpace(p.lookupResult.AudioPath) == "" {
 		p.showError("Audio Playback Failed", "No audio is available for the current lookup.")
 		return
 	}
-	if err := dictionary.PlayLookupAudio(*p.lookupResult); err != nil {
-		p.showError("Audio Playback Failed", err.Error())
-	}
+	lookup := *p.lookupResult
+	p.startAudioPlayback(w, "Audio Playback Failed", func() error {
+		return dictionary.PlayLookupAudio(lookup)
+	})
 }
 
 func (p *Page) addLookupFlashcardByKey(key string) {
@@ -3855,7 +4097,7 @@ func (p *Page) addLookupFlashcardByKey(key string) {
 	}
 }
 
-func (p *Page) playLookupAudioByKey(key string) {
+func (p *Page) playLookupAudioByKey(w *app.Window, key string) {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return
@@ -3868,9 +4110,10 @@ func (p *Page) playLookupAudioByKey(key string) {
 			p.showError("Audio Playback Failed", "No audio is available for this lookup result.")
 			return
 		}
-		if err := dictionary.PlayLookupAudio(lookup); err != nil {
-			p.showError("Audio Playback Failed", err.Error())
-		}
+		lookup := lookup
+		p.startAudioPlayback(w, "Audio Playback Failed", func() error {
+			return dictionary.PlayLookupAudio(lookup)
+		})
 		return
 	}
 }

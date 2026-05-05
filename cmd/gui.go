@@ -414,6 +414,7 @@ func (g *guiApp) syncPages() {
 			g.settingsPage.TranslateDetailSize(),
 		).
 		SetTranslatorConfig(g.settingsPage.TranslatorConfig()).
+		SetDefaultTargetLanguage(g.settingsPage.DefaultTranslationLanguage()).
 		SetFocusedFuriganaDefault(g.settingsPage.FocusedFuriganaMode()).
 		SetAutoPlayHighlightAudio(g.settingsPage.AutoPlayHighlightAudio()).
 		SetColorizeHighlights(g.settingsPage.ColorizeHighlightText()).
@@ -581,9 +582,6 @@ func (g *guiApp) layoutCollapsedGamePicker(gtx layout.Context) layout.Dimensions
 	return layout.Stack{}.Layout(gtx,
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return g.gameDropdown.Toggle.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				for g.gameDropdown.Toggle.Clicked(gtx) {
-					g.gameDropdown.Open = !g.gameDropdown.Open
-				}
 				return g.layoutGameAvatar(gtx, g.currentConfig, g.gameDropdown.Toggle.Hovered())
 			})
 		}),

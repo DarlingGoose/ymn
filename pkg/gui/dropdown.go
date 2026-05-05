@@ -122,6 +122,39 @@ func NewTranslatorProviderOptions() []DropdownOption {
 	}
 }
 
+func NewTranslationLanguageOptions() []DropdownOption {
+	labels := []string{
+		"English",
+		"Japanese",
+		"Spanish",
+		"French",
+		"German",
+		"Korean",
+		"Chinese",
+		"Italian",
+		"Portuguese",
+		"Russian",
+	}
+	options := make([]DropdownOption, 0, len(labels))
+	for _, label := range labels {
+		options = append(options, DropdownOption{
+			Label:     label,
+			Value:     label,
+			Icon:      "mdi:translate",
+			Clickable: new(widget.Clickable),
+		})
+	}
+	return options
+}
+
+func NewDefaultTranslationLanguageOptions() []DropdownOption {
+	options := []DropdownOption{
+		{Label: "System Default", Icon: "mdi:monitor", Value: "system", Clickable: new(widget.Clickable)},
+	}
+	options = append(options, NewTranslationLanguageOptions()...)
+	return options
+}
+
 func NewGameRunnerOptions() []DropdownOption {
 	return []DropdownOption{
 		{Label: "Auto", Icon: "mdi:magic-staff", Clickable: new(widget.Clickable)},

@@ -33,12 +33,14 @@ type Settings struct {
 	textSizeDropdown            bareui.Dropdown
 	focusedTextSizeDropdown     bareui.Dropdown
 	translateDetailSizeDropdown bareui.Dropdown
+	defaultLanguageDropdown     bareui.Dropdown
 	translatorDropdown          bareui.Dropdown
 	recentLinesDropdown         bareui.Dropdown
 	furiganaDropdown            bareui.Dropdown
 	textSizeOptions             []gui.DropdownOption
 	focusedTextSizeOptions      []gui.DropdownOption
 	translateDetailSizeOptions  []gui.DropdownOption
+	defaultLanguageOptions      []gui.DropdownOption
 	translatorOptions           []gui.DropdownOption
 	recentLineOptions           []gui.DropdownOption
 	furiganaOptions             []gui.DropdownOption
@@ -48,6 +50,7 @@ type Settings struct {
 	selectedTextSizeName    string
 	selectedFocusedSizeName string
 	selectedDetailSizeName  string
+	selectedDefaultLanguage string
 	selectedTranslatorName  string
 	selectedRecentLinesName string
 	selectedFuriganaName    string
@@ -77,6 +80,7 @@ type Settings struct {
 	TranscriptTextSize          string `json:"transcript_text_size,omitempty"`
 	FocusedSentenceTextSize     string `json:"focused_sentence_text_size,omitempty"`
 	TranslateDetailTextSize     string `json:"translate_detail_text_size,omitempty"`
+	DefaultTargetLanguage       string `json:"default_target_language,omitempty"`
 	TranslatorProvider          string `json:"translator_provider,omitempty"`
 	OpenAIAPIKey                string `json:"openai_api_key,omitempty"`
 	OpenAIModel                 string `json:"openai_model,omitempty"`
@@ -102,6 +106,7 @@ func defaultSettings() Settings {
 		selectedTextSizeName:    "Medium",
 		selectedFocusedSizeName: "Medium",
 		selectedDetailSizeName:  "Medium",
+		selectedDefaultLanguage: "System Default",
 		selectedTranslatorName:  "Ollama",
 		selectedRecentLinesName: "Last 200 Lines",
 		selectedFuriganaName:    "Above",
@@ -113,6 +118,7 @@ func defaultSettings() Settings {
 		TranscriptTextSize:      "Medium",
 		FocusedSentenceTextSize: "Medium",
 		TranslateDetailTextSize: "Medium",
+		DefaultTargetLanguage:   util.SystemTranslationLanguageSetting,
 		TranslatorProvider:      string(translation.ProviderOllama),
 		OpenAIModel:             "gpt-4.1-mini",
 		GeminiModel:             "gemini-2.5-flash",
@@ -174,6 +180,7 @@ func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.
 	g.textSizeDropdown.Update(gtx)
 	g.focusedTextSizeDropdown.Update(gtx)
 	g.translateDetailSizeDropdown.Update(gtx)
+	g.defaultLanguageDropdown.Update(gtx)
 	g.translatorDropdown.Update(gtx)
 	g.recentLinesDropdown.Update(gtx)
 	g.furiganaDropdown.Update(gtx)
@@ -210,6 +217,16 @@ func (g *Settings) HandleEvents(gtx layout.Context, ctx context.Context, w *app.
 			g.translateDetailTextSize = opt.TextSize
 			g.selectedDetailSizeName = opt.Label
 			g.translateDetailSizeDropdown.Close()
+			g.persistSettings()
+		}
+	}
+
+	for i := range g.defaultLanguageOptions {
+		opt := &g.defaultLanguageOptions[i]
+		for opt.Clickable.Clicked(gtx) {
+			g.DefaultTargetLanguage = opt.Value
+			g.selectedDefaultLanguage = opt.Label
+			g.defaultLanguageDropdown.Close()
 			g.persistSettings()
 		}
 	}
@@ -255,12 +272,14 @@ func (g *Settings) applyLayout() {
 	gui.NewDropDownLayout(&g.textSizeDropdown, "mdi:format-size")
 	gui.NewDropDownLayout(&g.focusedTextSizeDropdown, "mdi:format-title")
 	gui.NewDropDownLayout(&g.translateDetailSizeDropdown, "mdi:format-text")
+	gui.NewDropDownLayout(&g.defaultLanguageDropdown, "mdi:translate")
 	gui.NewDropDownLayout(&g.translatorDropdown, "mdi:translate")
 	gui.NewDropDownLayout(&g.recentLinesDropdown, "mdi:sort-clock-descending-outline")
 	gui.NewDropDownLayout(&g.furiganaDropdown, "mdi:ruby")
 	g.textSizeOptions = gui.NewTranscriptSizeOptions()
 	g.focusedTextSizeOptions = gui.NewFocusedSentenceSizeOptions()
 	g.translateDetailSizeOptions = gui.NewTranslateDetailSizeOptions()
+	g.defaultLanguageOptions = gui.NewDefaultTranslationLanguageOptions()
 	g.translatorOptions = gui.NewTranslatorProviderOptions()
 	g.recentLineOptions = gui.NewRecentLineOptions()
 	g.furiganaOptions = gui.NewFuriganaModeOptions()
@@ -357,6 +376,13 @@ func (g *Settings) settingsRows() []layout.Widget {
 			lbl := material.H5(g.theme.Gio(), "Translator")
 			lbl.Color = g.theme.Color.Text
 			return lbl.Layout(gtx)
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return g.layoutSettingRow(gtx, "Default Target Language", g.defaultLanguageSettingLabel(), func(gtx layout.Context) layout.Dimensions {
+				return g.defaultLanguageDropdown.Layout(gtx, g.theme, g.iconify, g.selectedDefaultLanguage, func(gtx layout.Context) layout.Dimensions {
+					return gui.LayoutOptionMenu(gtx, g.defaultLanguageOptions, g.selectedDefaultLanguage, g.theme, g.iconify)
+				})
+			})
 		},
 		func(gtx layout.Context) layout.Dimensions {
 			return g.layoutSettingRow(gtx, "Translator Provider", g.selectedTranslatorName, func(gtx layout.Context) layout.Dimensions {
@@ -506,6 +532,9 @@ func (g *Settings) persistSettings() {
 	g.TranscriptTextSize = g.selectedTextSizeName
 	g.FocusedSentenceTextSize = g.selectedFocusedSizeName
 	g.TranslateDetailTextSize = g.selectedDetailSizeName
+	if g.DefaultTargetLanguage == "" {
+		g.DefaultTargetLanguage = util.SystemTranslationLanguageSetting
+	}
 	g.persistTranslatorFields()
 	g.VisibleTranscript = g.selectedRecentLinesName
 	g.FocusedFurigana = g.selectedFuriganaName
@@ -554,6 +583,17 @@ func (g *Settings) applySavedSettings() {
 		if opt.Label == g.TranslateDetailTextSize {
 			g.translateDetailTextSize = opt.TextSize
 			g.selectedDetailSizeName = opt.Label
+			break
+		}
+	}
+
+	if g.DefaultTargetLanguage == "" {
+		g.DefaultTargetLanguage = util.SystemTranslationLanguageSetting
+	}
+	for _, opt := range g.defaultLanguageOptions {
+		if opt.Value == g.DefaultTargetLanguage || opt.Label == g.DefaultTargetLanguage {
+			g.DefaultTargetLanguage = opt.Value
+			g.selectedDefaultLanguage = opt.Label
 			break
 		}
 	}
@@ -656,6 +696,17 @@ func (g *Settings) TranslatorConfig() translation.Config {
 			Model:    g.OllamaModel,
 		}
 	}
+}
+
+func (g *Settings) DefaultTranslationLanguage() string {
+	return util.ResolveTranslationLanguage(g.DefaultTargetLanguage)
+}
+
+func (g *Settings) defaultLanguageSettingLabel() string {
+	if g.DefaultTargetLanguage == util.SystemTranslationLanguageSetting {
+		return g.selectedDefaultLanguage + " (" + g.DefaultTranslationLanguage() + ")"
+	}
+	return g.selectedDefaultLanguage
 }
 
 func (g *Settings) RecentLineLimit() int {
