@@ -5,8 +5,8 @@ go 1.26.2
 require (
 	gioui.org v0.9.0
 	github.com/DarlingGoose/bare v0.0.6
-	github.com/DarlingGoose/jpndict v0.0.9
-	github.com/DarlingGoose/vntext v0.0.11
+	github.com/DarlingGoose/jpndict v0.0.10
+	github.com/DarlingGoose/vntext v0.0.12
 	github.com/ikawaha/kagome-dict/ipa v1.2.6
 	github.com/ikawaha/kagome/v2 v2.11.0
 	github.com/spf13/cobra v1.10.2
@@ -22,17 +22,10 @@ require (
 	github.com/go-gst/go-glib v1.4.0 // indirect
 	github.com/go-gst/go-gst v1.4.0 // indirect
 	github.com/go-text/typesetting v0.3.0 // indirect
-	github.com/hajimehoshi/go-mp3 v0.3.4 // indirect
 	github.com/hajimehoshi/oto v1.0.2 // indirect
-	github.com/icza/bitio v1.1.0 // indirect
 	github.com/ikawaha/kagome-dict v1.1.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/jfreymuth/oggvorbis v1.0.5 // indirect
-	github.com/jfreymuth/vorbis v1.0.2 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
-	github.com/mewkiz/flac v1.0.13 // indirect
-	github.com/mewkiz/pkg v0.0.0-20260331151047-10214ccde7de // indirect
-	github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect

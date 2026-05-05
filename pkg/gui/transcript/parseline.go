@@ -10,6 +10,7 @@ type ParsedLine struct {
 	Time    time.Time
 	RawTime string
 	Speaker string
+	Voice   string
 	Text    string
 }
 
@@ -58,6 +59,8 @@ func ParseLogLine(line string) (ParsedLine, error) {
 			switch strings.ToLower(strings.TrimSpace(key)) {
 			case "speaker":
 				out.Speaker = strings.TrimSpace(val)
+			case "voice":
+				out.Voice = strings.TrimSpace(val)
 			}
 		} else {
 			switch strings.ToLower(strings.TrimSpace(meta)) {

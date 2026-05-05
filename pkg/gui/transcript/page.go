@@ -5,10 +5,15 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"gioui.org/font"
 
 	"gioui.org/app"
 	"gioui.org/io/pointer"
@@ -23,6 +28,9 @@ import (
 	"github.com/DarlingGoose/bare/pkg/ui/icons"
 	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
+	"github.com/DarlingGoose/jpndict/audioplayer"
+	"github.com/DarlingGoose/vntext/pkg/engine"
+	"github.com/DarlingGoose/vntext/pkg/engine/auto"
 	vngame "github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/vntext/pkg/runner"
 	vnutil "github.com/DarlingGoose/vntext/pkg/util"
@@ -103,6 +111,7 @@ type Page struct {
 	structureTokenAddClicks   map[string]*widget.Clickable
 	structureTokenPlayClicks  map[string]*widget.Clickable
 	transcriptRowClicks       map[string]*widget.Clickable
+	transcriptRowVoiceClicks  map[string]*widget.Clickable
 	focusedTokenClicks        map[string]*widget.Clickable
 	targetLanguageOptions     []gui.DropdownOption
 
@@ -173,6 +182,7 @@ type transcriptRow struct {
 	Key        string
 	Time       string
 	Speaker    string
+	Voice      string
 	Text       string
 	Info       bool
 	VocabWords []string
@@ -203,6 +213,7 @@ func New(theme barethemes.Theme) *Page {
 		structureTokenAddClicks:   make(map[string]*widget.Clickable),
 		structureTokenPlayClicks:  make(map[string]*widget.Clickable),
 		transcriptRowClicks:       make(map[string]*widget.Clickable),
+		transcriptRowVoiceClicks:  make(map[string]*widget.Clickable),
 		focusedTokenClicks:        make(map[string]*widget.Clickable),
 	}
 	p.transcriptFocusSplit.Value = 0.5
@@ -472,6 +483,11 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 	for key, click := range p.transcriptRowClicks {
 		for click.Clicked(gtx) {
 			p.selectTranscriptRow(key)
+		}
+	}
+	for key, click := range p.transcriptRowVoiceClicks {
+		for click.Clicked(gtx) {
+			p.playTranscriptRowVoice(key)
 		}
 	}
 	for key, click := range p.focusedTokenClicks {
@@ -906,10 +922,10 @@ func (p *Page) layoutFocusedSentenceCard(gtx layout.Context) layout.Dimensions {
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return p.layoutFocusedFuriganaControls(gtx)
 			}),
-			//layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
-			//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			//	return p.layoutFocusedTokenActions(gtx)
-			//}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.layoutFocusedTokenActions(gtx)
+			}),
 			//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			//	analysis, errText := p.currentStructureAnalysis()
 			//	if errText == "" && len(analysis.Tokens) == 0 {
@@ -1148,71 +1164,203 @@ func (p *Page) layoutFocusedFuriganaControls(gtx layout.Context) layout.Dimensio
 }
 
 func (p *Page) layoutFocusedTokenActions(gtx layout.Context) layout.Dimensions {
-	word := util.FirstNonEmpty(p.selectedFocusedTokenWord, p.selectedTranscriptText())
-	meaning := "Click a word block above to inspect it."
+	word := cleanInlineText(util.FirstNonEmpty(
+		p.selectedFocusedTokenWord,
+		p.selectedTranscriptText(),
+	))
+
 	existingCard, hasExistingCard := p.focusedSelectedTokenFlashcard(word)
+
+	meaning := "Click a word block above to inspect it."
+	sourceLabel := "Select word"
+	sourceLive := false
+
 	if note := cleanInlineText(p.selectedFocusedTokenNote); note != "" {
 		meaning = note
+		sourceLabel = "Selection"
+		sourceLive = true
 	} else if p.lookupResult != nil && cleanInlineText(p.lookupResult.Meaning) != "" {
 		meaning = cleanInlineText(p.lookupResult.Meaning)
+		sourceLabel = "Lookup"
+		sourceLive = true
 	} else if word != "" {
 		if hasExistingCard && cleanInlineText(existingCard.Meaning) != "" {
-			meaning = "Saved flashcard: " + cleanInlineText(existingCard.Meaning)
+			meaning = cleanInlineText(existingCard.Meaning)
+			sourceLabel = "Saved"
+			sourceLive = true
+		} else {
+			sourceLabel = "No match"
 		}
 	}
+
+	canAdd := p.lookupResult != nil && !hasExistingCard
+
+	audioPath := ""
+	if p.lookupResult != nil {
+		audioPath = strings.TrimSpace(p.lookupResult.AudioPath)
+	}
+	if audioPath == "" && hasExistingCard {
+		audioPath = strings.TrimSpace(existingCard.AudioPath)
+	}
+	canPlayAudio := audioPath != ""
+
 	addButton := bareui.Button{
 		Clickable: &p.focusedTokenAddButton,
-		Text:      "Add Flashcard",
+		Text:      "Add",
 		Prefix:    "mdi:plus-circle-outline",
 		Variant:   bareui.ButtonSecondary,
 	}
+
 	audioButton := bareui.Button{
 		Clickable: &p.focusedTokenAudioButton,
-		Text:      "Play Audio",
+		Text:      "Audio",
 		Prefix:    "mdi:volume-high",
 		Variant:   bareui.ButtonSecondary,
 	}
-	return bareutils.RoundedSurface(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{
-			Top:    unit.Dp(9),
-			Bottom: unit.Dp(9),
-			Left:   unit.Dp(10),
-			Right:  unit.Dp(10),
-		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(p.theme.Gio(), meaning)
-					lbl.Color = p.theme.Color.TextMuted
-					lbl.TextSize = p.translateDetailTextSize()
+
+	return bareutils.RoundedSurface(
+		gtx,
+		p.theme.Color.Surface,
+		unit.Dp(p.theme.Radius.LG),
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.UniformInset(unit.Dp(p.theme.Space.SM)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return bareutils.RoundedSurface(
+					gtx,
+					p.theme.Color.SurfaceAlt,
+					unit.Dp(p.theme.Radius.MD),
+					func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{
+							Top:    unit.Dp(p.theme.Space.SM),
+							Bottom: unit.Dp(p.theme.Space.SM),
+							Left:   unit.Dp(p.theme.Space.MD),
+							Right:  unit.Dp(p.theme.Space.MD),
+						}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{
+								Axis:      layout.Horizontal,
+								Alignment: layout.Middle,
+							}.Layout(gtx,
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									return p.layoutFocusedTokenSummary(gtx, word, meaning, sourceLabel, sourceLive)
+								}),
+
+								layout.Rigid(bareutils.SpacerW(unit.Dp(p.theme.Space.MD))),
+
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return p.layoutFocusedTokenButtons(gtx, addButton, audioButton, canAdd, canPlayAudio)
+								}),
+							)
+						})
+					},
+				)
+			})
+		},
+	)
+}
+
+func (p *Page) layoutFocusedTokenSummary(
+	gtx layout.Context,
+	word string,
+	meaning string,
+	sourceLabel string,
+	sourceLive bool,
+) layout.Dimensions {
+	return layout.Flex{
+		Axis: layout.Vertical,
+	}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{
+				Axis:      layout.Horizontal,
+				Alignment: layout.Middle,
+			}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					title := word
+					if title == "" {
+						title = "Focused token"
+					}
+
+					lbl := material.Body1(p.theme.Gio(), title)
+					lbl.Color = p.theme.Color.Text
+					lbl.TextSize = unit.Sp(float32(p.translateDetailTextSize()) + 1)
 					return lbl.Layout(gtx)
 				}),
-				//p.layoutStatusPill(gtx, contextVocabPillText(hasCard), hasCard),
-				layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+
+				layout.Rigid(bareutils.SpacerW(unit.Dp(p.theme.Space.SM))),
+
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if p.lookupResult == nil || hasExistingCard {
-						return addButton.Layout(gtx.Disabled(), p.theme, p.iconify)
-					}
-					return addButton.Layout(gtx, p.theme, p.iconify)
-				}),
-				layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					audioPath := ""
-					if p.lookupResult != nil {
-						audioPath = strings.TrimSpace(p.lookupResult.AudioPath)
-					}
-					if audioPath == "" && hasExistingCard {
-						audioPath = strings.TrimSpace(existingCard.AudioPath)
-					}
-					if audioPath == "" {
-						return audioButton.Layout(gtx.Disabled(), p.theme, p.iconify)
-					}
-					return audioButton.Layout(gtx, p.theme, p.iconify)
+
+					return p.layoutStatusPill(gtx, sourceLabel, sourceLive)
 				}),
 			)
+		}),
+
+		layout.Rigid(bareutils.SpacerH(unit.Dp(4))),
+
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(p.theme.Gio(), meaning)
+			lbl.Color = p.theme.Color.TextMuted
+			lbl.TextSize = p.translateDetailTextSize()
+			return lbl.Layout(gtx)
+		}),
+	)
+}
+
+func (p *Page) layoutFocusedTokenButtons(
+	gtx layout.Context,
+	addButton bareui.Button,
+	audioButton bareui.Button,
+	canAdd bool,
+	canPlayAudio bool,
+) layout.Dimensions {
+	return layout.Flex{
+		Axis:      layout.Horizontal,
+		Alignment: layout.Middle,
+	}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !canAdd {
+				return addButton.Layout(gtx.Disabled(), p.theme, p.iconify)
+			}
+			return addButton.Layout(gtx, p.theme, p.iconify)
+		}),
+
+		layout.Rigid(bareutils.SpacerW(unit.Dp(p.theme.Space.SM))),
+
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !canPlayAudio {
+				return audioButton.Layout(gtx.Disabled(), p.theme, p.iconify)
+			}
+			return audioButton.Layout(gtx, p.theme, p.iconify)
+		}),
+	)
+}
+
+func (p *Page) layoutMiniStatusPill(gtx layout.Context, text string, live bool) layout.Dimensions {
+	bg := p.theme.Color.Surface
+	fg := p.theme.Color.TextMuted
+
+	if live {
+		fg = p.theme.Color.Primary
+		bg = color.NRGBA{
+			R: uint8((uint16(fg.R) + uint16(p.theme.Color.Surface.R)*5) / 6),
+			G: uint8((uint16(fg.G) + uint16(p.theme.Color.Surface.G)*5) / 6),
+			B: uint8((uint16(fg.B) + uint16(p.theme.Color.Surface.B)*5) / 6),
+			A: 255,
+		}
+	}
+
+	return bareutils.RoundedSurface(gtx, bg, unit.Dp(p.theme.Radius.SM), func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{
+			Top:    unit.Dp(3),
+			Bottom: unit.Dp(3),
+			Left:   unit.Dp(7),
+			Right:  unit.Dp(7),
+		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(p.theme.Gio(), text)
+			lbl.Color = fg
+			lbl.TextSize = unit.Sp(11)
+			return lbl.Layout(gtx)
 		})
 	})
 }
-
 func (p *Page) layoutFuriganaModeButton(gtx layout.Context, click *widget.Clickable, mode, label string) layout.Dimensions {
 	active := p.focusedFuriganaMode == mode
 	bg := p.theme.Color.Surface
@@ -1265,32 +1413,83 @@ func (p *Page) layoutFocusedSentenceChips(gtx layout.Context, analysis japanese.
 }
 
 func (p *Page) layoutFocusChip(gtx layout.Context, token japanese.Token) layout.Dimensions {
-	bg := barethemes.Mix(p.theme.Color.Primary, p.theme.Color.SurfaceAlt, 0.18)
-	return bareutils.RoundedSurface(gtx, bg, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{
-			Top:    unit.Dp(9),
-			Bottom: unit.Dp(9),
-			Left:   unit.Dp(12),
-			Right:  unit.Dp(12),
+	bg := barethemes.Mix(
+		p.theme.Color.Primary,
+		p.theme.Color.SurfaceAlt,
+		0.18,
+	)
+
+	border := barethemes.Mix(
+		p.theme.Color.Primary,
+		p.theme.Color.TextMuted,
+		0.22,
+	)
+
+	spacingX := unit.Dp(12)
+	spacingY := unit.Dp(8)
+	radius := unit.Dp(p.theme.Radius.SM)
+
+	return layout.Inset{
+		Top:    unit.Dp(2),
+		Bottom: unit.Dp(2),
+		Left:   unit.Dp(2),
+		Right:  unit.Dp(2),
+	}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		macro := op.Record(gtx.Ops)
+
+		dims := layout.Inset{
+			Top:    spacingY,
+			Bottom: spacingY,
+			Left:   spacingX,
+			Right:  spacingX,
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			return layout.Flex{
+				Axis:      layout.Vertical,
+				Alignment: layout.Middle,
+			}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(p.theme.Gio(), posMajorLabel(token.POSMajor()))
+					lbl := material.Body2(
+						p.theme.Gio(),
+						posMajorLabel(token.POSMajor()),
+					)
 					lbl.Color = p.theme.Color.TextMuted
 					lbl.TextSize = p.translateDetailTextSize()
 					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body1(p.theme.Gio(), structureFlashcardWord(token))
+					lbl := material.Body1(
+						p.theme.Gio(),
+						structureFlashcardWord(token),
+					)
 					lbl.Color = p.theme.Color.Text
 					lbl.TextSize = p.translateDetailTextSize()
+					lbl.Font.Weight = font.Bold
 					return lbl.Layout(gtx)
 				}),
 			)
 		})
+
+		call := macro.Stop()
+
+		rr := clip.UniformRRect(
+			image.Rectangle{Max: dims.Size},
+			gtx.Dp(radius),
+		)
+
+		paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
+
+		stroke := clip.Stroke{
+			Path:  rr.Path(gtx.Ops),
+			Width: float32(gtx.Dp(unit.Dp(1))),
+		}.Op()
+
+		paint.FillShape(gtx.Ops, border, stroke)
+
+		call.Add(gtx.Ops)
+
+		return dims
 	})
 }
-
 func (p *Page) layoutFocusedLookupBar(gtx layout.Context) layout.Dimensions {
 	selected := p.selectedTranscriptText()
 	if selected == "" {
@@ -1716,13 +1915,13 @@ func (p *Page) layoutTranscriptRow(gtx layout.Context, row transcriptRow) layout
 					}),
 					layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return p.layoutRowIcon(gtx, "mdi:translate")
+						return p.layoutRowIcon(gtx, "mdi:translate", true)
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return p.layoutRowIcon(gtx, "mdi:volume-high")
+						return p.layoutTranscriptVoiceIcon(gtx, row)
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return p.layoutRowIcon(gtx, "mdi:heart-outline")
+						return p.layoutRowIcon(gtx, "mdi:heart-outline", true)
 					}),
 				)
 			})
@@ -1747,7 +1946,7 @@ func (p *Page) layoutTranscriptInfoRow(gtx layout.Context, row transcriptRow) la
 				}),
 				layout.Rigid(bareutils.SpacerW(unit.Dp(14))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return p.layoutRowIcon(gtx, "mdi:information-outline")
+					return p.layoutRowIcon(gtx, "mdi:information-outline", true)
 				}),
 				layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -1830,16 +2029,31 @@ func (p *Page) layoutVocabChip(gtx layout.Context, text string) layout.Dimension
 	})
 }
 
-func (p *Page) layoutRowIcon(gtx layout.Context, icon string) layout.Dimensions {
+func (p *Page) layoutRowIcon(gtx layout.Context, icon string, enabled bool) layout.Dimensions {
 	if p.iconify == nil {
 		return layout.Dimensions{}
+	}
+	clr := p.theme.Color.TextMuted
+	if !enabled {
+		clr = color.NRGBA{R: clr.R, G: clr.G, B: clr.B, A: 80}
 	}
 	return layout.Inset{Left: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return bareutils.RoundedSurface(gtx, color.NRGBA{}, unit.Dp(p.theme.Radius.SM), func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(5)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return p.iconify.Layout(gtx, icon, unit.Dp(16), p.theme.Color.TextMuted)
+				return p.iconify.Layout(gtx, icon, unit.Dp(16), clr)
 			})
 		})
+	})
+}
+
+func (p *Page) layoutTranscriptVoiceIcon(gtx layout.Context, row transcriptRow) layout.Dimensions {
+	if strings.TrimSpace(row.Voice) == "" {
+		return p.layoutRowIcon(gtx, "mdi:volume-off", false)
+	}
+	click := p.transcriptRowVoiceClickable(row.Key)
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		return p.layoutRowIcon(gtx, "mdi:volume-high", true)
 	})
 }
 
@@ -2839,24 +3053,25 @@ func (p *Page) transcriptRows() []transcriptRow {
 		if text == "" {
 			continue
 		}
-		timestamp, body, speaker, info := splitTranscriptRow(text)
+		timestamp, body, speaker, voice, info := splitTranscriptRow(text)
 		if strings.HasPrefix(timestamp, "--") {
 			timestamp = previousTimestamp
 		} else {
 			previousTimestamp = timestamp
 		}
 		speaker = cleanInlineText(speaker)
+		voice = strings.TrimSpace(voice)
 		body = cleanInlineText(body)
 		if body == "" {
 			continue
 		}
 		key := fmt.Sprintf("%d:%s", i, text)
-		if !info && len(rows) > 0 && !rows[len(rows)-1].Info && timestamp != unknownTimestamp && rows[len(rows)-1].Time == timestamp && rows[len(rows)-1].Speaker == speaker {
+		if !info && len(rows) > 0 && !rows[len(rows)-1].Info && timestamp != unknownTimestamp && rows[len(rows)-1].Time == timestamp && rows[len(rows)-1].Speaker == speaker && rows[len(rows)-1].Voice == voice {
 			rows[len(rows)-1].Text = strings.TrimSpace(rows[len(rows)-1].Text + "\n" + body)
 			rows[len(rows)-1].VocabWords = p.vocabWordsInText(rows[len(rows)-1].Text)
 			continue
 		}
-		row := transcriptRow{Key: key, Time: timestamp, Speaker: speaker, Text: body, Info: info}
+		row := transcriptRow{Key: key, Time: timestamp, Speaker: speaker, Voice: voice, Text: body, Info: info}
 		if !info {
 			row.VocabWords = p.vocabWordsInText(body)
 		}
@@ -2934,6 +3149,83 @@ func (p *Page) selectTranscriptRow(key string) {
 	}
 }
 
+func (p *Page) playTranscriptRowVoice(key string) {
+	for _, row := range p.transcriptRows() {
+		if row.Key != key {
+			continue
+		}
+		if strings.TrimSpace(row.Voice) == "" {
+			p.showError("Voice Playback Failed", "No voice file is available for this line.")
+			return
+		}
+		path, err := p.cachedTranscriptVoicePath(row.Voice)
+		if err != nil {
+			p.showError("Voice Playback Failed", err.Error())
+			return
+		}
+		player, err := audioplayer.NewPlayer(audioplayer.Config{Backend: audioplayer.BackendAuto})
+		if err != nil {
+			p.showError("Voice Playback Failed", err.Error())
+			return
+		}
+		err = audioplayer.PlayAudioFile(player, path, true)
+		if err != nil {
+			p.showError("Voice Playback Failed", err.Error())
+		}
+		return
+	}
+}
+
+func (p *Page) cachedTranscriptVoicePath(voice string) (string, error) {
+	voice = strings.TrimSpace(voice)
+	if voice == "" {
+		return "", fmt.Errorf("voice file is empty")
+	}
+	if p.currentConfig == nil {
+		return "", fmt.Errorf("game config is not loaded")
+	}
+	initialExt := filepath.Ext(voice)
+	cachePath, err := util.VoiceCachePath(p.currentConfig.Name, voice, initialExt)
+	if err != nil {
+		return "", err
+	}
+	if initialExt != "" && util.IsExistingFile(cachePath) {
+		return cachePath, nil
+	}
+	inputPath := util.FirstNonEmpty(p.currentConfig.GamePath, p.currentConfig.Executable, p.currentConfig.WorkingDir)
+	eng, err := auto.SelectEngine(inputPath)
+	if err != nil {
+		return "", err
+	}
+	fileInfo, err := eng.GetFile(p.currentConfig, voice)
+	if err != nil {
+		return "", err
+	}
+	if fileInfo == nil {
+		return "", fmt.Errorf("voice file %q was not returned", voice)
+	}
+	cachePath, err = util.VoiceCachePath(p.currentConfig.Name, voice, engineFileCacheExt(fileInfo))
+	if err != nil {
+		return "", err
+	}
+	slog.Info("cache path", "path", cachePath)
+	if util.IsExistingFile(cachePath) {
+		return cachePath, nil
+	}
+	data := fileInfo.Data
+	if len(data) == 0 {
+		return "", fmt.Errorf("voice file %q is empty", voice)
+	}
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		return "", fmt.Errorf("create voice cache dir: %w", err)
+	}
+	if err := os.WriteFile(cachePath, data, 0o644); err != nil {
+		return "", fmt.Errorf("write voice cache: %w", err)
+	}
+	return cachePath, nil
+}
+
+// /home/n9s/.cache/wgl/voices/prison-battleship-2/6de7d172f8bb53875fd82850e7a12f616a59c2c69b277f024197f1da852137c0.ogg
 func (p *Page) transcriptRowClickable(key string) *widget.Clickable {
 	if p.transcriptRowClicks == nil {
 		p.transcriptRowClicks = make(map[string]*widget.Clickable)
@@ -2944,16 +3236,35 @@ func (p *Page) transcriptRowClickable(key string) *widget.Clickable {
 	return p.transcriptRowClicks[key]
 }
 
+func (p *Page) transcriptRowVoiceClickable(key string) *widget.Clickable {
+	if p.transcriptRowVoiceClicks == nil {
+		p.transcriptRowVoiceClicks = make(map[string]*widget.Clickable)
+	}
+	if p.transcriptRowVoiceClicks[key] == nil {
+		p.transcriptRowVoiceClicks[key] = new(widget.Clickable)
+	}
+	return p.transcriptRowVoiceClicks[key]
+}
+
 func (p *Page) pruneTranscriptRowClicks(rows []transcriptRow) {
 	valid := make(map[string]struct{}, len(rows))
+	validVoice := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
 		if !row.Info {
 			valid[row.Key] = struct{}{}
+			if strings.TrimSpace(row.Voice) != "" {
+				validVoice[row.Key] = struct{}{}
+			}
 		}
 	}
 	for key := range p.transcriptRowClicks {
 		if _, ok := valid[key]; !ok {
 			delete(p.transcriptRowClicks, key)
+		}
+	}
+	for key := range p.transcriptRowVoiceClicks {
+		if _, ok := validVoice[key]; !ok {
+			delete(p.transcriptRowVoiceClicks, key)
 		}
 	}
 	if p.selectedLineKey != "" {
@@ -2967,50 +3278,32 @@ func (p *Page) pruneTranscriptRowClicks(rows []transcriptRow) {
 const unknownTimestamp = "----:-- --:--:--"
 
 func splitTranscriptTimestamp(line string) (string, string) {
-	timestamp, body, _, _ := splitTranscriptRow(line)
+	timestamp, body, _, _, _ := splitTranscriptRow(line)
 	return timestamp, body
 }
 
-func splitTranscriptRow(line string) (string, string, string, bool) {
+func splitTranscriptRow(line string) (string, string, string, string, bool) {
 	line = strings.TrimSpace(line)
 	data, err := ParseLogLine(line)
 	if err != nil {
-		return unknownTimestamp, line, "", false
+		return unknownTimestamp, line, "", "", false
 	}
 	if data.RawTime == "" {
-		return unknownTimestamp, line, "", false
+		return unknownTimestamp, line, "", "", false
 	}
 	timestamp := data.Time.Format("2006/01 15:04:05")
 	speaker := cleanInlineText(data.Speaker)
+	voice := strings.TrimSpace(data.Voice)
 	switch strings.ToLower(strings.TrimSpace(data.Speaker)) {
 	case "system":
-		return timestamp, cleanInlineText(data.Text), "", true
+		return timestamp, cleanInlineText(data.Text), "", "", true
 	case "new session":
-		return timestamp, "New session", "", true
+		return timestamp, "New session", "", "", true
 	}
 	if cleanInlineText(data.Text) == "" {
-		return timestamp, "New session", "", true
+		return timestamp, "New session", "", "", true
 	}
-	return timestamp, data.Text, speaker, false
-}
-
-func isClockTimestamp(value string) bool {
-	if len(value) != 8 {
-		return false
-	}
-	for i, r := range value {
-		switch i {
-		case 2, 5:
-			if r != ':' {
-				return false
-			}
-		default:
-			if r < '0' || r > '9' {
-				return false
-			}
-		}
-	}
-	return true
+	return timestamp, data.Text, speaker, voice, false
 }
 
 func (p *Page) contextFlashcard() (flashcards.Flashcard, bool) {
@@ -4103,4 +4396,32 @@ func playFlashcardAudio(card flashcards.Flashcard) error {
 		return fmt.Errorf("no audio is available for this flashcard")
 	}
 	return dictionary.PlayAudioForText(word)
+}
+
+func engineFileCacheExt(fileInfo *engine.EngineFileInfo) string {
+	if fileInfo == nil {
+		return ""
+	}
+	if ext := strings.TrimSpace(fileInfo.Ext); ext != "" {
+		return ext
+	}
+	if ext := filepath.Ext(strings.TrimSpace(fileInfo.Name)); ext != "" {
+		return ext
+	}
+	switch strings.ToLower(strings.TrimSpace(fileInfo.MediaType)) {
+	case "audio/ogg", "audio/oga":
+		return ".ogg"
+	case "audio/wav", "audio/wave", "audio/x-wav":
+		return ".wav"
+	case "audio/mpeg", "audio/mp3":
+		return ".mp3"
+	case "audio/mp4", "audio/m4a":
+		return ".m4a"
+	case "audio/flac":
+		return ".flac"
+	case "audio/opus":
+		return ".opus"
+	default:
+		return ""
+	}
 }

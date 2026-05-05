@@ -22,6 +22,7 @@ import (
 	"github.com/DarlingGoose/vntext/pkg/engine/auto"
 	vngame "github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/vntext/pkg/gameConfig"
+	vnutil "github.com/DarlingGoose/vntext/pkg/util"
 	flashcards "github.com/DarlingGoose/wgl/pkg/flashcard"
 	pkggui "github.com/DarlingGoose/wgl/pkg/gui"
 	"github.com/DarlingGoose/wgl/pkg/util"
@@ -59,6 +60,7 @@ type Page struct {
 	saveButton          widget.Clickable
 	newGameButton       widget.Clickable
 	deleteButton        widget.Clickable
+	clearCacheButton    widget.Clickable
 	inspectHookButton   widget.Clickable
 	installHookButton   widget.Clickable
 
@@ -261,6 +263,12 @@ func (p *Page) HandleEvents(gtx layout.Context, _ context.Context, w *app.Window
 		}
 		p.deleteConfig()
 	}
+	for p.clearCacheButton.Clicked(gtx) {
+		if p.installing {
+			continue
+		}
+		p.clearCurrentGameCache()
+	}
 
 	for p.installHookButton.Clicked(gtx) {
 		p.startInstallHook(w)
@@ -439,6 +447,7 @@ func (p *Page) layoutConfigPanel(gtx layout.Context) layout.Dimensions {
 	saveChanges := bareui.Button{Clickable: &p.saveButton, Text: "Save Changes", Prefix: "mdi:content-save-outline", Variant: bareui.ButtonSecondary}
 	installHook := bareui.Button{Clickable: &p.installHookButton, Text: p.installActionLabel("Install/Reinstall Hook Plugin"), Prefix: p.installActionIcon("mdi:puzzle-plus-outline"), Variant: bareui.ButtonSecondary}
 	deleteButton := bareui.Button{Clickable: &p.deleteButton, Text: "Delete Game", Prefix: "mdi:trash-can-outline", Variant: bareui.ButtonGhost}
+	clearCacheButton := bareui.Button{Clickable: &p.clearCacheButton, Text: "Clear Voice Cache", Prefix: "mdi:cached", Variant: bareui.ButtonSecondary}
 
 	return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -549,6 +558,10 @@ func (p *Page) layoutConfigPanel(gtx layout.Context) layout.Dimensions {
 					return p.layoutSummaryPanel(gtx, "Text Hook", p.hookStatusText)
 				},
 				bareutils.SpacerH(unit.Dp(14)),
+				func(gtx layout.Context) layout.Dimensions {
+					return p.layoutGameCachePanel(gtx, clearCacheButton)
+				},
+				bareutils.SpacerH(unit.Dp(14)),
 				func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{} },
 				func(gtx layout.Context) layout.Dimensions {
 					if strings.TrimSpace(p.currentConfigName) == "" {
@@ -651,6 +664,37 @@ func (p *Page) layoutSummaryPanel(gtx layout.Context, title, body string) layout
 					lbl := material.Body1(p.theme.Gio(), util.FirstNonEmpty(body, "No data yet."))
 					lbl.Color = p.theme.Color.Text
 					return lbl.Layout(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (p *Page) layoutGameCachePanel(gtx layout.Context, clearButton bareui.Button) layout.Dimensions {
+	return bareutils.Panel(gtx, p.theme.Color.Surface, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body1(p.theme.Gio(), "Voice Cache")
+							lbl.Color = p.theme.Color.TextMuted
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body1(p.theme.Gio(), p.gameCacheSummary())
+							lbl.Color = p.theme.Color.Text
+							return lbl.Layout(gtx)
+						}),
+					)
+				}),
+				layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if p.cacheGameName() == "" || p.installing {
+						return clearButton.Layout(gtx.Disabled(), p.theme, p.iconify)
+					}
+					return clearButton.Layout(gtx, p.theme, p.iconify)
 				}),
 			)
 		})
@@ -938,6 +982,20 @@ func (p *Page) saveConfig() {
 	if p.OnSaved != nil {
 		p.OnSaved(cfg)
 	}
+}
+
+func (p *Page) clearCurrentGameCache() {
+	name := p.cacheGameName()
+	if name == "" {
+		p.showError("Clear Cache Failed", "Select or save a game before clearing its cache.")
+		return
+	}
+	if err := util.ClearGameVoiceCache(name); err != nil {
+		p.statusText = err.Error()
+		p.showError("Clear Cache Failed", err.Error())
+		return
+	}
+	p.statusText = fmt.Sprintf("Cleared voice cache for %q.", name)
 }
 
 func (p *Page) deleteConfig() {
@@ -1251,6 +1309,28 @@ func gamePreviewText(cfg *vngame.Game) string {
 		"Icon: " + util.FirstNonEmpty(cfg.IconPath, "Unavailable"),
 		"Image: " + util.FirstNonEmpty(cfg.ImagePath, "Unavailable"),
 	}, "\n")
+}
+
+func (p *Page) gameCacheSummary() string {
+	name := p.cacheGameName()
+	if name == "" {
+		return "No saved game selected."
+	}
+	size, err := util.GameVoiceCacheSize(name)
+	if err != nil {
+		return "Unavailable: " + err.Error()
+	}
+	return fmt.Sprintf("%s (%d bytes)", vnutil.ByteCountSI(size), size)
+}
+
+func (p *Page) cacheGameName() string {
+	if p.draftConfig != nil && strings.TrimSpace(p.draftConfig.Name) != "" {
+		return strings.TrimSpace(p.draftConfig.Name)
+	}
+	if strings.TrimSpace(p.currentConfigName) != "" {
+		return strings.TrimSpace(p.currentConfigName)
+	}
+	return strings.TrimSpace(p.nameEditor.Text())
 }
 
 func renameGameFlashcards(oldName, newName string) error {
