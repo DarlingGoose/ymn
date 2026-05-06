@@ -159,6 +159,7 @@ type Page struct {
 	selectedFocusedTokenKey   string
 	selectedFocusedTokenWord  string
 	selectedFocusedTokenNote  string
+	focusedLookupPendingKey   string
 	translationCollapsed      bool
 	focusedFuriganaMode       string
 	focusedFuriganaDefault    string
@@ -171,6 +172,8 @@ type Page struct {
 	translationResultCh       chan translationResult
 	rowTranslationResultCh    chan rowTranslationResult
 	audioResultCh             chan audioPlaybackResult
+	flashcardAddResultCh      chan flashcardAddResult
+	focusedLookupResultCh     chan focusedTokenLookupResult
 	translatorConfig          translation.Config
 	composerFocus             string
 	composerMinimized         bool
@@ -180,6 +183,7 @@ type Page struct {
 	rowTranslations           map[string]string
 	rowTranslationShown       map[string]bool
 	rowTranslationGenerating  map[string]bool
+	lookupAddPending          map[string]bool
 
 	OnError     func(title, body string)
 	OnNotify    func(title, body string, kind guitoast.NotificationType)
@@ -202,6 +206,22 @@ type rowTranslationResult struct {
 type audioPlaybackResult struct {
 	Title string
 	Err   error
+}
+
+type flashcardAddResult struct {
+	Key     string
+	Card    flashcards.Flashcard
+	Cards   []flashcards.Flashcard
+	Added   int
+	Skipped int
+	Err     error
+}
+
+type focusedTokenLookupResult struct {
+	Key     string
+	Word    string
+	Lookups []dictionary.Lookup
+	Err     error
 }
 
 type transcriptRow struct {
@@ -237,6 +257,8 @@ func New(theme barethemes.Theme) *Page {
 		translationResultCh:          make(chan translationResult, 1),
 		rowTranslationResultCh:       make(chan rowTranslationResult, 8),
 		audioResultCh:                make(chan audioPlaybackResult, 8),
+		flashcardAddResultCh:         make(chan flashcardAddResult, 8),
+		focusedLookupResultCh:        make(chan focusedTokenLookupResult, 8),
 		translatorConfig:             translation.Config{Provider: translation.ProviderOllama},
 		composerFocus:                composerFocusFlashcards,
 		composerMinimized:            true,
@@ -255,6 +277,7 @@ func New(theme barethemes.Theme) *Page {
 		rowTranslations:              make(map[string]string),
 		rowTranslationShown:          make(map[string]bool),
 		rowTranslationGenerating:     make(map[string]bool),
+		lookupAddPending:             make(map[string]bool),
 	}
 	p.transcriptFocusSplit.Value = 0.5
 	p.wordEditor.SingleLine = true
@@ -391,6 +414,7 @@ func (p *Page) ClearTranscript() {
 	p.displayTranscript = ""
 	p.lookupResult = nil
 	p.lookupResults = nil
+	p.focusedLookupPendingKey = ""
 	p.invalidateHighlights()
 	p.DismissPopup()
 	p.selectedLineKey = ""
@@ -440,6 +464,8 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 	p.drainTranslationResults()
 	p.drainRowTranslationResults()
 	p.drainAudioResults()
+	p.drainFlashcardAddResults()
+	p.drainFocusedTokenLookupResults()
 	p.maybeAutoGenerateTranslation(ctx, w)
 	if p.hideReadingInAnki.Update(gtx) {
 		p.hideReadingSet = true
@@ -531,7 +557,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 	}
 	for key, click := range p.lookupResultAddClicks {
 		for click.Clicked(gtx) {
-			p.addLookupFlashcardByKey(key)
+			p.addLookupFlashcardByKey(key, w)
 		}
 	}
 	for key, click := range p.lookupResultPlayClicks {
@@ -571,7 +597,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 	}
 	for key, click := range p.focusedTokenClicks {
 		for click.Clicked(gtx) {
-			p.selectFocusedToken(key)
+			p.selectFocusedToken(key, w)
 		}
 	}
 	for p.transcriptPopupAudioButton.Clicked(gtx) {
@@ -627,6 +653,61 @@ func (p *Page) drainAudioResults() {
 			if result.Err != nil {
 				p.showError(util.FirstNonEmpty(result.Title, "Audio Playback Failed"), result.Err.Error())
 			}
+		default:
+			return
+		}
+	}
+}
+
+func (p *Page) drainFlashcardAddResults() {
+	for {
+		select {
+		case result := <-p.flashcardAddResultCh:
+			delete(p.lookupAddPending, result.Key)
+			if result.Err != nil {
+				p.showError("Create Flashcard Failed", result.Err.Error())
+				continue
+			}
+			if result.Cards != nil {
+				p.SetFlashcards(result.Cards)
+			}
+			if result.Added > 0 {
+				p.showNotification("Flashcard Created", result.Card.Text+" was added.", guitoast.NotificationTypeSuccess)
+				continue
+			}
+			if result.Skipped > 0 {
+				p.showNotification("Flashcard Exists", result.Card.Text+" is already in your flashcards.", guitoast.NotificationTypeInfo)
+			}
+		default:
+			return
+		}
+	}
+}
+
+func (p *Page) drainFocusedTokenLookupResults() {
+	for {
+		select {
+		case result := <-p.focusedLookupResultCh:
+			if result.Key != p.focusedLookupPendingKey {
+				continue
+			}
+			p.focusedLookupPendingKey = ""
+			if result.Key != p.selectedFocusedTokenKey || result.Word != p.selectedFocusedTokenWord {
+				continue
+			}
+			if result.Err != nil {
+				p.meaningEditor.SetText("")
+				p.showError("Dictionary Lookup Failed", result.Err.Error())
+				continue
+			}
+			if len(result.Lookups) == 0 {
+				p.meaningEditor.SetText("")
+				p.showError("Dictionary Lookup Failed", "No dictionary matches were found for "+result.Word+".")
+				continue
+			}
+			p.lookupResults = result.Lookups
+			p.lookupResult = &result.Lookups[0]
+			p.meaningEditor.SetText(result.Lookups[0].Meaning)
 		default:
 			return
 		}
@@ -2460,6 +2541,7 @@ func (p *Page) resetFlashcardComposer() {
 	p.hideReadingSet = false
 	p.lookupResult = nil
 	p.lookupResults = nil
+	p.focusedLookupPendingKey = ""
 	p.composerMinimized = true
 	p.composerLastUsed = time.Now()
 }
@@ -2950,11 +3032,12 @@ func (p *Page) pruneFocusedTokenClicks(tokens []japanese.Token) {
 			p.selectedFocusedTokenKey = ""
 			p.selectedFocusedTokenWord = ""
 			p.selectedFocusedTokenNote = ""
+			p.focusedLookupPendingKey = ""
 		}
 	}
 }
 
-func (p *Page) selectFocusedToken(key string) {
+func (p *Page) selectFocusedToken(key string, w *app.Window) {
 	analysis, errText := p.currentStructureAnalysis()
 	if errText != "" {
 		p.showError("Dictionary Lookup Failed", errText)
@@ -2971,6 +3054,7 @@ func (p *Page) selectFocusedToken(key string) {
 		p.selectedFocusedTokenKey = key
 		p.selectedFocusedTokenWord = word
 		p.selectedFocusedTokenNote = ""
+		p.focusedLookupPendingKey = ""
 		p.wordEditor.SetText(word)
 		p.meaningEditor.SetText("")
 		p.lookupResult = nil
@@ -2981,20 +3065,36 @@ func (p *Page) selectFocusedToken(key string) {
 			p.meaningEditor.SetText(note)
 			return
 		}
-		lookups, err := dictionary.LookupWords(word)
-		if err != nil {
-			p.showError("Dictionary Lookup Failed", err.Error())
-			return
-		}
-		if len(lookups) == 0 {
-			p.showError("Dictionary Lookup Failed", "No dictionary matches were found for "+word+".")
-			return
-		}
-		p.lookupResults = lookups
-		p.lookupResult = &lookups[0]
-		p.meaningEditor.SetText(lookups[0].Meaning)
+		p.startFocusedTokenLookup(key, word, w)
 		return
 	}
+}
+
+func (p *Page) startFocusedTokenLookup(key, word string, w *app.Window) {
+	key = strings.TrimSpace(key)
+	word = strings.TrimSpace(word)
+	if key == "" || word == "" {
+		return
+	}
+	p.focusedLookupPendingKey = key
+	p.meaningEditor.SetText("Looking up...")
+	go func() {
+		lookups, err := dictionary.LookupWords(word)
+		result := focusedTokenLookupResult{
+			Key:     key,
+			Word:    word,
+			Lookups: lookups,
+			Err:     err,
+		}
+		select {
+		case p.focusedLookupResultCh <- result:
+		default:
+			slog.Warn("focused token lookup result dropped", "key", key)
+		}
+		if w != nil {
+			w.Invalidate()
+		}
+	}()
 }
 
 func (p *Page) addFocusedTokenFlashcard() {
@@ -3523,6 +3623,7 @@ func (p *Page) selectTranscriptRow(key string) {
 		p.meaningEditor.SetText("")
 		p.lookupResult = nil
 		p.lookupResults = nil
+		p.focusedLookupPendingKey = ""
 		p.DismissPopup()
 		return
 	}
@@ -3543,10 +3644,12 @@ func (p *Page) selectLatestTranscriptRow() {
 		p.selectedFocusedTokenKey = ""
 		p.selectedFocusedTokenWord = ""
 		p.selectedFocusedTokenNote = ""
+		p.focusedLookupPendingKey = ""
 		p.wordEditor.SetText("")
 		p.meaningEditor.SetText("")
 		p.lookupResult = nil
 		p.lookupResults = nil
+		p.focusedLookupPendingKey = ""
 		p.DismissPopup()
 		return
 	}
@@ -4200,7 +4303,14 @@ func (p *Page) layoutLookupResults(gtx layout.Context) layout.Dimensions {
 
 func (p *Page) layoutLookupResultCard(gtx layout.Context, lookup dictionary.Lookup) layout.Dimensions {
 	key := lookupResultKey(lookup)
+	alreadyAdded := p.lookupFlashcardExists(lookup)
+	addPending := p.lookupAddPending[key]
 	addButton := bareui.Button{Clickable: p.lookupResultAddClickable(key), Text: "mdi:plus-circle-outline", Icon: true, Variant: bareui.ButtonPrimary}
+	if alreadyAdded {
+		addButton = bareui.Button{Text: "mdi:check-circle-outline", Icon: true, Variant: bareui.ButtonSecondary}
+	} else if addPending {
+		addButton = bareui.Button{Text: "mdi:timer-sand", Icon: true, Variant: bareui.ButtonSecondary}
+	}
 	playButton := bareui.Button{Clickable: p.lookupResultPlayClickable(key), Text: "mdi:play-circle-outline", Icon: true, Variant: bareui.ButtonSecondary}
 	return bareutils.Panel(gtx, p.theme.Color.Background, unit.Dp(p.theme.Radius.MD), func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -4228,6 +4338,9 @@ func (p *Page) layoutLookupResultCard(gtx layout.Context, lookup dictionary.Look
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							if alreadyAdded || addPending {
+								return addButton.Layout(gtx.Disabled(), p.theme, p.iconify)
+							}
 							return addButton.Layout(gtx, p.theme, p.iconify)
 						}),
 						layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
@@ -4250,6 +4363,7 @@ func (p *Page) lookupCurrentWord() {
 	}
 	p.lookupResult = nil
 	p.lookupResults = nil
+	p.focusedLookupPendingKey = ""
 	p.meaningEditor.SetText("")
 
 	word := normalizeSelectionText(p.wordEditor.Text())
@@ -4288,9 +4402,12 @@ func (p *Page) playCurrentLookupAudio(ctx context.Context, w *app.Window) {
 	})
 }
 
-func (p *Page) addLookupFlashcardByKey(key string) {
+func (p *Page) addLookupFlashcardByKey(key string, w *app.Window) {
 	key = strings.TrimSpace(key)
 	if key == "" {
+		return
+	}
+	if p.lookupAddPending[key] {
 		return
 	}
 	for _, lookup := range p.lookupResults {
@@ -4298,14 +4415,43 @@ func (p *Page) addLookupFlashcardByKey(key string) {
 			continue
 		}
 		card := p.flashcardFromLookup(lookup)
-		if err := flashcards.AddFlashcard(card); err != nil {
-			p.showError("Create Flashcard Failed", err.Error())
+		if p.lookupFlashcardExists(lookup) {
+			p.showNotification("Flashcard Exists", card.Text+" is already in your flashcards.", guitoast.NotificationTypeInfo)
 			return
 		}
-		_ = p.ReloadFlashcards()
-		p.resetFlashcardComposer()
+		p.startLookupFlashcardAdd(key, card, w)
 		return
 	}
+}
+
+func (p *Page) startLookupFlashcardAdd(key string, card flashcards.Flashcard, w *app.Window) {
+	if p.lookupAddPending == nil {
+		p.lookupAddPending = make(map[string]bool)
+	}
+	p.lookupAddPending[key] = true
+	go func() {
+		added, skipped, err := flashcards.AddFlashcards(card.GameName, []flashcards.Flashcard{card})
+		var cards []flashcards.Flashcard
+		if err == nil {
+			cards, err = flashcards.LoadFlashcards(card.GameName)
+		}
+		result := flashcardAddResult{
+			Key:     key,
+			Card:    card,
+			Cards:   cards,
+			Added:   added,
+			Skipped: skipped,
+			Err:     err,
+		}
+		select {
+		case p.flashcardAddResultCh <- result:
+		default:
+			slog.Warn("flashcard add result dropped", "key", key)
+		}
+		if w != nil {
+			w.Invalidate()
+		}
+	}()
 }
 
 func (p *Page) playLookupAudioByKey(ctx context.Context, w *app.Window, key string) {
@@ -4363,6 +4509,75 @@ func (p *Page) flashcardFromLookup(lookup dictionary.Lookup) flashcards.Flashcar
 		SourcePath:         p.logPath,
 		SourceLine:         findFlashcardSourceLine(p.displayTranscript, word),
 	}
+}
+
+func (p *Page) lookupFlashcardExists(lookup dictionary.Lookup) bool {
+	card := p.flashcardFromLookup(lookup)
+	if _, ok := p.flashcardForWordExact(card.Text); ok {
+		return true
+	}
+	if _, ok := p.flashcardForWordExact(card.Reading); ok {
+		return true
+	}
+	if _, ok := p.flashcardForWordExact(card.PronunciationText); ok {
+		return true
+	}
+	if p.lookupMatchesSelectedFocusedToken(lookup) {
+		if _, ok := p.structureTokenFlashcardByKey(p.selectedFocusedTokenKey); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Page) lookupMatchesSelectedFocusedToken(lookup dictionary.Lookup) bool {
+	key := strings.TrimSpace(p.selectedFocusedTokenKey)
+	if key == "" {
+		return false
+	}
+	candidates := p.focusedTokenCandidatesByKey(key)
+	if len(candidates) == 0 {
+		return false
+	}
+	lookupWords := []string{
+		lookup.Query,
+		lookup.Headword,
+		lookup.Key,
+		lookup.Reading,
+		lookup.PronunciationText,
+	}
+	for _, word := range lookupWords {
+		word = normalizeStructureMatchText(word)
+		if word == "" {
+			continue
+		}
+		if _, ok := candidates[word]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Page) focusedTokenCandidatesByKey(key string) map[string]struct{} {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	analysis, _ := p.currentStructureAnalysis()
+	for _, token := range analysis.Tokens {
+		if structureTokenKey(token) != key {
+			continue
+		}
+		values := structureTokenFlashcardCandidates(token)
+		out := make(map[string]struct{}, len(values))
+		for _, value := range values {
+			if value != "" {
+				out[value] = struct{}{}
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func (p *Page) syncCurrentGameToAnki() error {

@@ -3,6 +3,7 @@ package flashcard
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"gioui.org/app"
@@ -224,6 +225,7 @@ func (p *Page) SyncToAnki() error {
 	}
 	client := anki.New(p.ankiURL)
 	if _, err := client.SyncFlashcardsToAnki(p.activeGameName, p.ankiURL, p.pushSync); err != nil {
+		slog.Error("failed to sync anki", "err", err)
 		return err
 	}
 	return p.Reload()

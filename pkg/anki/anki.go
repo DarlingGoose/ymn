@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,6 +21,13 @@ import (
 )
 
 const DefaultAnkiConnectURL = "http://127.0.0.1:8765"
+
+const (
+	ankiHTTPTimeout      = 60 * time.Second
+	ankiInvokeAttempts   = 3
+	ankiProgressSaveEach = 25
+	ankiCardPaceDelay    = 20 * time.Millisecond
+)
 
 type Client struct {
 	baseURL string
@@ -33,7 +42,7 @@ func New(baseURL string) *Client {
 	client := &Client{
 		baseURL: baseURL,
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: ankiHTTPTimeout,
 		},
 	}
 	_ = client.ensureModel()
@@ -50,6 +59,22 @@ func (c *Client) invoke(action string, params any, out any) error {
 		return fmt.Errorf("encode anki request: %w", err)
 	}
 
+	var lastErr error
+	for attempt := 1; attempt <= ankiInvokeAttempts; attempt++ {
+		err = c.invokeOnce(action, payload, out)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !isTransientAnkiError(err) || attempt == ankiInvokeAttempts {
+			break
+		}
+		time.Sleep(time.Duration(attempt) * 150 * time.Millisecond)
+	}
+	return lastErr
+}
+
+func (c *Client) invokeOnce(action string, payload []byte, out any) error {
 	req, err := http.NewRequest(http.MethodPost, c.baseURL, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("create anki request: %w", err)
@@ -81,6 +106,20 @@ func (c *Client) invoke(action string, params any, out any) error {
 	return nil
 }
 
+func isTransientAnkiError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "eof") ||
+		strings.Contains(text, "connection reset") ||
+		strings.Contains(text, "connection refused") ||
+		strings.Contains(text, "broken pipe")
+}
+
 func (c *Client) CreateDeck(name string) error {
 	var result any
 	return c.invoke("createDeck", map[string]string{"deck": name}, &result)
@@ -97,9 +136,8 @@ func (c *Client) AddNote(card flashcard.Flashcard) (int64, error) {
 			"deckName":  card.AnkiDeck,
 			"modelName": card.AnkiModel,
 			"fields": map[string]string{
-				"Front":   html.EscapeString(card.Text),
-				"Back":    flashcardBackHTML(card, audioTag),
 				"Meaning": card.Meaning,
+				"Context": card.SourceLine,
 				"Reading": card.AnkiReading(),
 				"Text":    card.Text,
 				"Audio":   audioTag,
@@ -129,9 +167,8 @@ func (c *Client) UpdateNote(card flashcard.Flashcard) error {
 		"note": map[string]any{
 			"id": card.AnkiNoteID,
 			"fields": map[string]string{
-				"Front":   html.EscapeString(card.Text),
-				"Back":    flashcardBackHTML(card, audioTag),
 				"Meaning": card.Meaning,
+				"Context": card.SourceLine,
 				"Reading": card.AnkiReading(),
 				"Text":    card.Text,
 				"Audio":   audioTag,
@@ -265,8 +302,20 @@ func (c *Client) SyncFlashcardsToAnki(gameName, baseURL string, pushSync bool) (
 		Total:    len(cards),
 	}
 	now := time.Now().UTC()
+	dirty := false
+	failCard := func(card flashcard.Flashcard, err error) (SyncResult, error) {
+		if dirty {
+			if saveErr := flashcard.SaveFlashcards(gameName, cards); saveErr != nil {
+				return SyncResult{}, fmt.Errorf("save sync progress after card %q failed: %v; original sync error: %w", card.Text, saveErr, err)
+			}
+		}
+		return SyncResult{}, fmt.Errorf("sync card %q: %w", card.Text, err)
+	}
 
 	for i := range cards {
+		if i > 0 {
+			time.Sleep(ankiCardPaceDelay)
+		}
 		cards[i].NormalizeFlashcard()
 		cards[i].AnkiDeck = deckName
 		cards[i].AnkiModel = flashcard.DefaultAnkiModel
@@ -280,14 +329,15 @@ func (c *Client) SyncFlashcardsToAnki(gameName, baseURL string, pushSync bool) (
 							result.Updated++
 							continue
 						}
-						return SyncResult{}, fmt.Errorf("sync card %q: %w", cards[i].Text, err)
+						return failCard(cards[i], err)
 					}
 					cards[i].AnkiNoteID = noteID
 					result.Created++
+					dirty = true
 				} else if strings.Contains(err.Error(), "duplicate") {
 					result.Updated++
 				} else {
-					return SyncResult{}, fmt.Errorf("sync card %q: %w", cards[i].Text, err)
+					return failCard(cards[i], err)
 
 				}
 			} else {
@@ -301,17 +351,28 @@ func (c *Client) SyncFlashcardsToAnki(gameName, baseURL string, pushSync bool) (
 					result.Updated++
 					continue
 				}
-				return SyncResult{}, fmt.Errorf("sync card %q: %w", cards[i].Text, err)
+				return failCard(cards[i], err)
 			}
 			cards[i].AnkiNoteID = noteID
 			result.Created++
+			dirty = true
 		}
 		cards[i].UpdatedAt = now
 		cards[i].AnkiLastSyncAt = &now
+		dirty = true
+
+		if (i+1)%ankiProgressSaveEach == 0 {
+			if err := flashcard.SaveFlashcards(gameName, cards); err != nil {
+				return SyncResult{}, err
+			}
+			dirty = false
+		}
 	}
 
-	if err := flashcard.SaveFlashcards(gameName, cards); err != nil {
-		return SyncResult{}, err
+	if dirty {
+		if err := flashcard.SaveFlashcards(gameName, cards); err != nil {
+			return SyncResult{}, err
+		}
 	}
 	if pushSync {
 		if err := c.sync(); err != nil {
