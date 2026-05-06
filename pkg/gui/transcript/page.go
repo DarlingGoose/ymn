@@ -41,6 +41,7 @@ import (
 	guitoast "github.com/DarlingGoose/wgl/pkg/gui/toast"
 	"github.com/DarlingGoose/wgl/pkg/japanese"
 	"github.com/DarlingGoose/wgl/pkg/translation"
+	wgltts "github.com/DarlingGoose/wgl/pkg/tts"
 	"github.com/DarlingGoose/wgl/pkg/util"
 )
 
@@ -75,6 +76,7 @@ type Page struct {
 	meaningEditor        widget.Editor
 	translationEditor    widget.Editor
 	targetLanguageDrop   bareui.Dropdown
+	ttsSpeakerDrop       bareui.Dropdown
 	hideReadingInAnki    widget.Bool
 	searchWordButton     widget.Clickable
 	playAudioButton      widget.Clickable
@@ -113,6 +115,7 @@ type Page struct {
 	transcriptRowClicks          map[string]*widget.Clickable
 	transcriptRowTranslateClicks map[string]*widget.Clickable
 	transcriptRowVoiceClicks     map[string]*widget.Clickable
+	ttsSpeakerClicks             map[string]*widget.Clickable
 	focusedTokenClicks           map[string]*widget.Clickable
 	targetLanguageOptions        []gui.DropdownOption
 
@@ -133,6 +136,7 @@ type Page struct {
 	colorizeHighlights     bool
 	speakerOnlyRows        bool
 	compactTimestamps      bool
+	selectedTTSSpeaker     string
 
 	flashcards                []flashcards.Flashcard
 	lookupResult              *dictionary.Lookup
@@ -210,6 +214,12 @@ type transcriptRow struct {
 	VocabWords []string
 }
 
+type ttsReference struct {
+	Speaker string
+	Voice   string
+	Text    string
+}
+
 func New(theme barethemes.Theme) *Page {
 	p := &Page{
 		theme:                        theme,
@@ -240,6 +250,7 @@ func New(theme barethemes.Theme) *Page {
 		transcriptRowClicks:          make(map[string]*widget.Clickable),
 		transcriptRowTranslateClicks: make(map[string]*widget.Clickable),
 		transcriptRowVoiceClicks:     make(map[string]*widget.Clickable),
+		ttsSpeakerClicks:             make(map[string]*widget.Clickable),
 		focusedTokenClicks:           make(map[string]*widget.Clickable),
 		rowTranslations:              make(map[string]string),
 		rowTranslationShown:          make(map[string]bool),
@@ -252,6 +263,9 @@ func New(theme barethemes.Theme) *Page {
 	gui.NewDropDownLayout(&p.targetLanguageDrop, "mdi:translate")
 	p.targetLanguageDrop.Width = unit.Dp(190)
 	p.targetLanguageDrop.OffsetY = unit.Dp(42)
+	gui.NewDropDownLayout(&p.ttsSpeakerDrop, "mdi:account-voice")
+	p.ttsSpeakerDrop.Width = unit.Dp(220)
+	p.ttsSpeakerDrop.OffsetY = unit.Dp(42)
 	p.targetLanguageOptions = gui.NewTranslationLanguageOptions()
 	p.transcriptList.Axis = layout.Vertical
 	p.transcriptList.ScrollToEnd = true
@@ -368,6 +382,7 @@ func (p *Page) SetRawTranscript(raw string) *Page {
 	if next != p.displayTranscript {
 		p.displayTranscript = next
 		p.invalidateHighlights()
+		p.selectLatestTranscriptRow()
 	}
 	return p
 }
@@ -430,6 +445,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 		p.hideReadingSet = true
 	}
 	p.targetLanguageDrop.Update(gtx)
+	p.ttsSpeakerDrop.Update(gtx)
 	p.syncHideReadingDefault()
 	for p.launchGameButton.Clicked(gtx) {
 		p.launchCurrentGameInBackground()
@@ -449,7 +465,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 		p.deleteCurrentLog()
 	}
 	for p.playSentenceButton.Clicked(gtx) {
-		p.playCurrentLookupAudio(w)
+		p.playCurrentLookupAudio(ctx, w)
 	}
 	for p.translateSentenceButton.Clicked(gtx) {
 		p.composerFocus = composerFocusSentenceStructure
@@ -468,7 +484,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 		p.addFocusedTokenFlashcard()
 	}
 	for p.focusedTokenAudioButton.Clicked(gtx) {
-		p.playFocusedTokenAudio(w)
+		p.playFocusedTokenAudio(ctx, w)
 	}
 	for p.translationToggleButton.Clicked(gtx) {
 		p.translationCollapsed = !p.translationCollapsed
@@ -498,11 +514,17 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 			p.targetLanguageDrop.Close()
 		}
 	}
+	for speaker, click := range p.ttsSpeakerClicks {
+		for click.Clicked(gtx) {
+			p.selectedTTSSpeaker = speaker
+			p.ttsSpeakerDrop.Close()
+		}
+	}
 	for p.searchWordButton.Clicked(gtx) {
 		p.lookupCurrentWord()
 	}
 	for p.playAudioButton.Clicked(gtx) {
-		p.playCurrentLookupAudio(w)
+		p.playCurrentLookupAudio(ctx, w)
 	}
 	for p.addAllLookupButton.Clicked(gtx) {
 		p.addAllLookupFlashcards()
@@ -514,7 +536,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 	}
 	for key, click := range p.lookupResultPlayClicks {
 		for click.Clicked(gtx) {
-			p.playLookupAudioByKey(w, key)
+			p.playLookupAudioByKey(ctx, w, key)
 		}
 	}
 	for key, click := range p.structureTokenAddClicks {
@@ -524,7 +546,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 	}
 	for key, click := range p.structureTokenPlayClicks {
 		for click.Clicked(gtx) {
-			p.playStructureTokenAudio(w, key)
+			p.playStructureTokenAudio(ctx, w, key)
 		}
 	}
 	for key, click := range p.transcriptHighlightClicks {
@@ -544,7 +566,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 	}
 	for key, click := range p.transcriptRowVoiceClicks {
 		for click.Clicked(gtx) {
-			p.playTranscriptRowVoice(w, key)
+			p.playTranscriptRowVoice(ctx, w, key)
 		}
 	}
 	for key, click := range p.focusedTokenClicks {
@@ -559,7 +581,7 @@ func (p *Page) HandleEvents(gtx layout.Context, ctx context.Context, w *app.Wind
 		}
 		card := *p.popupFlashcard
 		p.startAudioPlayback(w, "Audio Playback Failed", func() error {
-			return playFlashcardAudio(card)
+			return p.playFlashcardAudio(ctx, card)
 		})
 	}
 	for p.transcriptPopupCloseButton.Clicked(gtx) {
@@ -654,7 +676,7 @@ func (p *Page) LayoutPopupContent(gtx layout.Context) layout.Dimensions {
 			})
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if !util.IsExistingFile(card.AudioPath) {
+			if !util.IsExistingFile(card.AudioPath) && !p.hasTTSReference() {
 				return layout.Dimensions{}
 			}
 			return layout.Inset{Top: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -757,6 +779,10 @@ func (p *Page) layoutTranscriptTopbar(gtx layout.Context) layout.Dimensions {
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						return p.layoutTTSSpeakerDropdown(gtx)
+					}),
+					layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						if p.runnerStatus != nil {
 							return launchButton.Layout(gtx.Disabled(), p.theme, p.iconify)
 						}
@@ -786,6 +812,10 @@ func (p *Page) layoutTranscriptTopbar(gtx layout.Context) layout.Dimensions {
 			lbl.Color = p.theme.Color.TextMuted
 			return lbl.Layout(gtx)
 		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return p.layoutTTSSpeakerDropdown(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if p.runnerStatus != nil {
 				return launchButton.Layout(gtx.Disabled(), p.theme, p.iconify)
@@ -841,6 +871,45 @@ func (p *Page) layoutStatusPill(gtx layout.Context, text string, live bool) layo
 			})
 		},
 	)
+}
+
+func (p *Page) layoutTTSSpeakerDropdown(gtx layout.Context) layout.Dimensions {
+	refs := p.ttsReferences()
+	p.pruneTTSSpeakerClicks(refs)
+	if len(refs) == 0 {
+		btn := bareui.Button{
+			Text:    "TTS Voice",
+			Prefix:  "mdi:account-voice",
+			Variant: bareui.ButtonSecondary,
+		}
+		return btn.Layout(gtx.Disabled(), p.theme, p.iconify)
+	}
+	if strings.TrimSpace(p.selectedTTSSpeaker) == "" || !ttsReferenceExists(refs, p.selectedTTSSpeaker) {
+		p.selectedTTSSpeaker = refs[0].Speaker
+	}
+	label := "TTS: " + p.selectedTTSSpeaker
+	return p.ttsSpeakerDrop.Layout(gtx, p.theme, p.iconify, label, func(gtx layout.Context) layout.Dimensions {
+		children := make([]layout.FlexChild, 0, len(refs))
+		for _, ref := range refs {
+			ref := ref
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				variant := bareui.ButtonSecondary
+				if ref.Speaker == p.selectedTTSSpeaker {
+					variant = bareui.ButtonPrimary
+				}
+				btn := bareui.Button{
+					Clickable: p.ttsSpeakerClickable(ref.Speaker),
+					Text:      ref.Speaker,
+					Prefix:    "mdi:account-voice",
+					Variant:   variant,
+				}
+				return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return btn.Layout(gtx, p.theme, p.iconify)
+				})
+			}))
+		}
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	})
 }
 
 func RoundedSurfaceWrap(
@@ -1295,7 +1364,7 @@ func (p *Page) layoutFocusedTokenActions(gtx layout.Context) layout.Dimensions {
 	if audioPath == "" && hasExistingCard {
 		audioPath = strings.TrimSpace(existingCard.AudioPath)
 	}
-	canPlayAudio := audioPath != ""
+	canPlayAudio := audioPath != "" || p.hasTTSReference()
 
 	addButton := bareui.Button{
 		Clickable: &p.focusedTokenAddButton,
@@ -2166,13 +2235,17 @@ func (p *Page) layoutRowIcon(gtx layout.Context, icon string, enabled bool) layo
 }
 
 func (p *Page) layoutTranscriptVoiceIcon(gtx layout.Context, row transcriptRow) layout.Dimensions {
-	if strings.TrimSpace(row.Voice) == "" {
+	if strings.TrimSpace(row.Voice) == "" && !p.hasTTSReference() {
 		return p.layoutRowIcon(gtx, "mdi:volume-off", false)
 	}
 	click := p.transcriptRowVoiceClickable(row.Key)
 	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
-		return p.layoutRowIcon(gtx, "mdi:volume-high", true)
+		icon := "mdi:volume-high"
+		if strings.TrimSpace(row.Voice) == "" {
+			icon = "mdi:account-voice"
+		}
+		return p.layoutRowIcon(gtx, icon, true)
 	})
 }
 
@@ -2303,7 +2376,7 @@ func (p *Page) layoutTranscriptPopupCard(gtx layout.Context, card flashcards.Fla
 							})
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							if !util.IsExistingFile(card.AudioPath) {
+							if !util.IsExistingFile(card.AudioPath) && !p.hasTTSReference() {
 								return layout.Dimensions{}
 							}
 							return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -2718,7 +2791,7 @@ func (p *Page) layoutStructureToken(gtx layout.Context, token japanese.Token) la
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							if hasExistingCard {
-								if strings.TrimSpace(existingCard.AudioPath) == "" {
+								if strings.TrimSpace(existingCard.AudioPath) == "" && !p.hasTTSReference() {
 									return layout.Dimensions{}
 								}
 								return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -2827,17 +2900,18 @@ func (p *Page) structureTokenAddClickable(key string) *widget.Clickable {
 	return p.structureTokenAddClicks[key]
 }
 
-func (p *Page) playStructureTokenAudio(w *app.Window, key string) {
+func (p *Page) playStructureTokenAudio(ctx context.Context, w *app.Window, key string) {
 	tokenCard, ok := p.structureTokenFlashcardByKey(key)
 	if !ok {
 		return
 	}
 	if strings.TrimSpace(tokenCard.AudioPath) == "" {
-		p.showError("Audio Playback Failed", "No audio is available for this flashcard.")
+		word := util.FirstNonEmpty(tokenCard.Text, tokenCard.Reading)
+		p.playTTSForText(ctx, w, word)
 		return
 	}
 	p.startAudioPlayback(w, "Audio Playback Failed", func() error {
-		return playFlashcardAudio(tokenCard)
+		return p.playFlashcardAudio(ctx, tokenCard)
 	})
 }
 
@@ -2941,7 +3015,7 @@ func (p *Page) addFocusedTokenFlashcard() {
 	p.showNotification("Flashcard Created", card.Text+" was added.", guitoast.NotificationTypeSuccess)
 }
 
-func (p *Page) playFocusedTokenAudio(w *app.Window) {
+func (p *Page) playFocusedTokenAudio(ctx context.Context, w *app.Window) {
 	if p.lookupResult != nil && strings.TrimSpace(p.lookupResult.AudioPath) != "" {
 		lookup := *p.lookupResult
 		p.startAudioPlayback(w, "Audio Playback Failed", func() error {
@@ -2951,11 +3025,11 @@ func (p *Page) playFocusedTokenAudio(w *app.Window) {
 	}
 	card, ok := p.focusedSelectedTokenFlashcard(p.selectedFocusedTokenWord)
 	if !ok || strings.TrimSpace(card.AudioPath) == "" {
-		p.showError("Audio Playback Failed", "No audio is available for the selected word.")
+		p.playTTSForText(ctx, w, p.selectedFocusedTokenWord)
 		return
 	}
 	p.startAudioPlayback(w, "Audio Playback Failed", func() error {
-		return playFlashcardAudio(card)
+		return p.playFlashcardAudio(ctx, card)
 	})
 }
 
@@ -3332,6 +3406,60 @@ func (p *Page) transcriptRows() []transcriptRow {
 	return rows
 }
 
+func (p *Page) ttsReferences() []ttsReference {
+	rows := p.transcriptRows()
+	refsBySpeaker := map[string]ttsReference{}
+	order := make([]string, 0)
+	for _, row := range rows {
+		speaker := strings.TrimSpace(row.Speaker)
+		if speaker == "" || strings.TrimSpace(row.Voice) == "" || strings.TrimSpace(row.Text) == "" {
+			continue
+		}
+		if _, ok := refsBySpeaker[speaker]; !ok {
+			order = append(order, speaker)
+		}
+		refsBySpeaker[speaker] = ttsReference{
+			Speaker: speaker,
+			Voice:   row.Voice,
+			Text:    row.Text,
+		}
+	}
+	sort.Strings(order)
+	refs := make([]ttsReference, 0, len(order))
+	for _, speaker := range order {
+		refs = append(refs, refsBySpeaker[speaker])
+	}
+	return refs
+}
+
+func (p *Page) selectedTTSReference() (ttsReference, bool) {
+	refs := p.ttsReferences()
+	if len(refs) == 0 {
+		return ttsReference{}, false
+	}
+	selected := strings.TrimSpace(p.selectedTTSSpeaker)
+	for _, ref := range refs {
+		if ref.Speaker == selected {
+			return ref, true
+		}
+	}
+	return refs[0], true
+}
+
+func (p *Page) hasTTSReference() bool {
+	_, ok := p.selectedTTSReference()
+	return ok
+}
+
+func ttsReferenceExists(refs []ttsReference, speaker string) bool {
+	for _, ref := range refs {
+		if ref.Speaker == speaker {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Page) vocabWordsInText(text string) []string {
 	text = cleanInlineText(text)
 	if text == "" || len(p.flashcards) == 0 {
@@ -3400,13 +3528,39 @@ func (p *Page) selectTranscriptRow(key string) {
 	}
 }
 
-func (p *Page) playTranscriptRowVoice(w *app.Window, key string) {
+func (p *Page) selectLatestTranscriptRow() {
+	rows := p.transcriptRows()
+	for i := len(rows) - 1; i >= 0; i-- {
+		row := rows[i]
+		if row.Info {
+			continue
+		}
+		if row.Key == p.selectedLineKey && row.Text == p.selectedLineText {
+			return
+		}
+		p.selectedLineKey = row.Key
+		p.selectedLineText = row.Text
+		p.selectedFocusedTokenKey = ""
+		p.selectedFocusedTokenWord = ""
+		p.selectedFocusedTokenNote = ""
+		p.wordEditor.SetText("")
+		p.meaningEditor.SetText("")
+		p.lookupResult = nil
+		p.lookupResults = nil
+		p.DismissPopup()
+		return
+	}
+	p.selectedLineKey = ""
+	p.selectedLineText = ""
+}
+
+func (p *Page) playTranscriptRowVoice(ctx context.Context, w *app.Window, key string) {
 	for _, row := range p.transcriptRows() {
 		if row.Key != key {
 			continue
 		}
 		if strings.TrimSpace(row.Voice) == "" {
-			p.showError("Voice Playback Failed", "No voice file is available for this line.")
+			p.playTTSForText(ctx, w, row.Text)
 			return
 		}
 		if p.currentConfig == nil {
@@ -3514,15 +3668,35 @@ func (p *Page) transcriptRowVoiceClickable(key string) *widget.Clickable {
 	return p.transcriptRowVoiceClicks[key]
 }
 
+func (p *Page) ttsSpeakerClickable(speaker string) *widget.Clickable {
+	if p.ttsSpeakerClicks == nil {
+		p.ttsSpeakerClicks = make(map[string]*widget.Clickable)
+	}
+	if p.ttsSpeakerClicks[speaker] == nil {
+		p.ttsSpeakerClicks[speaker] = new(widget.Clickable)
+	}
+	return p.ttsSpeakerClicks[speaker]
+}
+
+func (p *Page) pruneTTSSpeakerClicks(refs []ttsReference) {
+	valid := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		valid[ref.Speaker] = struct{}{}
+	}
+	for speaker := range p.ttsSpeakerClicks {
+		if _, ok := valid[speaker]; !ok {
+			delete(p.ttsSpeakerClicks, speaker)
+		}
+	}
+}
+
 func (p *Page) pruneTranscriptRowClicks(rows []transcriptRow) {
 	valid := make(map[string]struct{}, len(rows))
 	validVoice := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
 		if !row.Info {
 			valid[row.Key] = struct{}{}
-			if strings.TrimSpace(row.Voice) != "" {
-				validVoice[row.Key] = struct{}{}
-			}
+			validVoice[row.Key] = struct{}{}
 		}
 	}
 	for key := range p.transcriptRowClicks {
@@ -4058,7 +4232,7 @@ func (p *Page) layoutLookupResultCard(gtx layout.Context, lookup dictionary.Look
 						}),
 						layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							if strings.TrimSpace(lookup.AudioPath) == "" {
+							if strings.TrimSpace(lookup.AudioPath) == "" && !p.hasTTSReference() {
 								return playButton.Layout(gtx.Disabled(), p.theme, p.iconify)
 							}
 							return playButton.Layout(gtx, p.theme, p.iconify)
@@ -4099,9 +4273,13 @@ func (p *Page) lookupCurrentWord() {
 	p.syncHideReadingDefault()
 }
 
-func (p *Page) playCurrentLookupAudio(w *app.Window) {
+func (p *Page) playCurrentLookupAudio(ctx context.Context, w *app.Window) {
 	if p.lookupResult == nil || strings.TrimSpace(p.lookupResult.AudioPath) == "" {
-		p.showError("Audio Playback Failed", "No audio is available for the current lookup.")
+		text := ""
+		if p.lookupResult != nil {
+			text = util.FirstNonEmpty(p.lookupResult.Query, p.lookupResult.Key, p.lookupResult.Headword, p.lookupResult.Reading)
+		}
+		p.playTTSForText(ctx, w, text)
 		return
 	}
 	lookup := *p.lookupResult
@@ -4130,7 +4308,7 @@ func (p *Page) addLookupFlashcardByKey(key string) {
 	}
 }
 
-func (p *Page) playLookupAudioByKey(w *app.Window, key string) {
+func (p *Page) playLookupAudioByKey(ctx context.Context, w *app.Window, key string) {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return
@@ -4140,7 +4318,7 @@ func (p *Page) playLookupAudioByKey(w *app.Window, key string) {
 			continue
 		}
 		if strings.TrimSpace(lookup.AudioPath) == "" {
-			p.showError("Audio Playback Failed", "No audio is available for this lookup result.")
+			p.playTTSForText(ctx, w, util.FirstNonEmpty(lookup.Query, lookup.Key, lookup.Headword, lookup.Reading))
 			return
 		}
 		lookup := lookup
@@ -4404,7 +4582,7 @@ func (p *Page) openTranscriptHighlightPopup(key string) {
 		p.popupMatchKey = match.Key
 		p.popupWord = match.Word
 		if p.autoPlayHighlightAudio {
-			_ = playFlashcardAudio(match.Card)
+			_ = dictionary.PlayAudioForText(util.FirstNonEmpty(match.Card.Text, match.Card.Reading))
 		}
 		return
 	}
@@ -4666,12 +4844,54 @@ func shouldMergeHighlightRect(a, b image.Rectangle) bool {
 	return b.Min.X <= a.Max.X+6
 }
 
-func playFlashcardAudio(card flashcards.Flashcard) error {
+func (p *Page) playFlashcardAudio(ctx context.Context, card flashcards.Flashcard) error {
 	word := util.FirstNonEmpty(card.Text, card.Reading)
 	if strings.TrimSpace(word) == "" {
 		return fmt.Errorf("no audio is available for this flashcard")
 	}
-	return dictionary.PlayAudioForText(word)
+	if err := dictionary.PlayAudioForText(word); err == nil {
+		return nil
+	}
+	return p.playTTSForTextSync(ctx, word)
+}
+
+func (p *Page) playTTSForText(ctx context.Context, w *app.Window, text string) {
+	text = cleanInlineText(text)
+	if text == "" {
+		p.showError("TTS Playback Failed", "No text is available for TTS.")
+		return
+	}
+	if _, ok := p.selectedTTSReference(); !ok {
+		p.showError("TTS Playback Failed", "Select a TTS reference speaker from the transcript toolbar first.")
+		return
+	}
+	p.startAudioPlayback(w, "TTS Playback Failed", func() error {
+		return p.playTTSForTextSync(ctx, text)
+	})
+}
+
+func (p *Page) playTTSForTextSync(ctx context.Context, text string) error {
+	ref, ok := p.selectedTTSReference()
+	if !ok {
+		return fmt.Errorf("select a TTS reference speaker from the transcript toolbar first")
+	}
+	audioPath, err := p.cachedTranscriptVoicePath(ref.Voice)
+	if err != nil {
+		return err
+	}
+	path, err := wgltts.SpeakWithF5(ctx, p.activeGameName, text, wgltts.Reference{
+		Speaker: ref.Speaker,
+		Audio:   audioPath,
+		Text:    ref.Text,
+	})
+	if err != nil {
+		return err
+	}
+	player, err := audioplayer.NewPlayer(audioplayer.Config{Backend: audioplayer.BackendAuto})
+	if err != nil {
+		return err
+	}
+	return audioplayer.PlayAudioFile(player, path, true)
 }
 
 func engineFileCacheExt(fileInfo *engine.EngineFileInfo) string {

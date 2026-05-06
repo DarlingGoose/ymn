@@ -1736,6 +1736,7 @@ func (p *Page) resetConfigForm() {
 	p.currentConfigName = ""
 	p.loadedConfigName = ""
 	p.draftConfig = nil
+	p.nameEditor.SetText("")
 	p.pathEditor.SetText("")
 	p.steamAppIDEditor.SetText("")
 	p.iconPathEditor.SetText("")
@@ -1743,6 +1744,9 @@ func (p *Page) resetConfigForm() {
 	p.requiresSteam.Value = false
 	p.selectedRunner = "Auto"
 	p.selectedDesktop = "Default"
+	p.previewText = ""
+	p.hookStatusText = "Select a game or path to inspect text hook support."
+	p.fileBrowser.SelectedPath = ""
 }
 
 func (p *Page) browserButtonLabel() string {

@@ -57,7 +57,8 @@ namcap *.pkg.tar.zst
 
 * would love option to delete all flashcards
 * need to improve ux for game adding setup, specifliy the config and changing files and browsing
-* 
+
+* speaker lines only should be in the transcript page not settings
 
 
 

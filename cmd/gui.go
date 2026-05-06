@@ -1019,6 +1019,16 @@ func gameConfigDirs() []string {
 }
 
 func readTranscriptDelta(logPath string, offset *int64) (string, error) {
+	t := time.NewTicker(time.Second)
+	ctx, canel := context.WithTimeout(context.Background(), time.Minute)
+	defer canel()
+	for !util.IsExistingFile(logPath) {
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("file does not exist")
+		case <-t.C:
+		}
+	}
 	info, err := os.Stat(logPath)
 	if err != nil {
 		return "", err

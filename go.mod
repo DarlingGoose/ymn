@@ -6,7 +6,7 @@ require (
 	gioui.org v0.9.0
 	github.com/DarlingGoose/bare v0.0.6
 	github.com/DarlingGoose/jpndict v0.0.10
-	github.com/DarlingGoose/vntext v0.0.12
+	github.com/DarlingGoose/vntext v0.0.13
 	github.com/ikawaha/kagome-dict/ipa v1.2.6
 	github.com/ikawaha/kagome/v2 v2.11.0
 	github.com/spf13/cobra v1.10.2
@@ -15,7 +15,7 @@ require (
 
 require (
 	gioui.org/shader v1.0.8 // indirect
-	github.com/DarlingGoose/krkrxp3 v0.0.0-20260501002828-eeec57c77223 // indirect
+	github.com/DarlingGoose/krkrxp3 v0.0.0-20260505150502-3453ff8b10be // indirect
 	github.com/PuerkitoBio/goquery v1.12.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/faiface/beep v1.1.0 // indirect
