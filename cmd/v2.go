@@ -25,9 +25,14 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		appName, err := cmd.Flags().GetString("app")
+		if err != nil {
+			return
+		}
 		go func() {
 			window := new(app.Window)
-			err := run(window)
+
+			err := run(window, appName)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -38,6 +43,7 @@ to quickly create a Cobra application.`,
 }
 
 func init() {
+	v2Cmd.Flags().String("app", "slider", "")
 	rootCmd.AddCommand(v2Cmd)
 
 	// Here you will define your flags and configuration settings.
@@ -51,10 +57,12 @@ func init() {
 	// v2Cmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
-func run(window *app.Window) error {
+func run(window *app.Window, appName string) error {
 	theme := material.NewTheme()
 	var ops op.Ops
 	sliderApp := examples.NewSliderAppUI(theme)
+	sidebarApp := examples.NewSidebarAppUI(theme)
+	tabApp := examples.NewTabApp()
 	for {
 		switch e := window.Event().(type) {
 		case app.DestroyEvent:
@@ -62,7 +70,17 @@ func run(window *app.Window) error {
 		case app.FrameEvent:
 			// This graphics context is used for managing the rendering state.
 			gtx := app.NewContext(&ops, e)
-			sliderApp.Layout(gtx)
+			switch appName {
+			case "tab":
+				tabApp.Layout(gtx)
+			case "slider":
+				sliderApp.Layout(gtx)
+			case "sidebar":
+				sidebarApp.Layout(gtx)
+			default:
+				sliderApp.Layout(gtx)
+			}
+
 			e.Frame(gtx.Ops)
 		}
 	}

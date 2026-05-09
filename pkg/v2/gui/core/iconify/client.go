@@ -19,7 +19,7 @@ import (
 const FallbackIcon = "subway:missing"
 
 var errIconNotCached = errors.New("icon not cached locally")
-var Icon = NewIconify()
+var DefaultIconify = NewIconify()
 
 type Iconify struct {
 	CacheDir string

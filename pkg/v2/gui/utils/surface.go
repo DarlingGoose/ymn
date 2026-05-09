@@ -12,18 +12,43 @@ import (
 	"gioui.org/widget"
 )
 
-func Surface(gtx layout.Context, bg color.NRGBA, radius unit.Dp, w layout.Widget) layout.Dimensions {
+type SurfaceBorder struct {
+	Color color.NRGBA
+	Width unit.Dp
+}
+
+func Surface(
+	gtx layout.Context,
+	bg color.NRGBA,
+	radius unit.Dp,
+	w layout.Widget,
+) layout.Dimensions {
+	return SurfaceOutlined(gtx, bg, radius, SurfaceBorder{}, w)
+}
+
+func SurfaceOutlined(
+	gtx layout.Context,
+	bg color.NRGBA,
+	radius unit.Dp,
+	border SurfaceBorder,
+	w layout.Widget,
+) layout.Dimensions {
 	macro := op.Record(gtx.Ops)
 	dims := w(gtx)
 	call := macro.Stop()
 
 	rect := image.Rectangle{Max: dims.Size}
+	r := gtx.Dp(radius)
 
-	paint.FillShape(
-		gtx.Ops,
-		bg,
-		clip.UniformRRect(rect, gtx.Dp(radius)).Op(gtx.Ops),
-	)
+	if bg.A > 0 {
+		paint.FillShape(
+			gtx.Ops,
+			bg,
+			clip.UniformRRect(rect, r).Op(gtx.Ops),
+		)
+	}
+
+	drawBorder(gtx, rect, r, border)
 
 	call.Add(gtx.Ops)
 
@@ -37,7 +62,74 @@ func ClickableSurface(
 	radius unit.Dp,
 	w layout.Widget,
 ) layout.Dimensions {
+	return ClickableSurfaceOutlined(gtx, clickable, bg, radius, SurfaceBorder{}, w)
+}
+
+func ClickableSurfaceOutlined(
+	gtx layout.Context,
+	clickable *widget.Clickable,
+	bg color.NRGBA,
+	radius unit.Dp,
+	border SurfaceBorder,
+	w layout.Widget,
+) layout.Dimensions {
+	if clickable == nil {
+		return SurfaceOutlined(gtx, bg, radius, border, w)
+	}
+
 	return clickable.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return Surface(gtx, bg, radius, w)
+		return SurfaceOutlined(gtx, bg, radius, border, w)
 	})
+}
+
+func drawBorder(
+	gtx layout.Context,
+	rect image.Rectangle,
+	radiusPx int,
+	border SurfaceBorder,
+) {
+	if border.Color.A == 0 || border.Width <= 0 {
+		return
+	}
+
+	widthPx := gtx.Dp(border.Width)
+	if widthPx <= 0 {
+		widthPx = 1
+	}
+
+	// Inset by half the stroke width so the border is drawn inside the surface bounds
+	// instead of being clipped at the edges.
+	inset := widthPx / 2
+	if inset < 1 {
+		inset = 1
+	}
+
+	borderRect := rect.Inset(inset)
+	if borderRect.Empty() {
+		return
+	}
+
+	borderRadius := radiusPx - inset
+	if borderRadius < 0 {
+		borderRadius = 0
+	}
+
+	rr := clip.UniformRRect(borderRect, borderRadius)
+
+	paint.FillShape(
+		gtx.Ops,
+		border.Color,
+		clip.Stroke{
+			Path:  rr.Path(gtx.Ops),
+			Width: float32(widthPx),
+		}.Op(),
+	)
+}
+
+func PxToDp(gtx layout.Context, px int) unit.Dp {
+	if gtx.Metric.PxPerDp <= 0 {
+		return unit.Dp(px)
+	}
+
+	return unit.Dp(float32(px) / gtx.Metric.PxPerDp)
 }

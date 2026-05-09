@@ -6,24 +6,32 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components"
-
+	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/dropdowns"
+	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/overlay"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/panel"
+	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/wgl/pkg/v2/gui/pages"
 )
 
 type SliderAppUI struct {
-	th *material.Theme
-
+	th           *material.Theme
+	Background   *panel.BackgroundPanel
 	ToggleButton widget.Clickable
+	settings     *pages.SettingsUI
 	Panel        *panel.SlidePanel
-	Dropdown     *components.Dropdown
+	Dropdown     *dropdowns.Dropdown
+	overlay      *overlay.Overlay
 }
 
 func NewSliderAppUI(th *material.Theme) *SliderAppUI {
 	return &SliderAppUI{
-		th:    th,
-		Panel: panel.NewSlidePanel(),
-		Dropdown: components.NewDropdown([]components.DropdownItem{
+		th:      th,
+		overlay: &overlay.Overlay{},
+		Background: panel.NewBackgroundPanel(theme.DefaultThemeClient).
+			WithRole(panel.BackgroundRoleBackground),
+		settings: pages.NewSettingsUI(theme.DefaultThemeClient),
+		Panel:    panel.NewSlidePanel(),
+		Dropdown: dropdowns.NewDropdown([]dropdowns.DropdownItem{
 			{Label: "Linear", Value: "linear"},
 			{Label: "Ease In", Value: "ease-in"},
 			{Label: "Ease Out", Value: "ease-out"},
@@ -33,24 +41,27 @@ func NewSliderAppUI(th *material.Theme) *SliderAppUI {
 }
 
 func (ui *SliderAppUI) Layout(gtx layout.Context) layout.Dimensions {
-	for ui.ToggleButton.Clicked(gtx) {
-		ui.Panel.Toggle()
-
-		// Newer Gio invalidation API.
+	if theme.DefaultThemeClient.ColorTweenRunning() {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
-	return layout.Stack{}.Layout(gtx,
-		// Main content.
-		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutMain(gtx)
-		}),
+	for ui.ToggleButton.Clicked(gtx) {
+		ui.Panel.Toggle()
+		gtx.Execute(op.InvalidateCmd{})
+	}
 
-		// Sliding panel overlay.
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			return ui.Panel.Layout(gtx, ui.th)
-		}),
-	)
+	return ui.Background.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return ui.overlay.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Stack{}.Layout(gtx,
+				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutMain(gtx)
+				}),
+				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+					return ui.Panel.Layout(gtx, ui.th)
+				}),
+			)
+		})
+	})
 }
 
 func (ui *SliderAppUI) layoutMain(gtx layout.Context) layout.Dimensions {
@@ -66,7 +77,12 @@ func (ui *SliderAppUI) layoutMain(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body1(ui.th, "Click the button to slide the side panel in and out.")
 				return lbl.Layout(gtx)
 			}),
-
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.settings.Layout(gtx, ui.overlay)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.Dropdown.Layout(gtx, ui.overlay)
+			}),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(24)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				item, ok := ui.Dropdown.SelectedItem()
