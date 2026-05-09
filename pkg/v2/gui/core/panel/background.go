@@ -44,6 +44,14 @@ func NewBackgroundPanel(tc *theme.Client) *BackgroundPanel {
 		FillMax: true,
 	}
 }
+func (p *BackgroundPanel) WithFillMax(fillMax bool) *BackgroundPanel {
+	if p == nil {
+		return p
+	}
+
+	p.FillMax = fillMax
+	return p
+}
 
 func (p *BackgroundPanel) WithRole(role BackgroundRole) *BackgroundPanel {
 	if p == nil {

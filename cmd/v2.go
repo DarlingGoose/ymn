@@ -63,6 +63,7 @@ func run(window *app.Window, appName string) error {
 	sliderApp := examples.NewSliderAppUI(theme)
 	sidebarApp := examples.NewSidebarAppUI(theme)
 	tabApp := examples.NewTabApp()
+	gridSidebar := examples.NewSidebarGridAppUI(theme)
 	for {
 		switch e := window.Event().(type) {
 		case app.DestroyEvent:
@@ -71,6 +72,8 @@ func run(window *app.Window, appName string) error {
 			// This graphics context is used for managing the rendering state.
 			gtx := app.NewContext(&ops, e)
 			switch appName {
+			case "grid":
+				gridSidebar.Layout(gtx)
 			case "tab":
 				tabApp.Layout(gtx)
 			case "slider":

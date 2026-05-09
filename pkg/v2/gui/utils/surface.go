@@ -133,3 +133,34 @@ func PxToDp(gtx layout.Context, px int) unit.Dp {
 
 	return unit.Dp(float32(px) / gtx.Metric.PxPerDp)
 }
+
+func RoundedSurface(
+	gtx layout.Context,
+	radius unit.Dp,
+	fill color.NRGBA,
+	w layout.Widget,
+) layout.Dimensions {
+	macro := op.Record(gtx.Ops)
+	dims := w(gtx)
+	call := macro.Stop()
+
+	rect := image.Rectangle{
+		Max: dims.Size,
+	}
+
+	rr := clip.RRect{
+		Rect: rect,
+		NE:   gtx.Dp(radius),
+		NW:   gtx.Dp(radius),
+		SE:   gtx.Dp(radius),
+		SW:   gtx.Dp(radius),
+	}
+
+	clipStack := rr.Push(gtx.Ops)
+	paint.Fill(gtx.Ops, fill)
+	clipStack.Pop()
+
+	call.Add(gtx.Ops)
+
+	return dims
+}

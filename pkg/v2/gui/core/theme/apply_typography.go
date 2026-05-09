@@ -1,9 +1,12 @@
 package theme
 
 import (
+	"image/color"
 	"strings"
 
 	"gioui.org/font"
+	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/widget/material"
 )
 
@@ -22,6 +25,16 @@ const (
 	TextRoleLabelSmall TextRole = "labelSmall"
 	TextRoleCode       TextRole = "code"
 	TextRoleCaption    TextRole = "caption"
+)
+
+type TextColorRole int
+
+const (
+	ThemeColorTextPrimary TextColorRole = iota
+	ThemeColorTextSecondary
+	ThemeColorTextMuted
+	ThemeColorTextInverse
+	ThemeColorOnPrimary
 )
 
 func ApplyTypography(
@@ -111,4 +124,55 @@ func fontWeight(weight int) font.Weight {
 	default:
 		return font.Black
 	}
+}
+
+func SelectTextColor(tokens *ColorTokens, role TextColorRole) color.NRGBA {
+	if tokens == nil {
+		return color.NRGBA{A: 255}
+	}
+
+	switch role {
+	case ThemeColorTextSecondary:
+		return tokens.TextSecondaryNRGBA()
+	case ThemeColorTextMuted:
+		return tokens.TextMutedNRGBA()
+	case ThemeColorTextInverse:
+		return tokens.TextInverseNRGBA()
+	case ThemeColorOnPrimary:
+		return tokens.OnPrimaryNRGBA()
+	case ThemeColorTextPrimary:
+		fallthrough
+	default:
+		return tokens.TextPrimaryNRGBA()
+	}
+}
+
+func ThemedLabel(
+	gtx layout.Context,
+	th *material.Theme,
+	tc *Client,
+	role TextRole,
+	colorRole TextColorRole,
+	text string,
+) layout.Dimensions {
+	if th == nil {
+		th = material.NewTheme()
+	}
+
+	if tc == nil {
+		tc = DefaultThemeClient
+	}
+
+	if tc.ColorTweenRunning() {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+
+	typography := tc.GetCurrentTypography()
+	colors := tc.GetCurrentColorToken()
+
+	lbl := material.Body1(th, text)
+	ApplyTypography(&lbl, typography, role)
+	lbl.Color = SelectTextColor(colors, colorRole)
+
+	return lbl.Layout(gtx)
 }
