@@ -3,6 +3,7 @@ package theme
 import (
 	"fmt"
 	"image/color"
+	"strings"
 
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
 )
@@ -18,6 +19,7 @@ type Theme struct {
 	Name        string      `json:"name" yaml:"name"`
 	LightColors ColorTokens `json:"lightColors" yaml:"lightColors"`
 	DarkColors  ColorTokens `json:"darkColors" yaml:"darkColors"`
+
 	//iconify name
 	IconName string `json:"iconName" yaml:"iconName"`
 }
@@ -31,10 +33,11 @@ type ColorTokens struct {
 	Divider    string `json:"divider,omitempty" yaml:"divider"`
 
 	// Text
-	TextPrimary   string `json:"textPrimary,omitempty" yaml:"textPrimary"`
-	TextSecondary string `json:"textSecondary,omitempty" yaml:"textSecondary"`
-	TextMuted     string `json:"textMuted,omitempty" yaml:"textMuted"`
-	TextInverse   string `json:"textInverse,omitempty" yaml:"textInverse"`
+	TextPrimary    string `json:"textPrimary,omitempty" yaml:"textPrimary"`
+	TextSecondary  string `json:"textSecondary,omitempty" yaml:"textSecondary"`
+	TextMuted      string `json:"textMuted,omitempty" yaml:"textMuted"`
+	TextInverse    string `json:"textInverse,omitempty" yaml:"textInverse"`
+	HighlightColor string `json:"highlightColor" yaml:"highlightColor"`
 
 	// Brand/action
 	Primary      string `json:"primary,omitempty" yaml:"primary"`
@@ -81,6 +84,7 @@ func (c ColorTokens) MustValidate() error {
 		"focusRing":      c.FocusRing,
 		"selection":      c.Selection,
 		"disabled":       c.Disabled,
+		"highlightColor": c.HighlightColor,
 	}
 
 	for name, value := range values {
@@ -109,6 +113,10 @@ func (c ColorTokens) BorderNRGBA() color.NRGBA {
 
 func (c ColorTokens) DividerNRGBA() color.NRGBA {
 	return utils.HexNRGBA(c.Divider)
+}
+
+func (c ColorTokens) HighLightColor() color.NRGBA {
+	return utils.HexNRGBA(c.HighlightColor)
 }
 
 func (c ColorTokens) TextPrimaryNRGBA() color.NRGBA {
@@ -177,4 +185,60 @@ func (c ColorTokens) SelectionNRGBA() color.NRGBA {
 
 func (c ColorTokens) DisabledNRGBA() color.NRGBA {
 	return utils.HexNRGBA(c.Disabled)
+}
+
+type HighlightPart struct {
+	Text      string
+	Highlight bool
+}
+
+func SplitHighlightParts(text, query string, caseSensitive bool) []HighlightPart {
+	if text == "" {
+		return nil
+	}
+
+	if query == "" {
+		return []HighlightPart{{Text: text}}
+	}
+
+	searchText := text
+	searchQuery := query
+
+	if !caseSensitive {
+		searchText = strings.ToLower(text)
+		searchQuery = strings.ToLower(query)
+	}
+
+	var parts []HighlightPart
+
+	offset := 0
+	for {
+		idx := strings.Index(searchText[offset:], searchQuery)
+		if idx < 0 {
+			if offset < len(text) {
+				parts = append(parts, HighlightPart{
+					Text: text[offset:],
+				})
+			}
+			break
+		}
+
+		start := offset + idx
+		end := start + len(searchQuery)
+
+		if start > offset {
+			parts = append(parts, HighlightPart{
+				Text: text[offset:start],
+			})
+		}
+
+		parts = append(parts, HighlightPart{
+			Text:      text[start:end],
+			Highlight: true,
+		})
+
+		offset = end
+	}
+
+	return parts
 }

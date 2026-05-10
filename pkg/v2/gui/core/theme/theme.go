@@ -57,12 +57,6 @@ func New(dir string, name string) *Client {
 		CurrentThemeName:      SlateCalm.Name,
 		CurrentTypographyName: DefaultTypography.Name,
 
-		loadedThemes: []*Theme{
-			&SlateCalm,
-			&ForestFocus,
-			&VioletProfessional,
-			&AmberPaper,
-		},
 		loadedTypography: []*TypographyTokens{
 			&DefaultTypography,
 		},
@@ -70,6 +64,16 @@ func New(dir string, name string) *Client {
 		currentTheme:      SlateCalm,
 		currentTypography: DefaultTypography,
 	}
+	c.loadedThemes = make([]*Theme, len(DefaultThemes))
+
+	for i, theme := range DefaultThemes {
+		if theme == nil {
+			continue
+		}
+
+		c.loadedThemes[i] = new(*theme)
+	}
+	copy(c.loadedThemes, DefaultThemes)
 
 	_ = c.EnsureDirs()
 
@@ -88,6 +92,7 @@ func New(dir string, name string) *Client {
 
 	return c
 }
+
 func (c *Client) GetCurrentMode() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -370,12 +375,14 @@ func (c *Client) ReloadCustomThemes() {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	base := make([]*Theme, len(DefaultThemes))
 
-	base := []*Theme{
-		&SlateCalm,
-		&ForestFocus,
-		&VioletProfessional,
-		&AmberPaper,
+	for i, theme := range DefaultThemes {
+		if theme == nil {
+			continue
+		}
+
+		base[i] = new(*theme)
 	}
 
 	c.loadedThemes = appendOrReplaceThemes(base, custom...)

@@ -55,8 +55,9 @@ namcap *.pkg.tar.zst
 * implement key press + keybinding
 * add more to panel
 * create a backroundapi interface that all gui pkgs hit so i can easly mock it
-* 
-
+* add a scrollbar
+* add exit button on sidebar
+* add a copy/highlight text component
 
 
 ## future features

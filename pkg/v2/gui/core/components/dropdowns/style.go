@@ -15,6 +15,7 @@ type dropdownStyle struct {
 	MenuBG         color.NRGBA
 	ItemHoverBG    color.NRGBA
 	ItemSelectedBG color.NRGBA
+	Outline        color.NRGBA
 
 	Text  color.NRGBA
 	Muted color.NRGBA
@@ -39,6 +40,7 @@ func (d *Dropdown) style() dropdownStyle {
 		MenuBG:         tokens.SurfaceNRGBA(),
 		ItemHoverBG:    tokens.SurfaceAltNRGBA(),
 		ItemSelectedBG: tokens.SelectionNRGBA(),
+		Outline:        tokens.PrimaryNRGBA(),
 
 		Text:  tokens.TextPrimaryNRGBA(),
 		Muted: tokens.TextMutedNRGBA(),

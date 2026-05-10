@@ -317,7 +317,7 @@ func (d *Dropdown) Layout(gtx layout.Context, layer *overlay.Overlay) layout.Dim
 		progress, positionRunning = d.Flip.Value(now)
 	}
 
-	bg := style.ButtonBG
+	bg := style.Outline
 	colorRunning := false
 	if d.BG != nil {
 		bg, colorRunning = d.BG.Value(now)
@@ -388,7 +388,7 @@ func (d *Dropdown) layoutButton(
 	gtx.Constraints.Min.Y = height
 	gtx.Constraints.Max.Y = height
 
-	return utils.ClickableSurfaceOutlined(gtx, &d.Button, bg, d.Radius, utils.SurfaceBorder{Color: style.ItemSelectedBG, Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
+	return utils.ClickableSurfaceOutlined(gtx, &d.Button, bg, d.Radius, utils.SurfaceBorder{Color: style.Outline, Width: unit.Dp(2)}, func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(d.Inset).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			label := "Select..."
 			if item, ok := d.SelectedItem(); ok {
@@ -464,7 +464,7 @@ func (d *Dropdown) layoutMenu(
 	gtx.Constraints.Max.Y = menuHeight
 
 	return utils.SurfaceOutlined(gtx, style.MenuBG, d.Radius, utils.SurfaceBorder{
-		Color: style.Muted,
+		Color: style.Outline,
 		Width: unit.Dp(1),
 	}, func(gtx layout.Context) layout.Dimensions {
 		clipStack := clip.UniformRRect(
