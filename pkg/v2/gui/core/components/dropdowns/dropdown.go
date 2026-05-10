@@ -45,8 +45,8 @@ type Dropdown struct {
 	Button         widget.Clickable
 	ItemsClickable []widget.Clickable
 
-	List layout.List
-
+	List          layout.List
+	Height        unit.Dp
 	Width         unit.Dp
 	ItemHeight    unit.Dp
 	MaxMenuHeight unit.Dp
@@ -72,8 +72,8 @@ func NewDropdown(items []DropdownItem) *Dropdown {
 		id:         fmt.Sprintf("dropdown-%d", id),
 		theme:      tc,
 		Controller: overlay.DefaultController,
-
-		Role: theme.TextRoleH3,
+		Height:     unit.Dp(44),
+		Role:       theme.TextRoleH3,
 
 		ArrowIconName: "lucide:chevron-down",
 		ArrowIconSize: unit.Dp(18),
@@ -113,6 +113,16 @@ func NewDropdown(items []DropdownItem) *Dropdown {
 		d.Selected = -1
 	}
 
+	return d
+}
+func (d *Dropdown) WithCompact() *Dropdown {
+	d.Width = unit.Dp(120)
+	d.Height = unit.Dp(24)
+	d.ItemHeight = unit.Dp(22)
+	d.MaxMenuHeight = unit.Dp(190)
+	d.Inset = unit.Dp(8)
+	d.ArrowIconSize = unit.Dp(14)
+	d.WithRole(theme.TextRoleCaption)
 	return d
 }
 func (d *Dropdown) WithArrowIcon(name string) *Dropdown {
@@ -336,7 +346,7 @@ func (d *Dropdown) Layout(gtx layout.Context, layer *overlay.Overlay) layout.Dim
 	}
 
 	width := gtx.Dp(d.Width)
-	buttonHeight := gtx.Dp(unit.Dp(44))
+	buttonHeight := gtx.Dp(d.Height)
 	itemHeight := gtx.Dp(d.ItemHeight)
 
 	fullMenuHeight := itemHeight * len(d.Items)
@@ -388,26 +398,37 @@ func (d *Dropdown) layoutButton(
 	gtx.Constraints.Min.Y = height
 	gtx.Constraints.Max.Y = height
 
-	return utils.ClickableSurfaceOutlined(gtx, &d.Button, bg, d.Radius, utils.SurfaceBorder{Color: style.Outline, Width: unit.Dp(2)}, func(gtx layout.Context) layout.Dimensions {
-		return layout.UniformInset(d.Inset).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			label := "Select..."
-			if item, ok := d.SelectedItem(); ok {
-				label = item.Label
-			}
+	return utils.ClickableSurfaceOutlined(
+		gtx,
+		&d.Button,
+		bg,
+		d.Radius,
+		utils.SurfaceBorder{Color: style.Outline, Width: unit.Dp(2)},
+		func(gtx layout.Context) layout.Dimensions {
+			inset := d.insetForHeight(gtx, height)
 
-			return layout.Flex{
-				Axis:      layout.Horizontal,
-				Alignment: layout.Middle,
-			}.Layout(gtx,
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return d.layoutText(gtx, style, label, style.Text)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return d.layoutArrowIcon(gtx, style)
-				}),
-			)
-		})
-	})
+			return inset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				label := "Select..."
+				if item, ok := d.SelectedItem(); ok {
+					label = item.Label
+				}
+
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{
+						Axis:      layout.Horizontal,
+						Alignment: layout.Middle,
+					}.Layout(gtx,
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							return d.layoutTextHeight(gtx, style, label, style.Text, height)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return d.layoutArrowIcon(gtx, style)
+						}),
+					)
+				})
+			})
+		},
+	)
 }
 
 func (d *Dropdown) layoutArrowIcon(
@@ -453,6 +474,38 @@ func (d *Dropdown) WithArrowIconSize(size unit.Dp) *Dropdown {
 	}
 
 	return d
+}
+
+func (d *Dropdown) insetForHeight(gtx layout.Context, height int) layout.Inset {
+	inset := d.Inset
+	if inset <= 0 {
+		inset = unit.Dp(8)
+	}
+
+	// Compact mode: avoid clipping text by removing vertical padding.
+	if height <= gtx.Dp(unit.Dp(28)) {
+		return layout.Inset{
+			Top:    unit.Dp(0),
+			Bottom: unit.Dp(0),
+			Left:   unit.Dp(8),
+			Right:  unit.Dp(8),
+		}
+	}
+
+	if height <= gtx.Dp(unit.Dp(34)) {
+		return layout.Inset{
+			Top:    unit.Dp(2),
+			Bottom: unit.Dp(2),
+			Left:   inset,
+			Right:  inset,
+		}
+	}
+
+	return layout.UniformInset(inset)
+}
+
+func (d *Dropdown) compactText(gtx layout.Context, height int) bool {
+	return height <= gtx.Dp(unit.Dp(30))
 }
 
 func (d *Dropdown) layoutMenu(
@@ -539,11 +592,38 @@ func (d *Dropdown) layoutItem(
 		bg,
 		corners,
 		func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(d.Inset).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return d.layoutText(gtx, style, item.Label, style.Text)
+			inset := d.insetForHeight(gtx, itemHeight)
+
+			return inset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return d.layoutTextHeight(gtx, style, item.Label, style.Text, itemHeight)
+				})
 			})
 		},
 	)
+}
+
+func (d *Dropdown) layoutTextHeight(
+	gtx layout.Context,
+	style dropdownStyle,
+	value string,
+	col color.NRGBA,
+	height int,
+) layout.Dimensions {
+	th := material.NewTheme()
+
+	lbl := material.Body1(th, value)
+	lbl.Color = col
+	lbl.Alignment = text.Middle
+
+	theme.ApplyTypography(&lbl, style.Typo, d.Role)
+
+	if d.compactText(gtx, height) {
+		lbl.TextSize = unit.Sp(12)
+		lbl.LineHeight = unit.Sp(14)
+	}
+
+	return lbl.Layout(gtx)
 }
 
 func (d *Dropdown) syncThemeTweens(now time.Time, style dropdownStyle) {

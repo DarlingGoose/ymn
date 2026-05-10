@@ -48,10 +48,7 @@ namcap *.pkg.tar.zst
   * tabs with animations
   * sidebar with tabs/animations
   * 
-* use theme in v2 gui pkg
-* icon button hover not working
-* dropdown component, wierd ness
-* add theme dropdown selector 
+
 * implement key press + keybinding
 * add more to panel
 * create a backroundapi interface that all gui pkgs hit so i can easly mock it

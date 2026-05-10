@@ -7,10 +7,15 @@ require (
 	github.com/DarlingGoose/bare v0.0.6
 	github.com/DarlingGoose/jpndict v0.0.10
 	github.com/DarlingGoose/vntext v0.0.13
+	github.com/faiface/beep v1.1.0
 	github.com/ikawaha/kagome-dict/ipa v1.2.6
 	github.com/ikawaha/kagome/v2 v2.11.0
 	github.com/spf13/cobra v1.10.2
+	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
+	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
+	golang.org/x/image v0.39.0
 	golang.org/x/text v0.36.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -18,7 +23,6 @@ require (
 	github.com/DarlingGoose/krkrxp3 v0.0.0-20260505150502-3453ff8b10be // indirect
 	github.com/PuerkitoBio/goquery v1.12.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
-	github.com/faiface/beep v1.1.0 // indirect
 	github.com/go-gst/go-glib v1.4.0 // indirect
 	github.com/go-gst/go-gst v1.4.0 // indirect
 	github.com/go-text/typesetting v0.3.0 // indirect
@@ -28,13 +32,9 @@ require (
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
-	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/exp/shiny v0.0.0-20260410095643-746e56fc9e2f // indirect
-	golang.org/x/image v0.39.0 // indirect
 	golang.org/x/mobile v0.0.0-20260410095206-2cfb76559b7b // indirect
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

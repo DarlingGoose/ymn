@@ -35,6 +35,9 @@ const (
 	ThemeColorTextMuted
 	ThemeColorTextInverse
 	ThemeColorOnPrimary
+	ThemeColorWarning
+	ThemeColorError
+	ThemeColorPrimary
 )
 
 func ApplyTypography(
@@ -132,6 +135,12 @@ func SelectTextColor(tokens *ColorTokens, role TextColorRole) color.NRGBA {
 	}
 
 	switch role {
+	case ThemeColorPrimary:
+		return tokens.PrimaryNRGBA()
+	case ThemeColorWarning:
+		return tokens.WarningNRGBA()
+	case ThemeColorError:
+		return tokens.DangerNRGBA()
 	case ThemeColorTextSecondary:
 		return tokens.TextSecondaryNRGBA()
 	case ThemeColorTextMuted:
