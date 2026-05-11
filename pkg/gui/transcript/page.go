@@ -187,7 +187,9 @@ package transcript
 //	lookupAddPending          map[string]bool
 //
 //	OnError     func(title, body string)
-//	OnNotify    func(title, body string, kind guitoast.NotificationType)
+//	OnNotify    func(title, body string, kin	//		rowTranslations:              make(map[string]string),
+//	//		rowTranslationShown:          make(map[string]bool),
+//	//		rowTranslationGenerating:     make(map[string]bool),d guitoast.NotificationType)
 //	OnDeleteLog func(config *vngame.Game) error
 //}
 //
@@ -2093,20 +2095,7 @@ package transcript
 //	})
 //}
 //
-//func (p *Page) layoutTranscriptEditor(gtx layout.Context) layout.Dimensions {
-//	rows := p.transcriptRows()
-//	if len(rows) == 0 {
-//		return p.layoutTranscriptIdleState(gtx)
-//	}
-//	return material.List(p.theme.Gio(), &p.transcriptList).Layout(gtx, len(rows), func(gtx layout.Context, index int) layout.Dimensions {
-//		if index < 0 || index >= len(rows) {
-//			return layout.Dimensions{}
-//		}
-//		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-//			return p.layoutTranscriptRow(gtx, rows[index])
-//		})
-//	})
-//}
+
 //
 //func (p *Page) layoutTranscriptRow(gtx layout.Context, row transcriptRow) layout.Dimensions {
 //	if row.Info {
@@ -2157,7 +2146,9 @@ package transcript
 //						lbl.TextSize = p.transcriptTextSize
 //						return lbl.Layout(gtx)
 //					}),
-//					layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+//					layout.Rigid(bareutils.S					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+//						return p.layoutTranscriptVoiceIcon(gtx, row)
+//					}),pacerW(unit.Dp(10))),
 //					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //						return p.layoutRowVocabIndicators(gtx, row.VocabWords)
 //					}),
@@ -2577,7 +2568,29 @@ package transcript
 //		return
 //	}
 //	p.lastAutoWord = word
-//	if p.hideReadingSet {
+//	if p.hideRead//func (p *Page) layoutTranscriptIdleState(gtx layout.Context) layout.Dimensions {
+////	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+////		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+////			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+////				lbl := material.H6(p.theme.Gio(), "Transcript Hidden")
+////				lbl.Color = p.theme.Color.Text
+////				return lbl.Layout(gtx)
+////			}),
+////			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+////			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+////				lbl := material.Body1(p.theme.Gio(), "Start the game to show live transcript text here.")
+////				lbl.Color = p.theme.Color.TextMuted
+////				return lbl.Layout(gtx)
+////			}),
+////			layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+////			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+////				lbl := material.Body1(p.theme.Gio(), "The flashcard composer stays on this page next to the transcript.")
+////				lbl.Color = p.theme.Color.TextMuted
+////				return lbl.Layout(gtx)
+////			}),
+////		)
+////	})
+////}ingSet {
 //		return
 //	}
 //	p.hideReadingInAnki.Value = util.ContainsKanji(word)

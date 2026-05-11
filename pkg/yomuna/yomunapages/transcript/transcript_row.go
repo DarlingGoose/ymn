@@ -1,13 +1,16 @@
 package transcript
 
 import (
+	"context"
 	"strings"
 	"sync"
 
+	"gioui.org/app"
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+	"github.com/DarlingGoose/wgl/pkg/translation"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
 	"github.com/google/uuid"
@@ -22,12 +25,19 @@ type transcriptRow struct {
 	Info    bool
 	Time    string
 }
+type rowTranslationResult struct {
+	Key    string
+	RowKey string
+	Entry  translation.Entry
+	Err    error
+}
 
 type transcriptFollower struct {
-	th                  *material.Theme
-	tc                  *theme.Client
-	transcriptList      widget.List
-	transcriptRowClicks map[string]*widget.Clickable
+	th                           *material.Theme
+	tc                           *theme.Client
+	transcriptList               widget.List
+	transcriptRowClicks          map[string]*widget.Clickable
+	transcriptRowTranslateClicks map[string]*widget.Clickable
 
 	selectedLineKey  string
 	selectedLineText string
@@ -41,11 +51,15 @@ type transcriptFollower struct {
 	iconRadius        unit.Dp
 	compactTimestamps bool
 
-	rowTranslationShown    map[string]bool
+	rowTranslationShown      map[string]bool
+	rowTranslations          map[string]string
+	rowTranslationGenerating map[string]bool
+
 	selectedTargetLanguage string
 
-	activeGameName string
-	selectedRow    func(row transcriptRow)
+	activeGameName   string
+	selectedRow      func(row transcriptRow)
+	translatorConfig translation.Config
 }
 
 func newTranscriptFollower(th *material.Theme) transcriptFollower {
@@ -53,24 +67,34 @@ func newTranscriptFollower(th *material.Theme) transcriptFollower {
 	transcriptList.Axis = layout.Vertical
 	transcriptList.ScrollToEnd = true
 	return transcriptFollower{
-		th:                     th,
-		tc:                     theme.DefaultThemeClient,
-		transcriptList:         transcriptList,
-		transcriptRowClicks:    make(map[string]*widget.Clickable),
+		th:                           th,
+		tc:                           theme.DefaultThemeClient,
+		transcriptList:               transcriptList,
+		transcriptRowClicks:          make(map[string]*widget.Clickable),
+		transcriptRowTranslateClicks: make(map[string]*widget.Clickable),
+		rowTranslations:              make(map[string]string),
+		rowTranslationGenerating:     make(map[string]bool),
+		rowTranslationShown:          map[string]bool{},
+
 		rowMutex:               sync.RWMutex{},
 		transcriptRows:         make([]transcriptRow, 0),
 		maxTranscriptRows:      200,         //todo add way to set this
 		fontSize:               unit.Sp(16), //allow this to be dynamicly set
 		radius:                 unit.Dp(12),
 		iconRadius:             unit.Dp(8),
-		rowTranslationShown:    map[string]bool{},
-		selectedTargetLanguage: "", //todo add way to set this
-		activeGameName:         "", //todo add way to set this
+		selectedTargetLanguage: "english", //todo add way to set this
+		activeGameName:         "",        //todo add way to set this
 		selectedRow: func(row transcriptRow) {
 
 		},
 	}
 }
+
+func (t *transcriptFollower) WithTranslatorConfig(cfg translation.Config) *transcriptFollower {
+	t.translatorConfig = cfg
+	return t
+}
+
 func (t *transcriptFollower) WithSelectedRow(sr func(row transcriptRow)) {
 	t.selectedRow = sr
 }
@@ -80,7 +104,11 @@ func (t *transcriptFollower) SetFoundSize(fontsize unit.Sp) {
 func (t *transcriptFollower) SetGame(gameName string) {
 	//clear last logs if diff than current
 	// clear all maps as wel
+}
 
+func (t *transcriptFollower) Reset(gameName string) {
+	//clear last logs if diff than current
+	// clear all maps as wel
 }
 
 func (t *transcriptFollower) SetCompactTimestamp(compact bool) {
@@ -165,6 +193,11 @@ func (t *transcriptFollower) HandeEvents(gtx layout.Context) {
 			t.selectTranscriptRow(key)
 		}
 	}
+	for key, click := range t.transcriptRowTranslateClicks {
+		for click.Clicked(gtx) {
+			t.toggleTranscriptRowTranslation(context.Background(), key)
+		}
+	}
 }
 func (t *transcriptFollower) transcriptRowByKey(key string) (transcriptRow, bool) {
 	for _, row := range t.transcriptRows {
@@ -199,18 +232,17 @@ func (t *transcriptFollower) currentTranscriptRowKey() string {
 }
 
 func (t *transcriptFollower) transcriptRowDisplayText(row transcriptRow) string {
-	//if !t.isTranscriptRowTranslationShown(row) {
-	//	return row.Text
-	//}
-	//key := t.rowTranslationCacheKey(row)
-	//if t.rowTranslationGenerating[key] {
-	//	return "Translating..."
-	//}
-	//if text := strings.TrimSpace(t.rowTranslations[key]); text != "" {
-	//	return text
-	//}
-	//return row.Text
-	return row.Text //todo
+	if !t.isTranscriptRowTranslationShown(row) {
+		return row.Text
+	}
+	key := t.rowTranslationCacheKey(row)
+	if t.rowTranslationGenerating[key] {
+		return "Translating..."
+	}
+	if text := strings.TrimSpace(t.rowTranslations[key]); text != "" {
+		return text
+	}
+	return row.Text
 }
 
 func (t *transcriptFollower) isTranscriptRowTranslationShown(row transcriptRow) bool {
@@ -239,4 +271,39 @@ func (t *transcriptFollower) selectTranscriptRow(key string) {
 		t.selectedRow(row)
 		return
 	}
+}
+
+func (t *transcriptFollower) transcriptRowTranslateClickable(key string) *widget.Clickable {
+	if t.transcriptRowTranslateClicks == nil {
+		t.transcriptRowTranslateClicks = make(map[string]*widget.Clickable)
+	}
+	if t.transcriptRowTranslateClicks[key] == nil {
+		t.transcriptRowTranslateClicks[key] = new(widget.Clickable)
+	}
+	return t.transcriptRowTranslateClicks[key]
+}
+
+func (t *transcriptFollower) generateTranscriptRowTranslation(ctx context.Context, w *app.Window, row transcriptRow, key string) {
+	if key == "" || t.rowTranslationGenerating[key] {
+		return
+	}
+	source := utils.CleanInlineText(row.Text)
+	if source == "" {
+		return
+	}
+	t.rowTranslationGenerating[key] = true
+	gameName := t.activeGameName
+	targetLanguage := t.selectedTargetLanguage
+	cfg := t.translatorConfig
+	go func() {
+		entry, err := translation.Generate(ctx, cfg, gameName, source, targetLanguage)
+		result := rowTranslationResult{Key: key, RowKey: row.Key, Entry: entry, Err: err}
+		delete(t.rowTranslationGenerating, result.Key)
+		t.rowTranslations[result.Key] = result.Entry.Translation
+		t.rowTranslationShown[result.RowKey] = true
+
+		if w != nil {
+			w.Invalidate()
+		}
+	}()
 }

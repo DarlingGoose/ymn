@@ -3,7 +3,6 @@ package transcript
 import (
 	"context"
 	"strings"
-	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -73,14 +72,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 
 		//ui.StartFollowingGame(context.Background(), g)
 	})
-	go func() {
-		for range 20 {
-			ui.transcriptFollower.AddRows(transcriptRow{
-				Time: time.Now().Format(time.RFC3339),
-				Text: "hello there:" + time.Now().Format("04:05")})
-			time.Sleep(time.Second)
-		}
-	}()
+
 	ui.ReloadGames()
 	return ui
 }

@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"context"
 	"image/color"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
+	"github.com/DarlingGoose/wgl/pkg/translation"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/iconify"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
@@ -17,8 +19,7 @@ import (
 func (t *transcriptFollower) Layout(gtx layout.Context) layout.Dimensions {
 	rows := t.GetRows()
 	if len(rows) == 0 {
-		return layout.Dimensions{}
-		//return p.layoutTranscriptIdleState(gtx)
+		return t.layoutTranscriptIdleState(gtx)
 	}
 	return material.List(t.th, &t.transcriptList).Layout(gtx, len(t.GetRows()), func(gtx layout.Context, index int) layout.Dimensions {
 		if index < 0 || index >= len(t.transcriptRows) {
@@ -32,6 +33,30 @@ func (t *transcriptFollower) Layout(gtx layout.Context) layout.Dimensions {
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return t.layoutTranscriptRow(gtx, rows[index])
 		})
+	})
+}
+
+func (t *transcriptFollower) layoutTranscriptIdleState(gtx layout.Context) layout.Dimensions {
+	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.H6(t.th, "Transcript Hidden")
+				lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
+				return lbl.Layout(gtx)
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body1(t.th, "Start the game to show live transcript text here.")
+				lbl.Color = t.tc.GetCurrentColorToken().TextMutedNRGBA()
+				return lbl.Layout(gtx)
+			}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body1(t.th, "The flashcard composer stays on this page next to the transcript.")
+				lbl.Color = t.tc.GetCurrentColorToken().TextMutedNRGBA()
+				return lbl.Layout(gtx)
+			}),
+		)
 	})
 }
 
@@ -89,10 +114,31 @@ func (t *transcriptFollower) layoutTranscriptRow(gtx layout.Context, row transcr
 						lbl.TextSize = t.fontSize
 						return lbl.Layout(gtx)
 					}),
+					layout.Rigid(utils.SpacerW(unit.Dp(8))),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return t.layoutTranscriptTranslateIcon(gtx, row)
+					}),
 				)
 			})
 		})
 	})
+}
+
+func (t *transcriptFollower) layoutTranscriptTranslateIcon(gtx layout.Context, row transcriptRow) layout.Dimensions {
+	enabled := strings.TrimSpace(row.Text) != "" && strings.TrimSpace(t.selectedTargetLanguage) != ""
+	if !enabled {
+		return t.layoutRowIcon(gtx, "mdi:translate", false, false)
+	}
+	click := t.transcriptRowTranslateClickable(row.Key)
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		icon := "mdi:translate"
+		if t.isTranscriptRowTranslationShown(row) {
+			icon = "mdi:translate-off"
+		}
+		return t.layoutRowIcon(gtx, icon, true, click.Hovered())
+	})
+
 }
 
 func (t *transcriptFollower) layoutTranscriptSpeaker(gtx layout.Context, speaker string, selected bool) layout.Dimensions {
@@ -139,7 +185,7 @@ func (t *transcriptFollower) layoutTranscriptInfoRow(gtx layout.Context, row tra
 				}),
 				layout.Rigid(utils.SpacerW(unit.Dp(14))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return t.layoutRowIcon(gtx, "mdi:information-outline", true)
+					return t.layoutRowIcon(gtx, "mdi:information-outline", true, false)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					//todo update themed lable to allow for more dynamic sizes
@@ -150,13 +196,20 @@ func (t *transcriptFollower) layoutTranscriptInfoRow(gtx layout.Context, row tra
 	})
 }
 
-func (t *transcriptFollower) layoutRowIcon(gtx layout.Context, icon string, enabled bool) layout.Dimensions {
-	clr := t.tc.GetCurrentColorToken().TextMutedNRGBA()
+func (t *transcriptFollower) layoutRowIcon(gtx layout.Context, icon string, enabled bool, hovered bool) layout.Dimensions {
+	clr := t.tc.GetCurrentColorToken().PrimaryNRGBA()
+	bg := t.tc.GetCurrentColorToken().SurfaceNRGBA()
 	if !enabled {
+		clr = t.tc.GetCurrentColorToken().TextMutedNRGBA()
 		clr = color.NRGBA{R: clr.R, G: clr.G, B: clr.B, A: 80}
+		bg = t.tc.GetCurrentColorToken().DisabledNRGBA()
 	}
+	if hovered {
+		bg = color.NRGBA{R: clr.R, G: clr.G, B: clr.B, A: 54}
+	}
+
 	return layout.Inset{Left: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return bareutils.RoundedSurface(gtx, color.NRGBA{}, unit.Dp(t.iconRadius), func(gtx layout.Context) layout.Dimensions {
+		return utils.RoundedSurface(gtx, unit.Dp(t.iconRadius), bg, func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(5)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return iconify.DefaultIconify.Layout(gtx, icon, unit.Dp(16), clr)
 			})
@@ -184,4 +237,37 @@ func (t *transcriptFollower) transcriptTimestampText(timestamp string) string {
 		return fields[len(fields)-1]
 	}
 	return timestamp
+}
+
+func (t *transcriptFollower) toggleTranscriptRowTranslation(ctx context.Context, rowKey string) {
+	row, ok := t.transcriptRowByKey(rowKey)
+	if !ok || row.Info {
+		return
+	}
+	if t.rowTranslationShown[row.Key] {
+		t.rowTranslationShown[row.Key] = false
+		return
+	}
+	key := t.rowTranslationCacheKey(row)
+	if key == "" {
+		//t.showError("Translate Row Failed", "Select a target language before translating a row.")
+		return
+	}
+	if _, ok := t.rowTranslations[key]; ok {
+		t.rowTranslationShown[row.Key] = true
+		return
+	}
+	//todo move to backend
+	entry, ok, err := translation.Load(t.activeGameName, row.Text, t.selectedTargetLanguage)
+	if err != nil {
+		//p.showError("Translate Row Failed", err.Error())
+		return
+	}
+	if ok {
+		t.rowTranslations[key] = entry.Translation
+		t.rowTranslationShown[row.Key] = true
+		return
+	}
+	t.rowTranslationShown[row.Key] = true
+	//p.generateTranscriptRowTranslation(ctx, w, row, key)
 }
