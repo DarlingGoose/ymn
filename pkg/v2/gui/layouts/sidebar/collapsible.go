@@ -16,6 +16,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/tabs"
@@ -51,6 +52,12 @@ type CollapsibleSidebar struct {
 
 	CollapsedInset unit.Dp
 
+	// ShowExitButton renders an optional exit action pinned to the bottom of the sidebar.
+	ShowExitButton bool
+	ExitButtonText string
+	ExitButtonIcon string
+	ExitButton     *widget.Clickable
+
 	Title string
 	Icon  string
 	Image image.Image
@@ -61,9 +68,10 @@ type CollapsibleSidebar struct {
 
 	theme *theme.Client
 
-	drag   bool
-	dragID pointer.ID
-	dragX  float32
+	drag     bool
+	dragID   pointer.ID
+	dragX    float32
+	exitFunc func(gtx layout.Context)
 }
 
 const defaultBarWidth = unit.Dp(8)
@@ -84,6 +92,9 @@ func NewCollapsibleSidebar(tabLayout *tabs.Layout) *CollapsibleSidebar {
 			tween.EaseOutCubic,
 			tokens.SurfaceNRGBA(),
 		),
+		exitFunc: func(gtx layout.Context) {
+
+		},
 		Rotation: tween.NewRotationTweenDeg(
 			180*time.Millisecond,
 			tween.EaseOutCubic,
@@ -112,7 +123,66 @@ func NewCollapsibleSidebar(tabLayout *tabs.Layout) *CollapsibleSidebar {
 			WithThemeClient(tc),
 		HeaderGap:   unit.Dp(18),
 		HeaderInset: unit.Dp(12),
+
+		ShowExitButton: false,
+		ExitButtonText: "Exit",
+		ExitButtonIcon: "lucide:log-out",
+		ExitButton:     &widget.Clickable{},
 	}
+}
+func (s *CollapsibleSidebar) WithExitFunc(ef func(gtx layout.Context)) *CollapsibleSidebar {
+	if s == nil {
+		return s
+	}
+	s.exitFunc = ef
+	return s
+}
+func (s *CollapsibleSidebar) WithExitButton(show bool) *CollapsibleSidebar {
+	if s == nil {
+		return s
+	}
+
+	s.ShowExitButton = show
+	if s.ExitButton == nil {
+		s.ExitButton = &widget.Clickable{}
+	}
+	if s.ExitButtonText == "" {
+		s.ExitButtonText = "Exit"
+	}
+	if s.ExitButtonIcon == "" {
+		s.ExitButtonIcon = "lucide:log-out"
+	}
+	return s
+}
+func (s *CollapsibleSidebar) WithExitButtonText(text string) *CollapsibleSidebar {
+	if s == nil {
+		return s
+	}
+	s.ExitButtonText = strings.TrimSpace(text)
+	return s
+}
+
+func (s *CollapsibleSidebar) WithExitButtonIcon(icon string) *CollapsibleSidebar {
+	if s == nil {
+		return s
+	}
+	s.ExitButtonIcon = strings.TrimSpace(icon)
+	return s
+}
+
+func (s *CollapsibleSidebar) ExitClicked(gtx layout.Context) bool {
+	if s == nil || s.ExitButton == nil || !s.ShowExitButton {
+		return false
+	}
+
+	clicked := false
+	for s.ExitButton.Clicked(gtx) {
+		clicked = true
+	}
+	if clicked {
+		s.exitFunc(gtx)
+	}
+	return clicked
 }
 
 func (s *CollapsibleSidebar) WithTitle(title string) *CollapsibleSidebar {
@@ -521,6 +591,18 @@ func (s *CollapsibleSidebar) LayoutTabButtonGroupsOnly(gtx layout.Context) layou
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return s.layoutTabButtonGroup(gtx, style, pinned, collapsed)
 		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !s.ShowExitButton {
+				return layout.Dimensions{}
+			}
+			if len(pinned) > 0 {
+				return layout.Spacer{Height: s.ButtonGap}.Layout(gtx)
+			}
+			return layout.Dimensions{}
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return s.layoutExitButton(gtx, style, collapsed)
+		}),
 	)
 }
 
@@ -835,6 +917,10 @@ type sidebarStyle struct {
 
 	Text      color.NRGBA
 	TextMuted color.NRGBA
+
+	TextInverse color.NRGBA
+	Danger      color.NRGBA
+	DangerMuted color.NRGBA
 }
 
 func (s *CollapsibleSidebar) style() sidebarStyle {
@@ -860,7 +946,108 @@ func (s *CollapsibleSidebar) style() sidebarStyle {
 		ActiveBorder: tokens.PrimaryNRGBA(),
 		HoverBG:      tokens.SurfaceAltNRGBA(),
 
-		Text:      tokens.TextPrimaryNRGBA(),
-		TextMuted: tokens.TextMutedNRGBA(),
+		Text:        tokens.TextPrimaryNRGBA(),
+		TextMuted:   tokens.TextMutedNRGBA(),
+		Danger:      tokens.DangerNRGBA(),
+		DangerMuted: withAlpha(tokens.DangerNRGBA(), 36),
 	}
+}
+func withAlpha(c color.NRGBA, a uint8) color.NRGBA {
+	c.A = a
+	return c
+}
+
+func (s *CollapsibleSidebar) layoutExitButton(
+	gtx layout.Context,
+	style sidebarStyle,
+	collapsed bool,
+) layout.Dimensions {
+	if s == nil || !s.ShowExitButton {
+		return layout.Dimensions{}
+	}
+	if s.ExitButton == nil {
+		s.ExitButton = &widget.Clickable{}
+	}
+
+	for s.ExitButton.Clicked(gtx) {
+		s.exitFunc(gtx)
+	}
+
+	bg := color.NRGBA{}
+	border := utils.SurfaceBorder{}
+	textColor := style.Danger
+	if s.ExitButton.Hovered() {
+		bg = style.DangerMuted
+		border = utils.SurfaceBorder{Color: style.Danger, Width: unit.Dp(1)}
+	}
+	if s.ExitButton.Pressed() {
+		bg = style.Danger
+		textColor = style.TextInverse
+	}
+
+	name := s.ExitButtonText
+	if name == "" {
+		name = "Exit"
+	}
+	icon := s.ExitButtonIcon
+	if icon == "" {
+		icon = "lucide:log-out"
+	}
+
+	btn := tabs.Button{
+		Name:      name,
+		Icon:      icon,
+		Clickable: s.ExitButton,
+	}
+
+	return s.ExitButton.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		if collapsed {
+			size := gtx.Dp(s.CollapsedButtonSize)
+			if size <= 0 {
+				size = 40
+			}
+
+			buttonGtx := gtx
+			buttonGtx.Constraints.Min.X = size
+			buttonGtx.Constraints.Max.X = size
+			buttonGtx.Constraints.Min.Y = size
+			buttonGtx.Constraints.Max.Y = size
+
+			return utils.SurfaceOutlined(
+				buttonGtx,
+				bg,
+				s.ButtonRad,
+				border,
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return s.layoutTabIcon(gtx, btn.Icon, textColor)
+					})
+				},
+			)
+		}
+
+		return utils.SurfaceOutlined(
+			gtx,
+			bg,
+			s.ButtonRad,
+			border,
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.UniformInset(s.ButtonInset).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return s.layoutTabIcon(gtx, btn.Icon, textColor)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body1(material.NewTheme(), btn.Name)
+							lbl.Color = textColor
+							lbl.Alignment = text.Middle
+							theme.ApplyTypography(&lbl, style.Typo, theme.TextRoleLabel)
+							return lbl.Layout(gtx)
+						}),
+					)
+				})
+			},
+		)
+	})
 }

@@ -164,3 +164,59 @@ func RoundedSurface(
 
 	return dims
 }
+
+//func LayoutStatusPill(gtx layout.Context, th *material.Theme, ct *theme.ColorTokens, text string, live bool) layout.Dimensions {
+//	bg := ct.SurfaceAltNRGBA()
+//	fg := ct.TextMutedNRGBA()
+//
+//	if live {
+//		fg = ct.OnPrimaryNRGBA()
+//		bg = ct.PrimaryNRGBA()
+//	}
+//
+//	return RoundedSurfaceWrap(
+//		gtx,
+//		bg,
+//		unit.Dp(20),
+//		func(gtx layout.Context) layout.Dimensions {
+//			return layout.Inset{
+//				Top:    unit.Dp(7),
+//				Bottom: unit.Dp(7),
+//				Left:   unit.Dp(10),
+//				Right:  unit.Dp(10),
+//			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+//				lbl := material.Body2(th, text)
+//				lbl.Color = fg
+//				return lbl.Layout(gtx)
+//			})
+//		},
+//	)
+//}
+
+func RoundedSurfaceWrap(
+	gtx layout.Context,
+	bg color.NRGBA,
+	radius unit.Dp,
+	w layout.Widget,
+) layout.Dimensions {
+	macro := op.Record(gtx.Ops)
+
+	dims := w(gtx)
+
+	call := macro.Stop()
+
+	rr := clip.RRect{
+		Rect: image.Rectangle{
+			Max: dims.Size,
+		},
+		NE: int(gtx.Dp(radius)),
+		NW: int(gtx.Dp(radius)),
+		SE: int(gtx.Dp(radius)),
+		SW: int(gtx.Dp(radius)),
+	}
+
+	paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
+	call.Add(gtx.Ops)
+
+	return dims
+}

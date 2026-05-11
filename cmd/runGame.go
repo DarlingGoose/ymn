@@ -7,8 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DarlingGoose/vntext/pkg/gameConfig"
-	"github.com/DarlingGoose/vntext/pkg/runner"
+	//"github.com/DarlingGoose/vntext/pkg/runner"
 	"github.com/DarlingGoose/wgl/pkg/util"
 	"github.com/spf13/cobra"
 )
@@ -25,45 +24,45 @@ var runGameCmd = &cobra.Command{
 	Short:   "Launch a previously added game",
 	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name := strings.TrimSpace(runGameName)
-		if name == "" && len(args) > 0 {
-			name = strings.TrimSpace(args[0])
-		}
-		if name == "" {
-			return fmt.Errorf("game name is required")
-		}
-
-		configs, err := loadInstalledGameConfigs()
-		if err != nil {
-			return err
-		}
-		cfg, err := gameConfig.FindInstalledGame(configs, name)
-		if err != nil {
-			return err
-		}
-
-		if cmd.Flags().Changed("virtual-desktop") {
-			cfg.VirtualDesktop = strings.TrimSpace(runGameVirtualDesktop)
-		}
-		if runGameDisableVirtualDesktop {
-			cfg.VirtualDesktop = "off"
-		}
-
-		if runGameSaveLauncher {
-			path, err := writeGameDesktopLauncher(cfg.Name, cfg.IconPath, cfg.VirtualDesktop)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Wrote launcher: %s\n", path)
-		}
-
-		status, err := runner.New().Run(cfg)
-		if err != nil {
-			return err
-		}
-		if status != nil && strings.TrimSpace(status.Message) != "" {
-			fmt.Fprintln(cmd.OutOrStdout(), status.Message)
-		}
+		//name := strings.TrimSpace(runGameName)
+		//if name == "" && len(args) > 0 {
+		//	name = strings.TrimSpace(args[0])
+		//}
+		//if name == "" {
+		//	return fmt.Errorf("game name is required")
+		//}
+		//
+		//configs, err := loadInstalledGameConfigs()
+		//if err != nil {
+		//	return err
+		//}
+		//cfg, err := gameConfig.FindInstalledGame(configs, name)
+		//if err != nil {
+		//	return err
+		//}
+		//
+		//if cmd.Flags().Changed("virtual-desktop") {
+		//	cfg.VirtualDesktop = strings.TrimSpace(runGameVirtualDesktop)
+		//}
+		//if runGameDisableVirtualDesktop {
+		//	cfg.VirtualDesktop = "off"
+		//}
+		//
+		//if runGameSaveLauncher {
+		//	path, err := writeGameDesktopLauncher(cfg.Name, cfg.IconPath, cfg.VirtualDesktop)
+		//	if err != nil {
+		//		return err
+		//	}
+		//	fmt.Fprintf(cmd.OutOrStdout(), "Wrote launcher: %s\n", path)
+		//}
+		//
+		//status, err := runner.New().Run(cfg)
+		//if err != nil {
+		//	return err
+		//}
+		//if status != nil && strings.TrimSpace(status.Message) != "" {
+		//	fmt.Fprintln(cmd.OutOrStdout(), status.Message)
+		//}
 		return nil
 	},
 }

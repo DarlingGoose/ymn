@@ -40,3 +40,12 @@ func Acronym(s string) string {
 
 	return strings.ToUpper(string(out))
 }
+
+func CleanInlineText(text string) string {
+	text = strings.ReplaceAll(text, `\n`, " ")
+	text = strings.ReplaceAll(text, "\r\n", " ")
+	text = strings.ReplaceAll(text, "\r", " ")
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\t", " ")
+	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+}

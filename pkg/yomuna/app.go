@@ -21,7 +21,9 @@ import (
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/layouts/sidebar"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/pages"
+	"github.com/DarlingGoose/wgl/pkg/yomuna/backend"
 	"github.com/DarlingGoose/wgl/pkg/yomuna/yomunapages"
+	"github.com/DarlingGoose/wgl/pkg/yomuna/yomunapages/transcript"
 )
 
 type App struct {
@@ -35,8 +37,8 @@ type App struct {
 	Overlay      *overlay.Overlay
 
 	Translation *yomunapages.TranslationUI
-	//Transcript  *guitranscript.Page
-	Settings *pages.SettingsUI
+	Transcript  *transcript.TranscriptUI
+	Settings    *pages.SettingsUI
 
 	legacySettings *guisettings.Settings
 	legacyTheme    barethemes.Theme
@@ -53,11 +55,13 @@ func New(initialSource string) *App {
 	}
 	legacyIconify := bareicons.NewIconify()
 
+	b := backend.NewLive()
 	ui := &App{
 		th:             th,
 		theme:          tc,
 		ctx:            context.Background(),
 		Overlay:        &overlay.Overlay{},
+		Transcript:     transcript.NewTranscriptUI(th, tc, b),
 		Translation:    yomunapages.NewTranslationUI(th, tc).WithSource(initialSource),
 		Settings:       pages.NewSettingsUI(tc),
 		legacySettings: legacySettings,
@@ -72,9 +76,9 @@ func New(initialSource string) *App {
 	ui.ToggleButton.IconSize = unit.Dp(20)
 
 	appTabs := tabs.New(
-		//tabs.NewTabFunc("transcript", "Transcript", "lucide:file-text", func(gtx layout.Context) layout.Dimensions {
-		//	return ui.Transcript.LayoutPage(gtx)
-		//}),
+		tabs.NewTabFunc("transcript", "Transcript", "lucide:file-text", func(gtx layout.Context) layout.Dimensions {
+			return ui.Transcript.Layout(gtx, ui.ctx)
+		}),
 		tabs.NewTabFunc("translation", "Translation", "lucide:languages", func(gtx layout.Context) layout.Dimensions {
 			return ui.Translation.Layout(gtx, ui.ctx)
 		}),
@@ -86,7 +90,8 @@ func New(initialSource string) *App {
 	ui.Sidebar = sidebar.NewCollapsibleSidebar(appTabs).
 		WithThemeClient(tc).
 		WithTitle("Yomuna").
-		WithIcon("lucide:book-open")
+		WithIcon("lucide:book-open").
+		WithExitButton(true)
 
 	return ui
 }
@@ -101,7 +106,9 @@ func (ui *App) Run(ctx context.Context) error {
 	go func() {
 		window := new(gioapp.Window)
 		window.Option(gioapp.Title("Yomuna v2"), gioapp.Size(unit.Dp(1180), unit.Dp(820)))
-
+		ui.Sidebar.WithExitFunc(func(gtx layout.Context) {
+			window.Perform(system.ActionClose)
+		})
 		go func() {
 			<-ctx.Done()
 			window.Perform(system.ActionClose)
