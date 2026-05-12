@@ -35,6 +35,8 @@ type SentenceAnalysis struct {
 	focusedTokenClicks  map[string]*widget.Clickable
 	furiganaHiddenClick widget.Clickable
 	furiganaAboveClick  widget.Clickable
+	lookupFontDownClick widget.Clickable
+	lookupFontUpClick   widget.Clickable
 
 	autoTranslate bool
 
@@ -54,6 +56,7 @@ type SentenceAnalysis struct {
 	lookupQuery      string
 	lookupTokenKey   string
 	lookupList       widget.List
+	lookupFontSize   unit.Sp
 	invalidate       func()
 
 	sentenceFontSize  unit.Sp
@@ -79,6 +82,7 @@ func NewSentenceAnalysis(th *material.Theme, backend backend.Backend) *SentenceA
 		furigiganFontSize:      unit.Sp(12),
 		structureList:          structureList,
 		lookupList:             lookupList,
+		lookupFontSize:         unit.Sp(14),
 		focusedTokenClicks:     make(map[string]*widget.Clickable),
 	}
 }
@@ -141,12 +145,34 @@ func (t *SentenceAnalysis) HandeEvents(gtx layout.Context) {
 	for t.furiganaAboveClick.Clicked(gtx) {
 		t.focusedFuriganaMode = focusedFuriganaAbove
 	}
+	for t.lookupFontDownClick.Clicked(gtx) {
+		t.adjustLookupFontSize(-1)
+	}
+	for t.lookupFontUpClick.Clicked(gtx) {
+		t.adjustLookupFontSize(1)
+	}
 	for key, click := range t.focusedTokenClicks {
 		for click.Clicked(gtx) {
 			t.selectFocusedToken(key)
 		}
 	}
 }
+
+func (t *SentenceAnalysis) adjustLookupFontSize(delta unit.Sp) {
+	next := t.lookupFontSize + delta
+	if next < unit.Sp(11) {
+		next = unit.Sp(11)
+	}
+	if next > unit.Sp(24) {
+		next = unit.Sp(24)
+	}
+	if next == t.lookupFontSize {
+		return
+	}
+	t.lookupFontSize = next
+	t.invalidateUI()
+}
+
 func structureFlashcardWord(token japanese.Token) string {
 	switch token.POSMajor() {
 	case "動詞", "形容詞":
@@ -156,6 +182,11 @@ func structureFlashcardWord(token japanese.Token) string {
 	}
 }
 func (t *SentenceAnalysis) selectFocusedToken(key string) {
+	if key != "" && t.selectedFocusedTokenKey == key {
+		t.clearFocusedLookup()
+		t.invalidateUI()
+		return
+	}
 	text := t.structureSourceText()
 	analysis, err := japanese.AnalyzeSentence(text)
 	//analysis, errText := t.currentStructureAnalysis()

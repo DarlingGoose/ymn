@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"gioui.org/font"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/unit"
@@ -393,13 +394,47 @@ func (t *SentenceAnalysis) layoutLookupHeader(gtx layout.Context, query string, 
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(t.th, query)
 			theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleLabel)
+			t.applyLookupTextStyle(&lbl, 2)
 			lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutLookupFontControls(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleCaption, theme.ThemeColorTextMuted, status)
 		}),
 	)
+}
+
+func (t *SentenceAnalysis) layoutLookupFontControls(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutLookupFontButton(gtx, &t.lookupFontDownClick, "A-")
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(4))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutLookupFontButton(gtx, &t.lookupFontUpClick, "A+")
+		}),
+	)
+}
+
+func (t *SentenceAnalysis) layoutLookupFontButton(gtx layout.Context, click *widget.Clickable, text string) layout.Dimensions {
+	ct := t.tc.GetCurrentColorToken()
+	bg := color.NRGBA{A: 0}
+	if click.Hovered() {
+		bg = ct.SurfaceNRGBA()
+	}
+	return utils.ClickableSurface(gtx, click, bg, unit.Dp(6), func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(7), Right: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(t.th, text)
+			theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleCaption)
+			lbl.Color = ct.TextMutedNRGBA()
+			return lbl.Layout(gtx)
+		})
+	})
 }
 
 func (t *SentenceAnalysis) layoutLookupResults(gtx layout.Context, results []*jpndict.Response) layout.Dimensions {
@@ -433,7 +468,11 @@ func (t *SentenceAnalysis) layoutLookupResult(gtx layout.Context, resp *jpndict.
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleLabel, theme.ThemeColorTextPrimary, headword)
+					lbl := material.Body2(t.th, headword)
+					theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleLabel)
+					t.applyLookupTextStyle(&lbl, 1)
+					lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
+					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -442,6 +481,7 @@ func (t *SentenceAnalysis) layoutLookupResult(gtx layout.Context, resp *jpndict.
 					}
 					lbl := material.Body2(t.th, reading)
 					theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleCaption)
+					t.applyLookupTextStyle(&lbl, -1)
 					lbl.Color = t.tc.GetCurrentColorToken().SecondaryNRGBA()
 					return lbl.Layout(gtx)
 				}),
@@ -452,10 +492,27 @@ func (t *SentenceAnalysis) layoutLookupResult(gtx layout.Context, resp *jpndict.
 				return layout.Dimensions{}
 			}
 			return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleBodySmall, theme.ThemeColorTextMuted, meaning)
+				lbl := material.Body2(t.th, meaning)
+				theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleBodySmall)
+				t.applyLookupTextStyle(&lbl, 0)
+				lbl.Color = t.tc.GetCurrentColorToken().TextMutedNRGBA()
+				return lbl.Layout(gtx)
 			})
 		}),
 	)
+}
+
+func (t *SentenceAnalysis) applyLookupTextStyle(lbl *material.LabelStyle, offset unit.Sp) {
+	if lbl == nil {
+		return
+	}
+	size := t.lookupFontSize + offset
+	if size < unit.Sp(10) {
+		size = unit.Sp(10)
+	}
+	lbl.TextSize = size
+	lbl.LineHeight = size + unit.Sp(7)
+	lbl.Font.Typeface = font.Typeface("Noto Sans CJK JP")
 }
 
 func lookupResponseText(resp *jpndict.Response) (headword, reading, meaning string) {
