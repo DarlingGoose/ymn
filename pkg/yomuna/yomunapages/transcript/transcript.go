@@ -51,6 +51,7 @@ type TranscriptUI struct {
 
 	transcriptFollower transcriptFollower
 	sentenceAnalysis   *SentenceAnalysis
+	invalidate         func()
 }
 
 func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backend) *TranscriptUI {
@@ -130,11 +131,27 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 
 	ui.transcriptFollower.WithSelectedRow(func(row transcriptRow) {
 		ui.sentenceAnalysis.SetSentence(&row)
+		ui.invalidateUI()
 	})
 	ui.transcriptFollower.WithThemeClient(tc)
 	ui.sentenceAnalysis.WithThemeClient(tc)
 	ui.ReloadGames()
 	return ui
+}
+
+func (ui *TranscriptUI) WithInvalidate(invalidate func()) *TranscriptUI {
+	if ui == nil {
+		return ui
+	}
+	ui.invalidate = invalidate
+	ui.transcriptFollower.WithInvalidate(invalidate)
+	return ui
+}
+
+func (ui *TranscriptUI) invalidateUI() {
+	if ui != nil && ui.invalidate != nil {
+		ui.invalidate()
+	}
 }
 
 func (ui *TranscriptUI) update(gtx layout.Context) {
@@ -345,6 +362,7 @@ func (ui *TranscriptUI) StopSelectedGame() {
 		ui.running = false
 		ui.stopping = false
 		ui.gameStatus = "Stopped"
+		ui.invalidateUI()
 
 		if g != nil {
 			ui.transcriptFollower.AddRows(transcriptRow{
@@ -510,6 +528,7 @@ func (ui *TranscriptUI) stopFollowing() {
 
 	ui.followCtx = nil
 	ui.following = false
+	ui.invalidateUI()
 }
 
 func (ui *TranscriptUI) StartFollowingGame(ctx context.Context, g *game.Game) {
@@ -527,6 +546,7 @@ func (ui *TranscriptUI) StartFollowingGame(ctx context.Context, g *game.Game) {
 	ui.followCancel = cancel
 	ui.following = true
 	ui.gameStatus = "Following logs"
+	ui.invalidateUI()
 
 	ch, err := ui.backend.FollowGameText(followCtx, g)
 	if err != nil {
@@ -536,6 +556,7 @@ func (ui *TranscriptUI) StartFollowingGame(ctx context.Context, g *game.Game) {
 			Text: "Failed to follow game logs: " + err.Error(),
 		})
 		ui.following = false
+		ui.invalidateUI()
 		return
 	}
 
@@ -556,6 +577,8 @@ func (ui *TranscriptUI) StartFollowingGame(ctx context.Context, g *game.Game) {
 						Info: true,
 						Text: "Log stream closed for " + g.Name,
 					})
+					ui.following = false
+					ui.invalidateUI()
 					return
 				}
 
@@ -595,6 +618,7 @@ func (ui *TranscriptUI) RunSelectedGame(ctx context.Context) {
 			ui.starting = false
 			ui.running = false
 			ui.gameStatus = "Run failed"
+			ui.invalidateUI()
 			ui.transcriptFollower.AddRows(transcriptRow{
 				Info: true,
 				Text: "Failed to run " + g.Name + ": " + err.Error(),
@@ -605,6 +629,7 @@ func (ui *TranscriptUI) RunSelectedGame(ctx context.Context) {
 		ui.starting = false
 		ui.running = true
 		ui.gameStatus = "Running"
+		ui.invalidateUI()
 
 		if proc != nil {
 			ui.transcriptFollower.AddRows(transcriptRow{

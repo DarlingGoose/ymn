@@ -1,12 +1,14 @@
 package transcript
 
 import (
+	"image/color"
 	"strconv"
 	"strings"
 
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
 	"github.com/DarlingGoose/wgl/pkg/japanese"
@@ -103,7 +105,7 @@ func (t *SentenceAnalysis) layoutSentenceStructure(gtx layout.Context) layout.Di
 		}),
 		layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleLabel, theme.ThemeColorTextSecondary, "Tokens")
+			return t.layoutTokenSectionHeader(gtx)
 		}),
 		layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -136,6 +138,51 @@ func (t *SentenceAnalysis) layoutTokenSummary(gtx layout.Context, analysis japan
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 }
 
+func (t *SentenceAnalysis) layoutTokenSectionHeader(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleLabel, theme.ThemeColorTextSecondary, "Tokens")
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutFuriganaControls(gtx)
+		}),
+	)
+}
+
+func (t *SentenceAnalysis) layoutFuriganaControls(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutFuriganaModeButton(gtx, &t.furiganaHiddenClick, "Hidden", t.focusedFuriganaMode == focusedFuriganaHidden)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(6))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutFuriganaModeButton(gtx, &t.furiganaAboveClick, "Above", t.focusedFuriganaMode == focusedFuriganaAbove)
+		}),
+	)
+}
+
+func (t *SentenceAnalysis) layoutFuriganaModeButton(gtx layout.Context, click *widget.Clickable, text string, selected bool) layout.Dimensions {
+	ct := t.tc.GetCurrentColorToken()
+	bg := color.NRGBA{A: 0}
+	fg := ct.TextMutedNRGBA()
+	if selected {
+		bg = theme.Mix(ct.PrimaryNRGBA(), ct.SurfaceNRGBA(), 0.20)
+		fg = ct.PrimaryNRGBA()
+	} else if click.Hovered() {
+		bg = ct.SurfaceNRGBA()
+	}
+
+	return utils.ClickableSurface(gtx, click, bg, unit.Dp(7), func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(5), Left: unit.Dp(9), Right: unit.Dp(9)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(t.th, text)
+			theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleLabelSmall)
+			lbl.Color = fg
+			return lbl.Layout(gtx)
+		})
+	})
+}
+
 func (t *SentenceAnalysis) layoutSummaryPill(gtx layout.Context, label string, value int) layout.Dimensions {
 	ct := t.tc.GetCurrentColorToken()
 	bg := theme.Mix(ct.PrimaryNRGBA(), ct.SurfaceNRGBA(), 0.14)
@@ -162,7 +209,7 @@ func (t *SentenceAnalysis) layoutTokenLines(gtx layout.Context, analysis japanes
 	for i, line := range lines {
 		line := line
 		if i > 0 {
-			children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(5))))
+			children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(8))))
 		}
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lineChildren := make([]layout.FlexChild, 0, len(line))
@@ -175,8 +222,15 @@ func (t *SentenceAnalysis) layoutTokenLines(gtx layout.Context, analysis japanes
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, lineChildren...)
 		}))
 	}
-	//p.pruneFocusedTokenClicks(analysis.Tokens)
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	t.pruneFocusedTokenClicks(analysis.Tokens)
+
+	top := unit.Dp(0)
+	if t.focusedFuriganaMode == focusedFuriganaAbove {
+		top = unit.Dp(4)
+	}
+	return layout.Inset{Top: top}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	})
 }
 
 func structureTokenKey(token japanese.Token) string {
@@ -203,15 +257,16 @@ func (t *SentenceAnalysis) layoutFocusedFuriganaToken(gtx layout.Context, token 
 	children := make([]layout.FlexChild, 0, 4)
 	if t.focusedFuriganaMode == focusedFuriganaAbove {
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return t.layoutFocusedTokenSlot(gtx, unit.Dp(18), func(gtx layout.Context) layout.Dimensions {
+			return t.layoutFocusedTokenSlot(gtx, unit.Dp(24), func(gtx layout.Context) layout.Dimensions {
 				return t.layoutFocusedTokenReading(gtx, reading)
 			})
-		}), layout.Rigid(bareutils.SpacerH(unit.Dp(2))))
+		}), layout.Rigid(bareutils.SpacerH(unit.Dp(1))))
 	}
 	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 		return t.layoutFocusedTokenSlot(gtx, t.focusedTokenSurfaceSlotHeight(gtx), func(gtx layout.Context) layout.Dimensions {
 			lbl := material.H6(t.th, surface)
 			theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleH2)
+			lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
 			return lbl.Layout(gtx)
 		})
 	}))
@@ -232,12 +287,12 @@ func (t *SentenceAnalysis) layoutFocusedFuriganaToken(gtx layout.Context, token 
 	return layout.Inset{Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			pointer.CursorPointer.Add(gtx.Ops)
-			return bareutils.RoundedSurface(gtx, bg, unit.Dp(10), func(gtx layout.Context) layout.Dimensions {
+			return utils.RoundedSurface(gtx, unit.Dp(7), bg, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{
-					Top:    unit.Dp(5),
-					Bottom: unit.Dp(5),
-					Left:   unit.Dp(6),
-					Right:  unit.Dp(6),
+					Top:    unit.Dp(2),
+					Bottom: unit.Dp(2),
+					Left:   unit.Dp(4),
+					Right:  unit.Dp(4),
 				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx, children...)
 				})
@@ -252,7 +307,7 @@ func (t *SentenceAnalysis) layoutFocusedTokenReading(gtx layout.Context, reading
 	}
 	lbl := material.Body2(t.th, reading)
 	theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleBodyLarge)
-	lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
+	lbl.Color = t.tc.GetCurrentColorToken().SecondaryNRGBA()
 	return lbl.Layout(gtx)
 }
 

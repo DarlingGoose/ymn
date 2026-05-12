@@ -150,6 +150,9 @@ func (ui *App) Layout(gtx layout.Context, ctx context.Context, window *gioapp.Wi
 	}
 	ui.ctx = ctx
 	ui.win = window
+	if ui.Transcript != nil && window != nil {
+		ui.Transcript.WithInvalidate(window.Invalidate)
+	}
 	ui.syncLegacyTranscript(gtx, ctx, window)
 
 	return ui.Overlay.Layout(gtx, func(gtx layout.Context) layout.Dimensions {

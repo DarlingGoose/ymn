@@ -29,7 +29,9 @@ type SentenceAnalysis struct {
 	selectedTargetLanguage string
 	translatorConfig       translation.Config
 
-	focusedTokenClicks map[string]*widget.Clickable
+	focusedTokenClicks  map[string]*widget.Clickable
+	furiganaHiddenClick widget.Clickable
+	furiganaAboveClick  widget.Clickable
 
 	autoTranslate bool
 
@@ -105,6 +107,12 @@ func (t *SentenceAnalysis) Reset() {
 	t.line = nil
 }
 func (t *SentenceAnalysis) HandeEvents(gtx layout.Context) {
+	for t.furiganaHiddenClick.Clicked(gtx) {
+		t.focusedFuriganaMode = focusedFuriganaHidden
+	}
+	for t.furiganaAboveClick.Clicked(gtx) {
+		t.focusedFuriganaMode = focusedFuriganaAbove
+	}
 	for key, click := range t.focusedTokenClicks {
 		for click.Clicked(gtx) {
 			t.selectFocusedToken(key)
@@ -184,14 +192,14 @@ func (t *SentenceAnalysis) focusedSentenceTokenWidth(gtx layout.Context, token j
 	surfaceRunes := len([]rune(utils.CleanInlineText(token.Surface)))
 	readingRunes := len([]rune(focusedTokenReading(token)))
 	runes := surfaceRunes
-	if readingRunes > runes {
+	if t.focusedFuriganaMode == focusedFuriganaAbove && readingRunes > runes {
 		runes = readingRunes
 	}
 	if runes <= 0 {
 		runes = 1
 	}
 	size := float32(t.sentenceFontSize)
-	return gtx.Dp(unit.Dp(float32(runes)*size*0.72 + 16))
+	return gtx.Dp(unit.Dp(float32(runes)*size*0.72 + 12))
 }
 
 func (t *SentenceAnalysis) focusedTokenClickable(key string) *widget.Clickable {

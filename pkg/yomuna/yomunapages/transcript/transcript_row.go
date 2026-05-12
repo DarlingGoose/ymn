@@ -65,6 +65,7 @@ type transcriptFollower struct {
 	backend backend.Backend
 
 	autoTranslate bool
+	invalidate    func()
 }
 
 func newTranscriptFollower(th *material.Theme, backend backend.Backend) transcriptFollower {
@@ -106,6 +107,12 @@ func (t *transcriptFollower) WithAutoTranslate(at bool) *transcriptFollower {
 	t.autoTranslate = at
 	return t
 }
+
+func (t *transcriptFollower) WithInvalidate(invalidate func()) *transcriptFollower {
+	t.invalidate = invalidate
+	return t
+}
+
 func (t *transcriptFollower) WithSelectedRow(sr func(row transcriptRow)) {
 	t.selectedRow = sr
 }
@@ -173,6 +180,7 @@ func (t *transcriptFollower) AddRows(rows ...transcriptRow) {
 		if selected != nil {
 			t.selectedRow(*selected)
 		}
+		t.invalidateUI()
 		return
 	}
 
@@ -185,6 +193,13 @@ func (t *transcriptFollower) AddRows(rows ...transcriptRow) {
 
 	if selected != nil {
 		t.selectedRow(*selected)
+	}
+	t.invalidateUI()
+}
+
+func (t *transcriptFollower) invalidateUI() {
+	if t.invalidate != nil {
+		t.invalidate()
 	}
 }
 
@@ -366,6 +381,7 @@ func (t *transcriptFollower) generateTranscriptRowTranslation(gtx layout.Context
 		t.rowTranslationShown[result.RowKey] = true
 
 		gtx.Execute(op.InvalidateCmd{})
+		t.invalidateUI()
 
 	}()
 }
