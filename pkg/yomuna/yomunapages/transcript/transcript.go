@@ -50,6 +50,7 @@ type TranscriptUI struct {
 	followCancel context.CancelFunc
 
 	transcriptFollower transcriptFollower
+	sentenceAnalysis   *SentenceAnalysis
 }
 
 func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backend) *TranscriptUI {
@@ -73,6 +74,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		backend:             backend,
 		gameStatus:          "No game selected",
 		transcriptFollower:  newTranscriptFollower(th, backend),
+		sentenceAnalysis:    NewSentenceAnalysis(th, backend),
 		autoTranslateToggle: toggles.NewToggle("Auto Translate", false),
 	}
 	playIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:play")
@@ -124,6 +126,9 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		ui.StartFollowingGame(context.Background(), g)
 	})
 
+	ui.transcriptFollower.WithSelectedRow(func(row transcriptRow) {
+		ui.sentenceAnalysis.SetSentence(&row) //todo doesn't work or show it??
+	})
 	ui.ReloadGames()
 	return ui
 }
@@ -365,7 +370,7 @@ func (ui *TranscriptUI) layoutDetails(gtx layout.Context) layout.Dimensions {
 		WithFillMax(true).
 		WithRadius(unit.Dp(10)).
 		WithRole(panel.BackgroundRoleSurfaceAlt).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Dimensions{}
+		return ui.sentenceAnalysis.Layout(gtx)
 	})
 }
 
