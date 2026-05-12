@@ -221,25 +221,6 @@ func (t *SentenceAnalysis) layoutSummaryPill(gtx layout.Context, label string, v
 
 func (t *SentenceAnalysis) layoutTokenLines(gtx layout.Context, analysis japanese.Analysis, tokens []japanese.Token) layout.Dimensions {
 	lines := t.focusedSentenceTokenLines(gtx, tokens)
-
-	//	children := make([]layout.FlexChild, 0, len(lines))
-	children := make([]layout.FlexChild, 0, len(lines))
-	for i, line := range lines {
-		line := line
-		if i > 0 {
-			children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(8))))
-		}
-		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lineChildren := make([]layout.FlexChild, 0, len(line))
-			for _, token := range line {
-				token := token
-				lineChildren = append(lineChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return t.layoutFocusedFuriganaToken(gtx, token)
-				}))
-			}
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, lineChildren...)
-		}))
-	}
 	t.pruneFocusedTokenClicks(analysis.Tokens)
 
 	top := unit.Dp(0)
@@ -247,7 +228,26 @@ func (t *SentenceAnalysis) layoutTokenLines(gtx layout.Context, analysis japanes
 		top = unit.Dp(4)
 	}
 	return layout.Inset{Top: top}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+		return material.List(t.th, &t.structureList).Layout(gtx, len(lines), func(gtx layout.Context, index int) layout.Dimensions {
+			if index < 0 || index >= len(lines) {
+				return layout.Dimensions{}
+			}
+			line := lines[index]
+			bottom := unit.Dp(8)
+			if index == len(lines)-1 {
+				bottom = unit.Dp(0)
+			}
+			return layout.Inset{Bottom: bottom}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lineChildren := make([]layout.FlexChild, 0, len(line))
+				for _, token := range line {
+					token := token
+					lineChildren = append(lineChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return t.layoutFocusedFuriganaToken(gtx, token)
+					}))
+				}
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, lineChildren...)
+			})
+		})
 	})
 }
 

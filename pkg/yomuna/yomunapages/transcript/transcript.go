@@ -52,6 +52,7 @@ type TranscriptUI struct {
 	transcriptFollower transcriptFollower
 	sentenceAnalysis   *SentenceAnalysis
 	invalidate         func()
+	preferences        transcriptPreferences
 }
 
 func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backend) *TranscriptUI {
@@ -61,6 +62,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 	if tc == nil {
 		tc = theme.DefaultThemeClient
 	}
+	prefs := loadTranscriptPreferences()
 
 	ui := &TranscriptUI{
 		th:           th,
@@ -77,7 +79,12 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		transcriptFollower:  newTranscriptFollower(th, backend),
 		sentenceAnalysis:    NewSentenceAnalysis(th, backend),
 		autoTranslateToggle: toggles.NewToggle("Auto Translate", false),
+		preferences:         prefs,
 	}
+	ui.sentenceAnalysis.SetLookupFontSize(unit.Sp(prefs.LookupFontSizeSp))
+	ui.sentenceAnalysis.sentenceFontSize = unit.Sp(prefs.SentenceFontSizeSp)
+	ui.transcriptFollower.fontSize = unit.Sp(prefs.TranscriptFontSizeSp)
+
 	playIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:play")
 	stopIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:square")
 
@@ -109,24 +116,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		if !valid {
 			return
 		}
-
-		ui.selectedGameName = item.Value
-		ui.backend.SelectGameByName(item.Value)
-
-		g := ui.gameByName[item.Value]
-		if g == nil {
-			ui.gameStatus = "Game not found"
-			ui.stopFollowing()
-			ui.transcriptFollower.Reset(item.Value)
-			ui.sentenceAnalysis.Reset()
-			return
-		}
-
-		ui.gameStatus = "Selected"
-		ui.transcriptFollower.SetGame(g.Name)
-		ui.sentenceAnalysis.Reset()
-
-		ui.StartFollowingGame(context.Background(), g)
+		ui.selectGameByName(item.Value, true)
 	})
 
 	ui.transcriptFollower.WithSelectedRow(func(row transcriptRow) {
@@ -157,7 +147,8 @@ func (ui *TranscriptUI) invalidateUI() {
 
 func (ui *TranscriptUI) update(gtx layout.Context) {
 	ui.transcriptFollower.HandeEvents(gtx)
-	ui.transcriptFollower.WithAutoTranslate(ui.autoTranslateToggle.Changed(gtx))
+	ui.autoTranslateToggle.Update(gtx)
+	ui.transcriptFollower.WithAutoTranslate(ui.autoTranslateToggle.Checked)
 	ui.sentenceAnalysis.HandeEvents(gtx)
 }
 
@@ -204,7 +195,128 @@ func (ui *TranscriptUI) ReloadGames() {
 	}
 
 	ui.gameDropdown.SetItems(items)
+	if ui.selectedGameName == "" && ui.preferences.SelectedGameName != "" {
+		ui.selectGameByName(ui.preferences.SelectedGameName, false)
+	}
 }
+
+func (ui *TranscriptUI) selectGameByName(name string, followIfRunning bool) {
+	if ui == nil {
+		return
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	if ui.gameDropdown != nil {
+		ui.gameDropdown.SelectItem(name)
+	}
+
+	ui.selectedGameName = name
+	if ui.backend != nil {
+		ui.backend.SelectGameByName(name)
+	}
+
+	g := ui.gameByName[name]
+	if g == nil {
+		ui.gameStatus = "Game not found"
+		ui.stopFollowing()
+		ui.transcriptFollower.Reset(name)
+		ui.sentenceAnalysis.Reset()
+		return
+	}
+
+	ui.gameStatus = "Selected"
+	ui.transcriptFollower.SetGame(g.Name)
+	ui.sentenceAnalysis.Reset()
+
+	if followIfRunning {
+		ui.StartFollowingGame(context.Background(), g)
+	}
+}
+
+func (ui *TranscriptUI) SavePreferences() error {
+	if ui == nil {
+		return nil
+	}
+	prefs := transcriptPreferences{
+		SelectedGameName:     strings.TrimSpace(ui.selectedGameName),
+		LookupFontSizeSp:     spToFloat(ui.sentenceAnalysis.LookupFontSize()),
+		SentenceFontSizeSp:   spToFloat(ui.sentenceAnalysis.sentenceFontSize),
+		TranscriptFontSizeSp: spToFloat(ui.transcriptFollower.fontSize),
+	}
+	if err := saveTranscriptPreferences(prefs); err != nil {
+		return err
+	}
+	ui.preferences = prefs
+	return nil
+}
+
+func (ui *TranscriptUI) SelectedGameName() string {
+	if ui == nil {
+		return ""
+	}
+	return strings.TrimSpace(ui.selectedGameName)
+}
+
+func (ui *TranscriptUI) TranscriptFontSize() unit.Sp {
+	if ui == nil {
+		return unit.Sp(22)
+	}
+	return ui.transcriptFollower.fontSize
+}
+
+func (ui *TranscriptUI) SetTranscriptFontSize(size unit.Sp) {
+	if ui == nil {
+		return
+	}
+	ui.transcriptFollower.fontSize = clampFontSize(size, unit.Sp(14), unit.Sp(34), unit.Sp(22))
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) SentenceFontSize() unit.Sp {
+	if ui == nil || ui.sentenceAnalysis == nil {
+		return unit.Sp(24)
+	}
+	return ui.sentenceAnalysis.sentenceFontSize
+}
+
+func (ui *TranscriptUI) SetSentenceFontSize(size unit.Sp) {
+	if ui == nil || ui.sentenceAnalysis == nil {
+		return
+	}
+	ui.sentenceAnalysis.sentenceFontSize = clampFontSize(size, unit.Sp(16), unit.Sp(40), unit.Sp(24))
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) LookupFontSize() unit.Sp {
+	if ui == nil || ui.sentenceAnalysis == nil {
+		return unit.Sp(14)
+	}
+	return ui.sentenceAnalysis.LookupFontSize()
+}
+
+func (ui *TranscriptUI) SetLookupFontSize(size unit.Sp) {
+	if ui == nil || ui.sentenceAnalysis == nil {
+		return
+	}
+	ui.sentenceAnalysis.SetLookupFontSize(size)
+	ui.invalidateUI()
+}
+
+func clampFontSize(size, min, max, fallback unit.Sp) unit.Sp {
+	if size <= 0 {
+		return fallback
+	}
+	if size < min {
+		return min
+	}
+	if size > max {
+		return max
+	}
+	return size
+}
+
 func (ui *TranscriptUI) Layout(gtx layout.Context, ctx context.Context) layout.Dimensions {
 	if ui == nil {
 		return layout.Dimensions{}
@@ -254,6 +366,12 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 	}
 
 	ui.update(gtx)
+	ui.layoutHeaderResponsiveControls(gtx)
+
+	gap := unit.Dp(10)
+	if gtx.Constraints.Max.X > 0 && gtx.Constraints.Max.X < gtx.Dp(unit.Dp(760)) {
+		gap = unit.Dp(6)
+	}
 
 	return layout.Flex{
 		Axis:      layout.Horizontal,
@@ -267,7 +385,7 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 			return ui.gameDropdown.Layout(gtx, &ui.Overlay)
 		}),
 
-		layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+		layout.Rigid(bareutils.SpacerW(gap)),
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			status := strings.TrimSpace(ui.gameStatus)
@@ -285,18 +403,34 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 			)
 		}),
 
-		layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+		layout.Rigid(bareutils.SpacerW(gap)),
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutGameActionButtons(gtx)
 		}),
-		layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+		layout.Rigid(bareutils.SpacerW(gap)),
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.autoTranslateToggle.Layout(gtx)
 		}),
 	)
 }
+
+func (ui *TranscriptUI) layoutHeaderResponsiveControls(gtx layout.Context) {
+	if ui == nil || ui.autoTranslateToggle == nil {
+		return
+	}
+	width := gtx.Constraints.Max.X
+	switch {
+	case width > 0 && width < gtx.Dp(unit.Dp(650)):
+		ui.autoTranslateToggle.WithLabel("")
+	case width > 0 && width < gtx.Dp(unit.Dp(820)):
+		ui.autoTranslateToggle.WithLabel("Auto")
+	default:
+		ui.autoTranslateToggle.WithLabel("Auto Translate")
+	}
+}
+
 func (ui *TranscriptUI) layoutGameActionButtons(gtx layout.Context) layout.Dimensions {
 	if ui.runGameButton == nil || ui.stopGameButton == nil {
 		return layout.Dimensions{}
@@ -385,11 +519,8 @@ func (ui *TranscriptUI) layoutTranscript(gtx layout.Context) layout.Dimensions {
 		WithFillMax(true).
 		WithRadius(unit.Dp(10)).
 		WithRole(panel.BackgroundRoleSurface).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.transcriptFollower.Layout(gtx)
-			}))
+		gtx.Constraints.Min = gtx.Constraints.Max
+		return ui.transcriptFollower.Layout(gtx)
 	})
 }
 

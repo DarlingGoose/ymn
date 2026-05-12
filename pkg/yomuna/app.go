@@ -68,6 +68,16 @@ func New(initialSource string) *App {
 		legacyTheme:    legacyTheme,
 		legacyIconify:  legacyIconify,
 	}
+	ui.Settings.WithTranscriptSettings(&pages.TranscriptSettings{
+		SelectedGameName:  ui.Transcript.SelectedGameName,
+		TranscriptFont:    ui.Transcript.TranscriptFontSize,
+		SentenceFont:      ui.Transcript.SentenceFontSize,
+		LookupFont:        ui.Transcript.LookupFontSize,
+		SetTranscriptFont: ui.Transcript.SetTranscriptFontSize,
+		SetSentenceFont:   ui.Transcript.SetSentenceFontSize,
+		SetLookupFont:     ui.Transcript.SetLookupFontSize,
+		Save:              ui.Transcript.SavePreferences,
+	})
 
 	menuIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:panel-left-close")
 	ui.ToggleButton = components.NewIconButton("Toggle", nil, menuIcon).WithThemeClient(tc)

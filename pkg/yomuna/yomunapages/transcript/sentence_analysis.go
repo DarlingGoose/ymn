@@ -177,12 +177,7 @@ func (t *SentenceAnalysis) HandeEvents(gtx layout.Context) {
 
 func (t *SentenceAnalysis) adjustLookupFontSize(delta unit.Sp) {
 	next := t.lookupFontSize + delta
-	if next < unit.Sp(11) {
-		next = unit.Sp(11)
-	}
-	if next > unit.Sp(24) {
-		next = unit.Sp(24)
-	}
+	next = clampLookupFontSize(next)
 	if next == t.lookupFontSize {
 		return
 	}
@@ -427,6 +422,30 @@ func (t *SentenceAnalysis) invalidateUI() {
 	if t != nil && t.invalidate != nil {
 		t.invalidate()
 	}
+}
+
+func (t *SentenceAnalysis) SetLookupFontSize(size unit.Sp) {
+	if t == nil {
+		return
+	}
+	t.lookupFontSize = clampLookupFontSize(size)
+}
+
+func (t *SentenceAnalysis) LookupFontSize() unit.Sp {
+	if t == nil {
+		return unit.Sp(14)
+	}
+	return t.lookupFontSize
+}
+
+func clampLookupFontSize(size unit.Sp) unit.Sp {
+	if size < unit.Sp(11) {
+		return unit.Sp(11)
+	}
+	if size > unit.Sp(24) {
+		return unit.Sp(24)
+	}
+	return size
 }
 
 func (t *SentenceAnalysis) currentAnalysis() (japanese.Analysis, string) {
