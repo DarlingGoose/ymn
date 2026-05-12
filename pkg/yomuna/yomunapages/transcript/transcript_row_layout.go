@@ -2,9 +2,7 @@ package transcript
 
 import (
 	"context"
-	"fmt"
 	"image/color"
-	"log/slog"
 	"strings"
 
 	"gioui.org/io/pointer"
@@ -12,7 +10,6 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
-	"github.com/DarlingGoose/wgl/pkg/translation"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/iconify"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
@@ -249,32 +246,13 @@ func (t *transcriptFollower) toggleTranscriptRowTranslation(gtx layout.Context, 
 	if !ok || row.Info {
 		return
 	}
+	t.rowMutex.Lock()
 	if t.rowTranslationShown[row.Key] {
 		t.rowTranslationShown[row.Key] = false
+		t.rowMutex.Unlock()
+		t.invalidateUI()
 		return
 	}
-	key := t.rowTranslationCacheKey(row)
-	if key == "" {
-		//t.showError("Translate Row Failed", "Select a target language before translating a row.")
-		return
-	}
-	if _, ok := t.rowTranslations[key]; ok {
-		t.rowTranslationShown[row.Key] = true
-		return
-	}
-	//todo move to backend
-	entry, ok, err := translation.Load(t.activeGameName, row.Text, t.selectedTargetLanguage)
-	if err != nil {
-		slog.Error("failed loading", "err", err)
-		//p.showError("Translate Row Failed", err.Error())
-		return
-	}
-	fmt.Println(entry.Translation)
-	if ok {
-		t.rowTranslations[key] = entry.Translation
-		t.rowTranslationShown[row.Key] = true
-		return
-	}
-	t.rowTranslationShown[row.Key] = true
-	t.generateTranscriptRowTranslation(gtx, ctx, row, key)
+	t.rowMutex.Unlock()
+	t.showTranscriptRowTranslation(ctx, row)
 }

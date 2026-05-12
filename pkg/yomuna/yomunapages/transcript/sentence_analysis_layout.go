@@ -11,6 +11,7 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
+	"github.com/DarlingGoose/jpndict"
 	"github.com/DarlingGoose/wgl/pkg/japanese"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
@@ -51,13 +52,29 @@ func (t *SentenceAnalysis) layoutHeader(gtx layout.Context) layout.Dimensions {
 		}
 	}
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Sentence Analysis")
 		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return t.layoutHeaderTokenSummary(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleCaption, theme.ThemeColorTextMuted, meta)
 		}),
 	)
+}
+
+func (t *SentenceAnalysis) layoutHeaderTokenSummary(gtx layout.Context) layout.Dimensions {
+	if strings.TrimSpace(t.structureSourceText()) == "" {
+		return layout.Dimensions{}
+	}
+	analysis, errText := t.currentAnalysis()
+	if errText != "" || len(analysis.Tokens) == 0 {
+		return layout.Dimensions{}
+	}
+	return t.layoutTokenSummary(gtx, analysis)
 }
 
 func (t *SentenceAnalysis) layoutFocusedSentenceText(gtx layout.Context) layout.Dimensions {
@@ -101,15 +118,14 @@ func (t *SentenceAnalysis) layoutSentenceStructure(gtx layout.Context) layout.Di
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return t.layoutTokenSummary(gtx, analysis)
-		}),
-		layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return t.layoutTokenSectionHeader(gtx)
 		}),
 		layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return t.layoutTokenLines(gtx, analysis, analysis.Tokens)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutSelectedTokenLookup(gtx)
 		}),
 	)
 }
@@ -325,6 +341,167 @@ func (t *SentenceAnalysis) layoutFocusedTokenMarker(gtx layout.Context, inFlashc
 	theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleLabelSmall)
 	lbl.Color = fg
 	return lbl.Layout(gtx)
+}
+
+func (t *SentenceAnalysis) layoutSelectedTokenLookup(gtx layout.Context) layout.Dimensions {
+	query, _, errText, pending, results := t.lookupSnapshot()
+	if strings.TrimSpace(query) == "" {
+		return layout.Dimensions{}
+	}
+
+	ct := t.tc.GetCurrentColorToken()
+	return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return utils.Surface(gtx, ct.BackgroundNRGBA(), unit.Dp(8), func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(10), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				children := []layout.FlexChild{
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return t.layoutLookupHeader(gtx, query, pending, len(results))
+					}),
+				}
+
+				if errText != "" {
+					children = append(children,
+						layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleBodySmall, theme.ThemeColorWarning, errText)
+						}),
+					)
+				} else if len(results) > 0 {
+					children = append(children,
+						layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return t.layoutLookupResults(gtx, results)
+						}),
+					)
+				}
+
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+			})
+		})
+	})
+}
+
+func (t *SentenceAnalysis) layoutLookupHeader(gtx layout.Context, query string, pending bool, count int) layout.Dimensions {
+	status := "Dictionary"
+	if pending {
+		status = "Looking up..."
+	} else if count > 0 {
+		status = strconv.Itoa(count) + " matches"
+	}
+
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(t.th, query)
+			theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleLabel)
+			lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleCaption, theme.ThemeColorTextMuted, status)
+		}),
+	)
+}
+
+func (t *SentenceAnalysis) layoutLookupResults(gtx layout.Context, results []*jpndict.Response) layout.Dimensions {
+	limit := len(results)
+	if limit > 3 {
+		limit = 3
+	}
+	children := make([]layout.FlexChild, 0, limit*2)
+	for i := 0; i < limit; i++ {
+		resp := results[i]
+		if i > 0 {
+			children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(6))))
+		}
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutLookupResult(gtx, resp)
+		}))
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func (t *SentenceAnalysis) layoutLookupResult(gtx layout.Context, resp *jpndict.Response) layout.Dimensions {
+	if resp == nil {
+		return layout.Dimensions{}
+	}
+	headword, reading, meaning := lookupResponseText(resp)
+	if strings.TrimSpace(meaning) == "" {
+		meaning = strings.TrimSpace(resp.Text)
+	}
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleLabel, theme.ThemeColorTextPrimary, headword)
+				}),
+				layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if strings.TrimSpace(reading) == "" || reading == headword {
+						return layout.Dimensions{}
+					}
+					lbl := material.Body2(t.th, reading)
+					theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleCaption)
+					lbl.Color = t.tc.GetCurrentColorToken().SecondaryNRGBA()
+					return lbl.Layout(gtx)
+				}),
+			)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if strings.TrimSpace(meaning) == "" {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleBodySmall, theme.ThemeColorTextMuted, meaning)
+			})
+		}),
+	)
+}
+
+func lookupResponseText(resp *jpndict.Response) (headword, reading, meaning string) {
+	if resp == nil {
+		return "", "", ""
+	}
+	headword = strings.TrimSpace(resp.Query)
+	if resp.Entry != nil {
+		headword = strings.TrimSpace(resp.Entry.Headword)
+		reading = strings.TrimSpace(resp.Entry.Reading)
+		meaning = summarizeLookupEntry(resp.Entry)
+	}
+	if headword == "" {
+		headword = strings.TrimSpace(resp.Key)
+	}
+	if headword == "" {
+		headword = strings.TrimSpace(resp.Query)
+	}
+	if meaning == "" {
+		meaning = strings.TrimSpace(resp.Text)
+	}
+	return headword, reading, meaning
+}
+
+func summarizeLookupEntry(entry *jpndict.Entry) string {
+	if entry == nil {
+		return ""
+	}
+	lines := make([]string, 0, len(entry.Senses))
+	for i, sense := range entry.Senses {
+		gloss := strings.TrimSpace(strings.Join(sense.Glosses, "; "))
+		if gloss == "" {
+			continue
+		}
+		if len(sense.PartsOfSpeech) > 0 {
+			gloss = "[" + strings.Join(sense.PartsOfSpeech, ", ") + "] " + gloss
+		}
+		if len(entry.Senses) > 1 {
+			gloss = strconv.Itoa(i+1) + ". " + gloss
+		}
+		lines = append(lines, gloss)
+		if len(lines) == 2 {
+			break
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (t *SentenceAnalysis) focusedSentenceTokenLines(gtx layout.Context, tokens []japanese.Token) [][]japanese.Token {

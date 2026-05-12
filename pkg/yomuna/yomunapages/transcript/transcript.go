@@ -145,6 +145,7 @@ func (ui *TranscriptUI) WithInvalidate(invalidate func()) *TranscriptUI {
 	}
 	ui.invalidate = invalidate
 	ui.transcriptFollower.WithInvalidate(invalidate)
+	ui.sentenceAnalysis.WithInvalidate(invalidate)
 	return ui
 }
 

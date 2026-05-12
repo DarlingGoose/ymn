@@ -2,11 +2,11 @@ package transcript
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"sync"
 
 	"gioui.org/layout"
-	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -151,15 +151,14 @@ func (t *transcriptFollower) resetLocked() {
 func (t *transcriptFollower) AddRows(rows ...transcriptRow) {
 	t.rowMutex.Lock()
 
+	autoTranslateRows := make([]transcriptRow, 0, len(rows))
 	for _, r := range rows {
 		if r.Key == "" {
 			r.Key = uuid.NewString()
 		}
-		if t.autoTranslate {
-			//todo idk fix
-			t.transcriptRowTranslateClickable(r.Key).Click()
+		if t.autoTranslate && !r.Info {
 			t.rowTranslationShown[r.Key] = true
-
+			autoTranslateRows = append(autoTranslateRows, r)
 		}
 		t.transcriptRows = append(t.transcriptRows, r)
 	}
@@ -180,6 +179,9 @@ func (t *transcriptFollower) AddRows(rows ...transcriptRow) {
 		if selected != nil {
 			t.selectedRow(*selected)
 		}
+		for _, row := range autoTranslateRows {
+			t.showTranscriptRowTranslation(context.Background(), row)
+		}
 		t.invalidateUI()
 		return
 	}
@@ -193,6 +195,9 @@ func (t *transcriptFollower) AddRows(rows ...transcriptRow) {
 
 	if selected != nil {
 		t.selectedRow(*selected)
+	}
+	for _, row := range autoTranslateRows {
+		t.showTranscriptRowTranslation(context.Background(), row)
 	}
 	t.invalidateUI()
 }
@@ -260,7 +265,9 @@ func (t *transcriptFollower) WithThemeClient(tc *theme.Client) *transcriptFollow
 func (t *transcriptFollower) GetRows() []transcriptRow {
 	t.rowMutex.RLock()
 	defer t.rowMutex.RUnlock()
-	return t.transcriptRows
+	rows := make([]transcriptRow, len(t.transcriptRows))
+	copy(rows, t.transcriptRows)
+	return rows
 }
 
 func (t *transcriptFollower) HandeEvents(gtx layout.Context) {
@@ -277,7 +284,7 @@ func (t *transcriptFollower) HandeEvents(gtx layout.Context) {
 	}
 }
 func (t *transcriptFollower) transcriptRowByKey(key string) (transcriptRow, bool) {
-	for _, row := range t.transcriptRows {
+	for _, row := range t.GetRows() {
 		if row.Key == key {
 			return row, true
 		}
@@ -296,8 +303,11 @@ func (t *transcriptFollower) transcriptRowClickable(key string) *widget.Clickabl
 }
 
 func (t *transcriptFollower) currentTranscriptRowKey() string {
-	if t.selectedLineKey != "" {
-		return t.selectedLineKey
+	t.rowMutex.RLock()
+	selectedLineKey := t.selectedLineKey
+	t.rowMutex.RUnlock()
+	if selectedLineKey != "" {
+		return selectedLineKey
 	}
 	rows := t.GetRows()
 	for i := len(rows) - 1; i >= 0; i-- {
@@ -309,11 +319,15 @@ func (t *transcriptFollower) currentTranscriptRowKey() string {
 }
 
 func (t *transcriptFollower) transcriptRowDisplayText(row transcriptRow) string {
-	if !t.isTranscriptRowTranslationShown(row) {
+	key := t.rowTranslationCacheKey(row)
+
+	t.rowMutex.RLock()
+	defer t.rowMutex.RUnlock()
+
+	if !t.rowTranslationShown[row.Key] {
 
 		return row.Text
 	}
-	key := t.rowTranslationCacheKey(row)
 	if t.rowTranslationGenerating[key] {
 		return "Translating..."
 	}
@@ -324,16 +338,21 @@ func (t *transcriptFollower) transcriptRowDisplayText(row transcriptRow) string 
 }
 
 func (t *transcriptFollower) isTranscriptRowTranslationShown(row transcriptRow) bool {
+	t.rowMutex.RLock()
+	defer t.rowMutex.RUnlock()
 	return t.rowTranslationShown[row.Key]
 }
 
 func (t *transcriptFollower) rowTranslationCacheKey(row transcriptRow) string {
 	source := utils.CleanInlineText(row.Text)
+	t.rowMutex.RLock()
 	targetLanguage := strings.TrimSpace(t.selectedTargetLanguage)
+	activeGameName := strings.TrimSpace(t.activeGameName)
+	t.rowMutex.RUnlock()
 	if source == "" || targetLanguage == "" {
 		return ""
 	}
-	return strings.TrimSpace(t.activeGameName) + "\x00" + source + "\x00" + strings.ToLower(targetLanguage)
+	return activeGameName + "\x00" + source + "\x00" + strings.ToLower(targetLanguage)
 }
 
 func (t *transcriptFollower) selectTranscriptRow(key string) {
@@ -344,8 +363,10 @@ func (t *transcriptFollower) selectTranscriptRow(key string) {
 		if row.Info {
 			return
 		}
+		t.rowMutex.Lock()
 		t.selectedLineKey = row.Key
 		t.selectedLineText = row.Text
+		t.rowMutex.Unlock()
 		t.selectedRow(row)
 		return
 	}
@@ -361,26 +382,74 @@ func (t *transcriptFollower) transcriptRowTranslateClickable(key string) *widget
 	return t.transcriptRowTranslateClicks[key]
 }
 
-func (t *transcriptFollower) generateTranscriptRowTranslation(gtx layout.Context, ctx context.Context, row transcriptRow, key string) {
-	if key == "" || t.rowTranslationGenerating[key] {
+func (t *transcriptFollower) showTranscriptRowTranslation(ctx context.Context, row transcriptRow) {
+	if row.Info {
+		return
+	}
+	key := t.rowTranslationCacheKey(row)
+	if key == "" {
+		return
+	}
+
+	t.rowMutex.Lock()
+	if _, ok := t.rowTranslations[key]; ok {
+		t.rowTranslationShown[row.Key] = true
+		t.rowMutex.Unlock()
+		t.invalidateUI()
+		return
+	}
+	if t.rowTranslationGenerating[key] {
+		t.rowTranslationShown[row.Key] = true
+		t.rowMutex.Unlock()
+		t.invalidateUI()
+		return
+	}
+	t.rowTranslationShown[row.Key] = true
+	t.rowTranslationGenerating[key] = true
+	t.rowMutex.Unlock()
+
+	t.invalidateUI()
+	t.generateTranscriptRowTranslation(ctx, row, key)
+}
+
+func (t *transcriptFollower) generateTranscriptRowTranslation(ctx context.Context, row transcriptRow, key string) {
+	if key == "" {
 		return
 	}
 	source := utils.CleanInlineText(row.Text)
 	if source == "" {
 		return
 	}
-	t.rowTranslationGenerating[key] = true
+	t.rowMutex.RLock()
 	gameName := t.activeGameName
 	targetLanguage := t.selectedTargetLanguage
 	cfg := t.translatorConfig
+	t.rowMutex.RUnlock()
 	go func() {
-		entry, err := translation.Generate(ctx, cfg, gameName, source, targetLanguage)
+		entry, ok, err := translation.Load(gameName, source, targetLanguage)
+		if err != nil {
+			slog.Error("failed loading transcript row translation", "err", err)
+		}
+		if !ok && err == nil {
+			entry, err = translation.Generate(ctx, cfg, gameName, source, targetLanguage)
+		}
 		result := rowTranslationResult{Key: key, RowKey: row.Key, Entry: entry, Err: err}
-		delete(t.rowTranslationGenerating, result.Key)
-		t.rowTranslations[result.Key] = result.Entry.Translation
-		t.rowTranslationShown[result.RowKey] = true
 
-		gtx.Execute(op.InvalidateCmd{})
+		t.rowMutex.Lock()
+
+		delete(t.rowTranslationGenerating, result.Key)
+		if result.Err != nil {
+			slog.Error("failed generating transcript row translation", "err", result.Err)
+			t.rowTranslationShown[result.RowKey] = false
+			t.rowMutex.Unlock()
+			t.invalidateUI()
+			return
+		}
+		if translationText := strings.TrimSpace(result.Entry.Translation); translationText != "" {
+			t.rowTranslations[result.Key] = translationText
+			t.rowTranslationShown[result.RowKey] = true
+		}
+		t.rowMutex.Unlock()
 		t.invalidateUI()
 
 	}()

@@ -1,13 +1,16 @@
 package transcript
 
 import (
+	"fmt"
 	"image/color"
 	"strings"
+	"sync"
 
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+	"github.com/DarlingGoose/jpndict"
 	"github.com/DarlingGoose/wgl/pkg/japanese"
 	"github.com/DarlingGoose/wgl/pkg/translation"
 	"github.com/DarlingGoose/wgl/pkg/util"
@@ -43,6 +46,16 @@ type SentenceAnalysis struct {
 	selectedFocusedTokenNote string
 	focusedLookupPendingKey  string
 
+	lookupMu         sync.RWMutex
+	lookupGeneration int
+	lookupResults    []*jpndict.Response
+	lookupError      string
+	lookupPending    bool
+	lookupQuery      string
+	lookupTokenKey   string
+	lookupList       widget.List
+	invalidate       func()
+
 	sentenceFontSize  unit.Sp
 	furigiganFontSize unit.Sp
 	structureList     widget.List
@@ -53,6 +66,8 @@ type SentenceAnalysis struct {
 func NewSentenceAnalysis(th *material.Theme, backend backend.Backend) *SentenceAnalysis {
 	structureList := widget.List{}
 	structureList.Axis = layout.Vertical
+	lookupList := widget.List{}
+	lookupList.Axis = layout.Vertical
 	return &SentenceAnalysis{
 		tc:                     theme.DefaultThemeClient,
 		backend:                backend,
@@ -63,6 +78,7 @@ func NewSentenceAnalysis(th *material.Theme, backend backend.Backend) *SentenceA
 		sentenceFontSize:       unit.Sp(24),
 		furigiganFontSize:      unit.Sp(12),
 		structureList:          structureList,
+		lookupList:             lookupList,
 		focusedTokenClicks:     make(map[string]*widget.Clickable),
 	}
 }
@@ -88,6 +104,14 @@ func (t *SentenceAnalysis) WithThemeClient(tc *theme.Client) *SentenceAnalysis {
 	return t
 }
 
+func (t *SentenceAnalysis) WithInvalidate(invalidate func()) *SentenceAnalysis {
+	if t == nil {
+		return t
+	}
+	t.invalidate = invalidate
+	return t
+}
+
 func (t *SentenceAnalysis) SetSentence(line *transcriptRow) {
 	if t == nil {
 		return
@@ -98,6 +122,9 @@ func (t *SentenceAnalysis) SetSentence(line *transcriptRow) {
 	}
 	row := *line
 	row.Text = utils.CleanInlineText(row.Text)
+	if t.line == nil || t.line.Key != row.Key || t.line.Text != row.Text {
+		t.clearFocusedLookup()
+	}
 	t.line = &row
 }
 func (t *SentenceAnalysis) Reset() {
@@ -105,6 +132,7 @@ func (t *SentenceAnalysis) Reset() {
 		return
 	}
 	t.line = nil
+	t.clearFocusedLookup()
 }
 func (t *SentenceAnalysis) HandeEvents(gtx layout.Context) {
 	for t.furiganaHiddenClick.Clicked(gtx) {
@@ -147,18 +175,83 @@ func (t *SentenceAnalysis) selectFocusedToken(key string) {
 		t.selectedFocusedTokenWord = word
 		t.selectedFocusedTokenNote = ""
 		t.focusedLookupPendingKey = ""
-		//t.wordEditor.SetText(word)
-		//p.meaningEditor.SetText("")
-		//t.lookupResult = nil
-		//t.lookupResults = nil
-		//if isParticleToken(token) {
-		//	note := particleRole(token.Surface)
-		//	p.selectedFocusedTokenNote = note
-		//	p.meaningEditor.SetText(note)
-		//	return
-		//}
-		//p.startFocusedTokenLookup(key, word, w)
+		t.startFocusedTokenLookup(key, word)
 		return
+	}
+}
+
+func (t *SentenceAnalysis) clearFocusedLookup() {
+	t.lookupMu.Lock()
+	defer t.lookupMu.Unlock()
+	t.selectedFocusedTokenKey = ""
+	t.selectedFocusedTokenWord = ""
+	t.selectedFocusedTokenNote = ""
+	t.focusedLookupPendingKey = ""
+	t.lookupGeneration++
+	t.lookupResults = nil
+	t.lookupError = ""
+	t.lookupPending = false
+	t.lookupQuery = ""
+	t.lookupTokenKey = ""
+}
+
+func (t *SentenceAnalysis) startFocusedTokenLookup(key, word string) {
+	word = strings.TrimSpace(word)
+	if word == "" {
+		return
+	}
+	t.lookupMu.Lock()
+	t.lookupGeneration++
+	generation := t.lookupGeneration
+	t.lookupPending = true
+	t.lookupError = ""
+	t.lookupResults = nil
+	t.lookupQuery = word
+	t.lookupTokenKey = key
+	t.focusedLookupPendingKey = key
+	t.lookupMu.Unlock()
+	t.invalidateUI()
+
+	go func() {
+		var (
+			results []*jpndict.Response
+			err     error
+		)
+		if t.backend == nil {
+			err = fmt.Errorf("dictionary backend is not available")
+		} else {
+			results, err = t.backend.SearchAllTerm(jpndict.Search{Text: word, WithAudio: true})
+		}
+
+		t.lookupMu.Lock()
+		if generation != t.lookupGeneration {
+			t.lookupMu.Unlock()
+			return
+		}
+		t.lookupPending = false
+		t.focusedLookupPendingKey = ""
+		if err != nil {
+			t.lookupError = err.Error()
+		} else if len(results) == 0 {
+			t.lookupError = "No dictionary entry found for " + word
+		} else {
+			t.lookupResults = results
+		}
+		t.lookupMu.Unlock()
+		t.invalidateUI()
+	}()
+}
+
+func (t *SentenceAnalysis) lookupSnapshot() (query, tokenKey, errText string, pending bool, results []*jpndict.Response) {
+	t.lookupMu.RLock()
+	defer t.lookupMu.RUnlock()
+	results = append([]*jpndict.Response(nil), t.lookupResults...)
+	return t.lookupQuery, t.lookupTokenKey, t.lookupError, t.lookupPending, results
+}
+
+func (t *SentenceAnalysis) invalidateUI() {
+	if t != nil && t.invalidate != nil {
+		t.invalidate()
 	}
 }
 
@@ -199,7 +292,9 @@ func (t *SentenceAnalysis) focusedSentenceTokenWidth(gtx layout.Context, token j
 		runes = 1
 	}
 	size := float32(t.sentenceFontSize)
-	return gtx.Dp(unit.Dp(float32(runes)*size*0.72 + 12))
+	// This is intentionally conservative: Gio's label layout, token padding,
+	// furigana, and the inter-token gap all need to fit before the wrap point.
+	return gtx.Dp(unit.Dp(float32(runes)*size*0.95 + 28))
 }
 
 func (t *SentenceAnalysis) focusedTokenClickable(key string) *widget.Clickable {
@@ -228,6 +323,7 @@ func (t *SentenceAnalysis) pruneFocusedTokenClicks(tokens []japanese.Token) {
 			t.selectedFocusedTokenWord = ""
 			t.selectedFocusedTokenNote = ""
 			t.focusedLookupPendingKey = ""
+			t.clearFocusedLookup()
 		}
 	}
 }
