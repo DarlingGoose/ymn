@@ -525,6 +525,21 @@ func (t *SentenceAnalysis) focusedTokenSurfaceSlotHeight(gtx layout.Context) uni
 	return unit.Dp(size + 12)
 }
 
+func (t *SentenceAnalysis) focusedTokenReadingFontSize() unit.Sp {
+	size := t.sentenceFontSize * unit.Sp(0.5)
+	if size < unit.Sp(10) {
+		return unit.Sp(10)
+	}
+	if size > unit.Sp(18) {
+		return unit.Sp(18)
+	}
+	return size
+}
+
+func (t *SentenceAnalysis) focusedTokenReadingSlotHeight() unit.Dp {
+	return unit.Dp(float32(t.focusedTokenReadingFontSize()) + 8)
+}
+
 func (t *SentenceAnalysis) layoutFocusedTokenSlot(gtx layout.Context, height unit.Dp, w layout.Widget) layout.Dimensions {
 	slotHeight := gtx.Dp(height)
 	if slotHeight <= 0 {

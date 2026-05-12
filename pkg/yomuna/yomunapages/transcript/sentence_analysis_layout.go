@@ -275,7 +275,7 @@ func (t *SentenceAnalysis) layoutFocusedFuriganaToken(gtx layout.Context, token 
 	children := make([]layout.FlexChild, 0, 4)
 	if t.focusedFuriganaMode == focusedFuriganaAbove {
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return t.layoutFocusedTokenSlot(gtx, unit.Dp(24), func(gtx layout.Context) layout.Dimensions {
+			return t.layoutFocusedTokenSlot(gtx, t.focusedTokenReadingSlotHeight(), func(gtx layout.Context) layout.Dimensions {
 				return t.layoutFocusedTokenReading(gtx, reading)
 			})
 		}), layout.Rigid(bareutils.SpacerH(unit.Dp(1))))
@@ -284,13 +284,14 @@ func (t *SentenceAnalysis) layoutFocusedFuriganaToken(gtx layout.Context, token 
 		return t.layoutFocusedTokenSlot(gtx, t.focusedTokenSurfaceSlotHeight(gtx), func(gtx layout.Context) layout.Dimensions {
 			lbl := material.H6(t.th, surface)
 			theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleH2)
+			lbl.TextSize = t.sentenceFontSize
 			lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
 			return lbl.Layout(gtx)
 		})
 	}))
 	if t.focusedFuriganaMode == focusedFuriganaBelow {
 		children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(2))), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return t.layoutFocusedTokenSlot(gtx, unit.Dp(18), func(gtx layout.Context) layout.Dimensions {
+			return t.layoutFocusedTokenSlot(gtx, t.focusedTokenReadingSlotHeight(), func(gtx layout.Context) layout.Dimensions {
 				return t.layoutFocusedTokenReading(gtx, reading)
 			})
 		}))
@@ -325,6 +326,7 @@ func (t *SentenceAnalysis) layoutFocusedTokenReading(gtx layout.Context, reading
 	}
 	lbl := material.Body2(t.th, reading)
 	theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleBodyLarge)
+	lbl.TextSize = t.focusedTokenReadingFontSize()
 	lbl.Color = t.tc.GetCurrentColorToken().SecondaryNRGBA()
 	return lbl.Layout(gtx)
 }

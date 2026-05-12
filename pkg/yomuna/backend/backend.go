@@ -33,6 +33,7 @@ type GameLogic interface {
 	SelectGame(g *game.Game)
 	SelectGameByName(n string)
 	CurrentGame() *game.Game
+	SaveGameConfig(g *game.Game, previousName string) error
 	StopCurrentGame()
 	IsGameRunning() bool
 }

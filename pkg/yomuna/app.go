@@ -38,6 +38,7 @@ type App struct {
 
 	Translation *yomunapages.TranslationUI
 	Transcript  *transcript.TranscriptUI
+	Game        *yomunapages.GameUI
 	Settings    *pages.SettingsUI
 
 	legacySettings *guisettings.Settings
@@ -63,6 +64,7 @@ func New(initialSource string) *App {
 		Overlay:        &overlay.Overlay{},
 		Transcript:     transcript.NewTranscriptUI(th, tc, b),
 		Translation:    yomunapages.NewTranslationUI(th, tc).WithSource(initialSource),
+		Game:           yomunapages.NewGameUI(th, tc, b),
 		Settings:       pages.NewSettingsUI(tc),
 		legacySettings: legacySettings,
 		legacyTheme:    legacyTheme,
@@ -91,6 +93,9 @@ func New(initialSource string) *App {
 		}),
 		tabs.NewTabFunc("translation", "Translation", "lucide:languages", func(gtx layout.Context) layout.Dimensions {
 			return ui.Translation.Layout(gtx, ui.ctx)
+		}),
+		tabs.NewTabFunc("game", "Game", "lucide:gamepad-2", func(gtx layout.Context) layout.Dimensions {
+			return ui.Game.Layout(gtx, ui.Overlay)
 		}),
 		tabs.NewTabFunc("settings", "Settings", "lucide:settings", func(gtx layout.Context) layout.Dimensions {
 			return ui.Settings.Layout(gtx, ui.Overlay)

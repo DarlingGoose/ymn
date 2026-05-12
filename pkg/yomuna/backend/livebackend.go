@@ -3,7 +3,9 @@ package backend
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/DarlingGoose/gr"
@@ -13,6 +15,7 @@ import (
 	"github.com/DarlingGoose/vntext/pkg/engine/auto"
 	"github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/vntext/pkg/gameConfig"
+	vnutil "github.com/DarlingGoose/vntext/pkg/util"
 	"github.com/DarlingGoose/wgl/pkg/japanese"
 	"github.com/DarlingGoose/wgl/pkg/util"
 )
@@ -159,6 +162,37 @@ func (b *LiveBackend) CurrentGame() *game.Game {
 	b.gameMu.RLock()
 	defer b.gameMu.RUnlock()
 	return b.current
+}
+
+func (b *LiveBackend) SaveGameConfig(g *game.Game, previousName string) error {
+	if g == nil {
+		return fmt.Errorf("game is required")
+	}
+
+	if err := gameConfig.WriteGameConfig(gameConfig.DefaultGameConfigPath(g), g); err != nil {
+		return err
+	}
+
+	oldName := strings.TrimSpace(previousName)
+	if oldName != "" && oldName != strings.TrimSpace(g.Name) {
+		oldFile := vnutil.SanitizeName(oldName) + ".json"
+		oldPath := filepath.Join(gameConfig.ConfigBaseDir(), "games", oldFile)
+		oldLegacyPath := filepath.Join(util.ConfigBaseDir(), "games", oldFile)
+		newPath := gameConfig.DefaultGameConfigPath(g)
+		if oldPath != newPath {
+			_ = os.Remove(oldPath)
+		}
+		if oldLegacyPath != newPath {
+			_ = os.Remove(oldLegacyPath)
+		}
+	}
+
+	b.gameMu.Lock()
+	b.current = g
+	b.config.SelectGameName = g.Name
+	b.gameMu.Unlock()
+
+	return b.ReloadGames()
 }
 
 func (b *LiveBackend) StopCurrentGame() {
