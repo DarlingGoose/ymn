@@ -14,6 +14,7 @@ import (
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
 	"github.com/DarlingGoose/jpndict"
 	"github.com/DarlingGoose/wgl/pkg/japanese"
+	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/iconify"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
 )
@@ -448,14 +449,15 @@ func (t *SentenceAnalysis) layoutLookupResults(gtx layout.Context, results []*jp
 		if i > 0 {
 			children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(6))))
 		}
+		index := i
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return t.layoutLookupResult(gtx, resp)
+			return t.layoutLookupResult(gtx, resp, index)
 		}))
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
-func (t *SentenceAnalysis) layoutLookupResult(gtx layout.Context, resp *jpndict.Response) layout.Dimensions {
+func (t *SentenceAnalysis) layoutLookupResult(gtx layout.Context, resp *jpndict.Response, index int) layout.Dimensions {
 	if resp == nil {
 		return layout.Dimensions{}
 	}
@@ -463,29 +465,42 @@ func (t *SentenceAnalysis) layoutLookupResult(gtx layout.Context, resp *jpndict.
 	if strings.TrimSpace(meaning) == "" {
 		meaning = strings.TrimSpace(resp.Text)
 	}
+	audioKey := lookupResultKey(resp, index)
+	audioQuery := lookupAudioQuery(resp, headword)
+	t.registerLookupAudio(audioKey, audioQuery, resp)
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(t.th, headword)
-					theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleLabel)
-					t.applyLookupTextStyle(&lbl, 1)
-					lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
-					return lbl.Layout(gtx)
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(t.th, headword)
+							theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleLabel)
+							t.applyLookupTextStyle(&lbl, 1)
+							lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if strings.TrimSpace(reading) == "" || reading == headword {
+								return layout.Dimensions{}
+							}
+							lbl := material.Body2(t.th, reading)
+							theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleCaption)
+							t.applyLookupTextStyle(&lbl, -1)
+							lbl.Color = t.tc.GetCurrentColorToken().SecondaryNRGBA()
+							return lbl.Layout(gtx)
+						}),
+					)
 				}),
-				layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if strings.TrimSpace(reading) == "" || reading == headword {
-						return layout.Dimensions{}
-					}
-					lbl := material.Body2(t.th, reading)
-					theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleCaption)
-					t.applyLookupTextStyle(&lbl, -1)
-					lbl.Color = t.tc.GetCurrentColorToken().SecondaryNRGBA()
-					return lbl.Layout(gtx)
+					return t.layoutLookupAudioButton(gtx, audioKey)
 				}),
 			)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutLookupAudioStatus(gtx, audioKey)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if strings.TrimSpace(meaning) == "" {
@@ -502,6 +517,57 @@ func (t *SentenceAnalysis) layoutLookupResult(gtx layout.Context, resp *jpndict.
 	)
 }
 
+func (t *SentenceAnalysis) layoutLookupAudioButton(gtx layout.Context, key string) layout.Dimensions {
+	pending, cached, _ := t.lookupAudioSnapshot(key)
+	ct := t.tc.GetCurrentColorToken()
+	fg := ct.TextMutedNRGBA()
+	bg := color.NRGBA{A: 0}
+	if cached {
+		fg = ct.PrimaryNRGBA()
+	}
+	click := t.lookupAudioClickable(key)
+	if click.Hovered() {
+		bg = ct.SurfaceNRGBA()
+	}
+	if pending {
+		fg = ct.TextMutedNRGBA()
+	}
+
+	return utils.ClickableSurface(gtx, click, bg, unit.Dp(7), func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(5), Left: unit.Dp(7), Right: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return iconify.DefaultIconify.Layout(gtx, "lucide:volume-2", unit.Dp(15), fg)
+				}),
+				layout.Rigid(bareutils.SpacerW(unit.Dp(5))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					label := "Audio"
+					if pending {
+						label = "Loading"
+					} else if cached {
+						label = "Cached"
+					}
+					lbl := material.Body2(t.th, label)
+					theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleCaption)
+					lbl.Color = fg
+					return lbl.Layout(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (t *SentenceAnalysis) layoutLookupAudioStatus(gtx layout.Context, key string) layout.Dimensions {
+	_, _, errText := t.lookupAudioSnapshot(key)
+	if strings.TrimSpace(errText) == "" {
+		return layout.Dimensions{}
+	}
+	return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleCaption, theme.ThemeColorWarning, errText)
+	})
+}
+
 func (t *SentenceAnalysis) applyLookupTextStyle(lbl *material.LabelStyle, offset unit.Sp) {
 	if lbl == nil {
 		return
@@ -513,6 +579,37 @@ func (t *SentenceAnalysis) applyLookupTextStyle(lbl *material.LabelStyle, offset
 	lbl.TextSize = size
 	lbl.LineHeight = size + unit.Sp(7)
 	lbl.Font.Typeface = font.Typeface("Noto Sans CJK JP")
+}
+
+func lookupResultKey(resp *jpndict.Response, index int) string {
+	if resp == nil {
+		return strconv.Itoa(index)
+	}
+	parts := []string{
+		strconv.Itoa(index),
+		strings.TrimSpace(resp.Query),
+		strings.TrimSpace(resp.Key),
+	}
+	if resp.Entry != nil {
+		parts = append(parts, strings.TrimSpace(resp.Entry.Headword), strings.TrimSpace(resp.Entry.Reading))
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func lookupAudioQuery(resp *jpndict.Response, headword string) string {
+	candidates := []string{headword}
+	if resp != nil {
+		if resp.Entry != nil {
+			candidates = append(candidates, resp.Entry.Headword, resp.Entry.Reading)
+		}
+		candidates = append(candidates, resp.Query, resp.Key)
+	}
+	for _, candidate := range candidates {
+		if text := strings.TrimSpace(candidate); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 func lookupResponseText(resp *jpndict.Response) (headword, reading, meaning string) {

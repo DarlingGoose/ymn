@@ -3,6 +3,7 @@ package transcript
 import (
 	"fmt"
 	"image/color"
+	"regexp"
 	"strings"
 
 	"github.com/DarlingGoose/vntext/pkg/engine"
@@ -67,11 +68,18 @@ func mixNRGBA(a, b color.NRGBA, amount float32) color.NRGBA {
 	}
 }
 
+var cleanRe = regexp.MustCompile(`^(\[[a-zA-Z_]*\s*])+`)
+
 func transcriptRowFromEngineLine(line engine.Line) transcriptRow {
 	text := strings.TrimSpace(line.Text)
 
 	if text == "" {
 		text = strings.TrimSpace(fmt.Sprint(line))
+	}
+	var info bool
+	if strings.Contains(text, "[system]") {
+		text = cleanRe.ReplaceAllString(text, "")
+		info = true
 	}
 
 	return transcriptRow{
@@ -80,7 +88,7 @@ func transcriptRowFromEngineLine(line engine.Line) transcriptRow {
 		Text:    text,
 		Speaker: strings.TrimSpace(line.Speaker),
 		Raw:     line.Raw,
-		Info:    false,
+		Info:    info,
 		Time:    line.Time.Format("15:04:05"),
 	}
 }

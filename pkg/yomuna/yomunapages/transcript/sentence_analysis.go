@@ -37,6 +37,7 @@ type SentenceAnalysis struct {
 	furiganaAboveClick  widget.Clickable
 	lookupFontDownClick widget.Clickable
 	lookupFontUpClick   widget.Clickable
+	lookupAudioClicks   map[string]*widget.Clickable
 
 	autoTranslate bool
 
@@ -57,6 +58,7 @@ type SentenceAnalysis struct {
 	lookupTokenKey   string
 	lookupList       widget.List
 	lookupFontSize   unit.Sp
+	lookupAudio      map[string]*lookupAudioState
 	invalidate       func()
 
 	sentenceFontSize  unit.Sp
@@ -84,7 +86,17 @@ func NewSentenceAnalysis(th *material.Theme, backend backend.Backend) *SentenceA
 		lookupList:             lookupList,
 		lookupFontSize:         unit.Sp(14),
 		focusedTokenClicks:     make(map[string]*widget.Clickable),
+		lookupAudioClicks:      make(map[string]*widget.Clickable),
+		lookupAudio:            make(map[string]*lookupAudioState),
 	}
+}
+
+type lookupAudioState struct {
+	Query   string
+	Pending bool
+	Cached  bool
+	Error   string
+	Resp    *jpndict.Response
 }
 
 func (t *SentenceAnalysis) WithTranslatorConfig(cfg translation.Config) *SentenceAnalysis {
@@ -156,6 +168,11 @@ func (t *SentenceAnalysis) HandeEvents(gtx layout.Context) {
 			t.selectFocusedToken(key)
 		}
 	}
+	for key, click := range t.lookupAudioClicks {
+		for click.Clicked(gtx) {
+			t.playLookupAudio(key)
+		}
+	}
 }
 
 func (t *SentenceAnalysis) adjustLookupFontSize(delta unit.Sp) {
@@ -224,6 +241,8 @@ func (t *SentenceAnalysis) clearFocusedLookup() {
 	t.lookupPending = false
 	t.lookupQuery = ""
 	t.lookupTokenKey = ""
+	t.lookupAudioClicks = make(map[string]*widget.Clickable)
+	t.lookupAudio = make(map[string]*lookupAudioState)
 }
 
 func (t *SentenceAnalysis) startFocusedTokenLookup(key, word string) {
@@ -251,7 +270,7 @@ func (t *SentenceAnalysis) startFocusedTokenLookup(key, word string) {
 		if t.backend == nil {
 			err = fmt.Errorf("dictionary backend is not available")
 		} else {
-			results, err = t.backend.SearchAllTerm(jpndict.Search{Text: word, WithAudio: true})
+			results, err = t.backend.SearchAllTerm(jpndict.Search{Text: word})
 		}
 
 		t.lookupMu.Lock()
@@ -278,6 +297,130 @@ func (t *SentenceAnalysis) lookupSnapshot() (query, tokenKey, errText string, pe
 	defer t.lookupMu.RUnlock()
 	results = append([]*jpndict.Response(nil), t.lookupResults...)
 	return t.lookupQuery, t.lookupTokenKey, t.lookupError, t.lookupPending, results
+}
+
+func (t *SentenceAnalysis) lookupAudioClickable(key string) *widget.Clickable {
+	if t.lookupAudioClicks == nil {
+		t.lookupAudioClicks = make(map[string]*widget.Clickable)
+	}
+	if t.lookupAudioClicks[key] == nil {
+		t.lookupAudioClicks[key] = new(widget.Clickable)
+	}
+	return t.lookupAudioClicks[key]
+}
+
+func (t *SentenceAnalysis) registerLookupAudio(key, query string, resp *jpndict.Response) {
+	key = strings.TrimSpace(key)
+	query = strings.TrimSpace(query)
+	if key == "" || query == "" {
+		return
+	}
+	t.lookupMu.Lock()
+	defer t.lookupMu.Unlock()
+	if t.lookupAudio == nil {
+		t.lookupAudio = make(map[string]*lookupAudioState)
+	}
+	state := t.lookupAudio[key]
+	if state == nil {
+		state = &lookupAudioState{}
+		t.lookupAudio[key] = state
+	}
+	state.Query = query
+	if resp != nil && resp.HasAudio() {
+		state.Cached = true
+		state.Resp = resp
+	}
+}
+
+func (t *SentenceAnalysis) lookupAudioSnapshot(key string) (pending, cached bool, errText string) {
+	t.lookupMu.RLock()
+	defer t.lookupMu.RUnlock()
+	state := t.lookupAudio[key]
+	if state == nil {
+		return false, false, ""
+	}
+	return state.Pending, state.Cached, state.Error
+}
+
+func (t *SentenceAnalysis) playLookupAudio(key string) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+
+	t.lookupMu.Lock()
+	state := t.lookupAudio[key]
+	if state == nil || strings.TrimSpace(state.Query) == "" {
+		t.lookupMu.Unlock()
+		return
+	}
+	if state.Pending {
+		t.lookupMu.Unlock()
+		return
+	}
+	if state.Resp != nil && state.Resp.HasAudio() {
+		resp := state.Resp
+		state.Error = ""
+		t.lookupMu.Unlock()
+		go func() {
+			if _, err := resp.PlayAudio(false); err != nil {
+				t.setLookupAudioError(key, err)
+			}
+		}()
+		return
+	}
+
+	query := state.Query
+	state.Pending = true
+	state.Error = ""
+	t.lookupMu.Unlock()
+	t.invalidateUI()
+
+	go func() {
+		var (
+			resp *jpndict.Response
+			err  error
+		)
+		if t.backend == nil {
+			err = fmt.Errorf("dictionary backend is not available")
+		} else {
+			resp, err = t.backend.SearchTerm(jpndict.Search{Text: query, WithAudio: true})
+		}
+		if err == nil && (resp == nil || !resp.HasAudio()) {
+			err = fmt.Errorf("no cached audio found for %s", query)
+		}
+		if err == nil {
+			_, err = resp.PlayAudio(false)
+		}
+
+		t.lookupMu.Lock()
+		state := t.lookupAudio[key]
+		if state != nil {
+			state.Pending = false
+			if err != nil {
+				state.Error = err.Error()
+			} else {
+				state.Error = ""
+				state.Cached = true
+				state.Resp = resp
+			}
+		}
+		t.lookupMu.Unlock()
+		t.invalidateUI()
+	}()
+}
+
+func (t *SentenceAnalysis) setLookupAudioError(key string, err error) {
+	if err == nil {
+		return
+	}
+	t.lookupMu.Lock()
+	if state := t.lookupAudio[key]; state != nil {
+		state.Error = err.Error()
+		state.Pending = false
+	}
+	t.lookupMu.Unlock()
+	t.invalidateUI()
 }
 
 func (t *SentenceAnalysis) invalidateUI() {
