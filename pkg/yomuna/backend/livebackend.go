@@ -140,6 +140,7 @@ func (b *LiveBackend) ReloadGames() error {
 	if b.current == nil && b.config.SelectGameName != "" {
 		b.current = findGameByName(games, b.config.SelectGameName)
 	}
+
 	return nil
 }
 
