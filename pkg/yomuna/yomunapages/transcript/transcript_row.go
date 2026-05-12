@@ -143,7 +143,6 @@ func (t *transcriptFollower) resetLocked() {
 
 func (t *transcriptFollower) AddRows(rows ...transcriptRow) {
 	t.rowMutex.Lock()
-	defer t.rowMutex.Unlock()
 
 	for _, r := range rows {
 		if r.Key == "" {
@@ -158,15 +157,22 @@ func (t *transcriptFollower) AddRows(rows ...transcriptRow) {
 		t.transcriptRows = append(t.transcriptRows, r)
 	}
 
+	var selected *transcriptRow
 	if len(t.transcriptRows) > 0 {
 		last := t.transcriptRows[len(t.transcriptRows)-1]
 		if !last.Info {
 			t.selectedLineKey = last.Key
 			t.selectedLineText = last.Text // not last.Key
+			row := last
+			selected = &row
 		}
 	}
 
 	if t.maxTranscriptRows <= 0 {
+		t.rowMutex.Unlock()
+		if selected != nil {
+			t.selectedRow(*selected)
+		}
 		return
 	}
 
@@ -175,6 +181,11 @@ func (t *transcriptFollower) AddRows(rows ...transcriptRow) {
 	}
 
 	t.pruneTranscriptRowStateLocked()
+	t.rowMutex.Unlock()
+
+	if selected != nil {
+		t.selectedRow(*selected)
+	}
 }
 
 func (t *transcriptFollower) pruneTranscriptRowStateLocked() {

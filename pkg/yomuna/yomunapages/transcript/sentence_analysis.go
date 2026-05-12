@@ -1,10 +1,12 @@
 package transcript
 
 import (
+	"image/color"
 	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"github.com/DarlingGoose/wgl/pkg/japanese"
 	"github.com/DarlingGoose/wgl/pkg/translation"
@@ -26,25 +28,40 @@ type SentenceAnalysis struct {
 	backend                backend.Backend
 	selectedTargetLanguage string
 	translatorConfig       translation.Config
-	autoTranslate          bool
+
+	focusedTokenClicks map[string]*widget.Clickable
+
+	autoTranslate bool
 
 	focusedFuriganaMode    string
 	focusedFuriganaDefault string
 
+	selectedFocusedTokenKey  string
+	selectedFocusedTokenWord string
+	selectedFocusedTokenNote string
+	focusedLookupPendingKey  string
+
 	sentenceFontSize  unit.Sp
 	furigiganFontSize unit.Sp
+	structureList     widget.List
 
 	line *transcriptRow
 }
 
 func NewSentenceAnalysis(th *material.Theme, backend backend.Backend) *SentenceAnalysis {
+	structureList := widget.List{}
+	structureList.Axis = layout.Vertical
 	return &SentenceAnalysis{
 		tc:                     theme.DefaultThemeClient,
 		backend:                backend,
 		th:                     th,
 		selectedTargetLanguage: "english",
-		focusedFuriganaMode:    focusedFuriganaHidden,
-		focusedFuriganaDefault: focusedFuriganaHidden,
+		focusedFuriganaMode:    focusedFuriganaAbove,
+		focusedFuriganaDefault: focusedFuriganaAbove,
+		sentenceFontSize:       unit.Sp(24),
+		furigiganFontSize:      unit.Sp(12),
+		structureList:          structureList,
+		focusedTokenClicks:     make(map[string]*widget.Clickable),
 	}
 }
 
@@ -58,14 +75,103 @@ func (t *SentenceAnalysis) WithAutoTranslate(at bool) *SentenceAnalysis {
 	return t
 }
 
-func (t *SentenceAnalysis) SetSentence(line *transcriptRow) {
+func (t *SentenceAnalysis) WithThemeClient(tc *theme.Client) *SentenceAnalysis {
+	if t == nil {
+		return t
+	}
+	if tc == nil {
+		tc = theme.DefaultThemeClient
+	}
+	t.tc = tc
+	return t
+}
 
+func (t *SentenceAnalysis) SetSentence(line *transcriptRow) {
+	if t == nil {
+		return
+	}
+	if line == nil || line.Info || strings.TrimSpace(line.Text) == "" {
+		t.Reset()
+		return
+	}
+	row := *line
+	row.Text = utils.CleanInlineText(row.Text)
+	t.line = &row
 }
 func (t *SentenceAnalysis) Reset() {
-
+	if t == nil {
+		return
+	}
+	t.line = nil
 }
 func (t *SentenceAnalysis) HandeEvents(gtx layout.Context) {
+	for key, click := range t.focusedTokenClicks {
+		for click.Clicked(gtx) {
+			t.selectFocusedToken(key)
+		}
+	}
+}
+func structureFlashcardWord(token japanese.Token) string {
+	switch token.POSMajor() {
+	case "動詞", "形容詞":
+		return util.FirstNonEmpty(strings.TrimSpace(token.BaseForm), strings.TrimSpace(token.Surface))
+	default:
+		return strings.TrimSpace(token.Surface)
+	}
+}
+func (t *SentenceAnalysis) selectFocusedToken(key string) {
+	text := t.structureSourceText()
+	analysis, err := japanese.AnalyzeSentence(text)
+	//analysis, errText := t.currentStructureAnalysis()
+	if err != nil {
+		//p.showError("Dictionary Lookup Failed", errText)
+		return
+	}
+	for _, token := range analysis.Tokens {
+		if structureTokenKey(token) != key {
+			continue
+		}
+		word := structureFlashcardWord(token)
+		if word == "" {
+			word = strings.TrimSpace(token.Surface)
+		}
+		t.selectedFocusedTokenKey = key
+		t.selectedFocusedTokenWord = word
+		t.selectedFocusedTokenNote = ""
+		t.focusedLookupPendingKey = ""
+		//t.wordEditor.SetText(word)
+		//p.meaningEditor.SetText("")
+		//t.lookupResult = nil
+		//t.lookupResults = nil
+		//if isParticleToken(token) {
+		//	note := particleRole(token.Surface)
+		//	p.selectedFocusedTokenNote = note
+		//	p.meaningEditor.SetText(note)
+		//	return
+		//}
+		//p.startFocusedTokenLookup(key, word, w)
+		return
+	}
+}
 
+func (t *SentenceAnalysis) currentAnalysis() (japanese.Analysis, string) {
+	text := t.structureSourceText()
+	if strings.TrimSpace(text) == "" {
+		return japanese.Analysis{}, ""
+	}
+	var (
+		analysis japanese.Analysis
+		err      error
+	)
+	if t.backend != nil {
+		analysis, err = t.backend.AnalyzeSentence(text)
+	} else {
+		analysis, err = japanese.AnalyzeSentence(text)
+	}
+	if err != nil {
+		return japanese.Analysis{}, err.Error()
+	}
+	return analysis, ""
 }
 
 func (t *SentenceAnalysis) structureSourceText() string {
@@ -86,6 +192,81 @@ func (t *SentenceAnalysis) focusedSentenceTokenWidth(gtx layout.Context, token j
 	}
 	size := float32(t.sentenceFontSize)
 	return gtx.Dp(unit.Dp(float32(runes)*size*0.72 + 16))
+}
+
+func (t *SentenceAnalysis) focusedTokenClickable(key string) *widget.Clickable {
+	if t.focusedTokenClicks == nil {
+		t.focusedTokenClicks = make(map[string]*widget.Clickable)
+	}
+	if t.focusedTokenClicks[key] == nil {
+		t.focusedTokenClicks[key] = new(widget.Clickable)
+	}
+	return t.focusedTokenClicks[key]
+}
+
+func (t *SentenceAnalysis) pruneFocusedTokenClicks(tokens []japanese.Token) {
+	valid := make(map[string]struct{}, len(tokens))
+	for _, token := range tokens {
+		valid[structureTokenKey(token)] = struct{}{}
+	}
+	for key := range t.focusedTokenClicks {
+		if _, ok := valid[key]; !ok {
+			delete(t.focusedTokenClicks, key)
+		}
+	}
+	if t.selectedFocusedTokenKey != "" {
+		if _, ok := valid[t.selectedFocusedTokenKey]; !ok {
+			t.selectedFocusedTokenKey = ""
+			t.selectedFocusedTokenWord = ""
+			t.selectedFocusedTokenNote = ""
+			t.focusedLookupPendingKey = ""
+		}
+	}
+}
+func (t *SentenceAnalysis) focusedTokenSurfaceSlotHeight(gtx layout.Context) unit.Dp {
+	size := float32(t.sentenceFontSize)
+	return unit.Dp(size + 12)
+}
+
+func (t *SentenceAnalysis) layoutFocusedTokenSlot(gtx layout.Context, height unit.Dp, w layout.Widget) layout.Dimensions {
+	slotHeight := gtx.Dp(height)
+	if slotHeight <= 0 {
+		return w(gtx)
+	}
+	local := gtx
+	local.Constraints.Min.Y = slotHeight
+	local.Constraints.Max.Y = slotHeight
+	dims := layout.Center.Layout(local, w)
+	dims.Size.Y = slotHeight
+	return dims
+}
+
+// todo fix this
+func focusedTokenColor(theme *theme.ColorTokens, token japanese.Token, selected, inFlashcards, dictionaryReady bool) color.NRGBA {
+	primary := theme.PrimaryNRGBA()
+	surfaceAlt := theme.SurfaceAltNRGBA()
+
+	if selected {
+		return color.NRGBA{R: primary.R, G: primary.G, B: primary.B, A: 88}
+	}
+	if inFlashcards {
+		return color.NRGBA{R: primary.R, G: primary.G, B: primary.B, A: 54}
+	}
+	if dictionaryReady {
+		return color.NRGBA{R: surfaceAlt.R, G: surfaceAlt.G, B: surfaceAlt.B, A: 210}
+	}
+	switch token.POSMajor() {
+	//case "名詞":
+	//	return color.NRGBA{R: theme.Color.Secondary.R, G: theme.Color.Secondary.G, B: theme.Color.Secondary.B, A: 44}
+	//case "動詞":
+	//	return color.NRGBA{R: theme.Color.Primary.R, G: theme.Color.Primary.G, B: theme.Color.Primary.B, A: 42}
+	//case "形容詞", "副詞":
+	//	return color.NRGBA{R: theme.Color.Warning.R, G: theme.Color.Warning.G, B: theme.Color.Warning.B, A: 42}
+	//case "助詞", "助動詞":
+	//	return color.NRGBA{R: theme.Color.Tertiary.R, G: theme.Color.Tertiary.G, B: theme.Color.Tertiary.B, A: 32}
+	default:
+		return color.NRGBA{R: surfaceAlt.R, G: surfaceAlt.G, B: surfaceAlt.B, A: 180}
+	}
 }
 
 func focusedTokenReading(token japanese.Token) string {

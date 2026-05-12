@@ -117,18 +117,22 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 			ui.gameStatus = "Game not found"
 			ui.stopFollowing()
 			ui.transcriptFollower.Reset(item.Value)
+			ui.sentenceAnalysis.Reset()
 			return
 		}
 
 		ui.gameStatus = "Selected"
 		ui.transcriptFollower.SetGame(g.Name)
+		ui.sentenceAnalysis.Reset()
 
 		ui.StartFollowingGame(context.Background(), g)
 	})
 
 	ui.transcriptFollower.WithSelectedRow(func(row transcriptRow) {
-		ui.sentenceAnalysis.SetSentence(&row) //todo doesn't work or show it??
+		ui.sentenceAnalysis.SetSentence(&row)
 	})
+	ui.transcriptFollower.WithThemeClient(tc)
+	ui.sentenceAnalysis.WithThemeClient(tc)
 	ui.ReloadGames()
 	return ui
 }
@@ -136,6 +140,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 func (ui *TranscriptUI) update(gtx layout.Context) {
 	ui.transcriptFollower.HandeEvents(gtx)
 	ui.transcriptFollower.WithAutoTranslate(ui.autoTranslateToggle.Changed(gtx))
+	ui.sentenceAnalysis.HandeEvents(gtx)
 }
 
 func (ui *TranscriptUI) WithThemeClient(tc *theme.Client) *TranscriptUI {
@@ -154,6 +159,10 @@ func (ui *TranscriptUI) WithThemeClient(tc *theme.Client) *TranscriptUI {
 	}
 	if ui.stopGameButton != nil {
 		ui.stopGameButton.WithThemeClient(tc)
+	}
+	ui.transcriptFollower.WithThemeClient(tc)
+	if ui.sentenceAnalysis != nil {
+		ui.sentenceAnalysis.WithThemeClient(tc)
 	}
 
 	return ui

@@ -1,6 +1,10 @@
 package transcript
 
 import (
+	"strconv"
+	"strings"
+
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
@@ -11,12 +15,45 @@ import (
 )
 
 func (t *SentenceAnalysis) Layout(gtx layout.Context) layout.Dimensions {
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Dimensions{} //card header??
+	return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return t.layoutHeader(gtx)
+			}),
+			//layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+			//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			//	return t.layoutFocusedSentenceText(gtx)
+			//}),
+			layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return t.layoutSentenceStructure(gtx)
+			}),
+		)
+	})
+}
+
+func (t *SentenceAnalysis) layoutHeader(gtx layout.Context) layout.Dimensions {
+	meta := "No sentence selected"
+	if t.line != nil {
+		parts := make([]string, 0, 2)
+		if speaker := strings.TrimSpace(t.line.Speaker); speaker != "" {
+			parts = append(parts, speaker)
+		}
+		if ts := strings.TrimSpace(t.line.Time); ts != "" {
+			parts = append(parts, ts)
+		}
+		if len(parts) > 0 {
+			meta = strings.Join(parts, " - ")
+		} else {
+			meta = "Selected transcript row"
+		}
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Sentence Analysis")
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return t.layoutFocusedSentenceText(gtx)
+			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleCaption, theme.ThemeColorTextMuted, meta)
 		}),
 	)
 }
@@ -29,7 +66,8 @@ func (t *SentenceAnalysis) layoutFocusedSentenceText(gtx layout.Context) layout.
 	text = utils.CleanInlineText(text)
 	//	p.syncFocusedSentenceView(text)
 	if t.focusedFuriganaMode != focusedFuriganaHidden {
-		return t.layoutFocusedSentenceWithFurigana(gtx, text)
+		return layout.Dimensions{}
+		//return t.layoutFocusedSentenceWithFurigana(gtx, text)
 	}
 
 	lbl := material.H6(t.th, text)
@@ -38,18 +76,88 @@ func (t *SentenceAnalysis) layoutFocusedSentenceText(gtx layout.Context) layout.
 	//lbl.Color = p.theme.Color.Text
 	//lbl.TextSize = p.focusedSentenceTextSize(gtx)
 	//lbl.State = &p.focusedSentenceView
-	return lbl.Layout(gtx)
+	return utils.RoundedSurface(gtx, unit.Dp(10), t.tc.GetCurrentColorToken().SurfaceNRGBA(), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(14)).Layout(gtx, lbl.Layout)
+	})
 }
 
-func (t *SentenceAnalysis) layoutFocusedSentenceWithFurigana(gtx layout.Context, sentence string) layout.Dimensions {
-	analysis, err := japanese.AnalyzeSentence(sentence) //todo move to backend
-	if err != nil || len(analysis.Tokens) == 0 {
-		lbl := material.H6(t.th, sentence)
-		theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleH2)
-		lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
-		return lbl.Layout(gtx)
+func (t *SentenceAnalysis) layoutSentenceStructure(gtx layout.Context) layout.Dimensions {
+	text := t.structureSourceText()
+	if strings.TrimSpace(text) == "" {
+		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleBody, theme.ThemeColorTextMuted, "Select a transcript row to inspect its tokens.")
+		})
 	}
-	lines := t.focusedSentenceTokenLines(gtx, analysis.Tokens)
+
+	analysis, errText := t.currentAnalysis()
+	if errText != "" {
+		return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleBody, theme.ThemeColorWarning, errText)
+	}
+	if len(analysis.Tokens) == 0 {
+		return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleBody, theme.ThemeColorTextMuted, "No tokens found.")
+	}
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutTokenSummary(gtx, analysis)
+		}),
+		layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleLabel, theme.ThemeColorTextSecondary, "Tokens")
+		}),
+		layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return t.layoutTokenLines(gtx, analysis, analysis.Tokens)
+		}),
+	)
+}
+
+func (t *SentenceAnalysis) layoutTokenSummary(gtx layout.Context, analysis japanese.Analysis) layout.Dimensions {
+	items := []struct {
+		label string
+		value int
+	}{
+		{"Tokens", len(analysis.Tokens)},
+		{"Particles", len(analysis.Particles)},
+		{"Verbs", len(analysis.Verbs)},
+		{"Aux", len(analysis.Auxiliaries)},
+	}
+
+	children := make([]layout.FlexChild, 0, len(items)*2)
+	for i, item := range items {
+		item := item
+		if i > 0 {
+			children = append(children, layout.Rigid(bareutils.SpacerW(unit.Dp(8))))
+		}
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutSummaryPill(gtx, item.label, item.value)
+		}))
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+}
+
+func (t *SentenceAnalysis) layoutSummaryPill(gtx layout.Context, label string, value int) layout.Dimensions {
+	ct := t.tc.GetCurrentColorToken()
+	bg := theme.Mix(ct.PrimaryNRGBA(), ct.SurfaceNRGBA(), 0.14)
+	return utils.RoundedSurface(gtx, unit.Dp(8), bg, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Top: unit.Dp(7), Bottom: unit.Dp(7), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleLabelSmall, theme.ThemeColorPrimary, label)
+				}),
+				layout.Rigid(bareutils.SpacerW(unit.Dp(6))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleLabelSmall, theme.ThemeColorTextPrimary, strconv.Itoa(value))
+				}),
+			)
+		})
+	})
+}
+
+func (t *SentenceAnalysis) layoutTokenLines(gtx layout.Context, analysis japanese.Analysis, tokens []japanese.Token) layout.Dimensions {
+	lines := t.focusedSentenceTokenLines(gtx, tokens)
+
+	//	children := make([]layout.FlexChild, 0, len(lines))
 	children := make([]layout.FlexChild, 0, len(lines))
 	for i, line := range lines {
 		line := line
@@ -61,9 +169,7 @@ func (t *SentenceAnalysis) layoutFocusedSentenceWithFurigana(gtx layout.Context,
 			for _, token := range line {
 				token := token
 				lineChildren = append(lineChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					token.StructureLabel()
-					return layout.Dimensions{}
-					//	return p.layoutFocusedFuriganaToken(gtx, token)
+					return t.layoutFocusedFuriganaToken(gtx, token)
 				}))
 			}
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, lineChildren...)
@@ -71,6 +177,99 @@ func (t *SentenceAnalysis) layoutFocusedSentenceWithFurigana(gtx layout.Context,
 	}
 	//p.pruneFocusedTokenClicks(analysis.Tokens)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func structureTokenKey(token japanese.Token) string {
+	return strings.Join([]string{
+		strings.TrimSpace(token.Surface),
+		strings.TrimSpace(token.BaseForm),
+		token.POSLabel(),
+		token.InflectionLabel(),
+	}, "\x00")
+}
+
+func (t *SentenceAnalysis) layoutFocusedFuriganaToken(gtx layout.Context, token japanese.Token) layout.Dimensions {
+	key := structureTokenKey(token)
+	click := t.focusedTokenClickable(key)
+	reading := focusedTokenReading(token)
+	surface := utils.CleanInlineText(token.Surface)
+	if surface == "" {
+		return layout.Dimensions{}
+	}
+	var inFlashcards, dictionaryReady bool
+	//_, inFlashcards := p.structureTokenFlashcard(token)
+	//dictionaryReady := focusedTokenDictionaryReady(token)
+	bg := focusedTokenColor(t.tc.GetCurrentColorToken(), token, t.selectedFocusedTokenKey == key, inFlashcards, dictionaryReady)
+	children := make([]layout.FlexChild, 0, 4)
+	if t.focusedFuriganaMode == focusedFuriganaAbove {
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutFocusedTokenSlot(gtx, unit.Dp(18), func(gtx layout.Context) layout.Dimensions {
+				return t.layoutFocusedTokenReading(gtx, reading)
+			})
+		}), layout.Rigid(bareutils.SpacerH(unit.Dp(2))))
+	}
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return t.layoutFocusedTokenSlot(gtx, t.focusedTokenSurfaceSlotHeight(gtx), func(gtx layout.Context) layout.Dimensions {
+			lbl := material.H6(t.th, surface)
+			theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleH2)
+			return lbl.Layout(gtx)
+		})
+	}))
+	if t.focusedFuriganaMode == focusedFuriganaBelow {
+		children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(2))), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutFocusedTokenSlot(gtx, unit.Dp(18), func(gtx layout.Context) layout.Dimensions {
+				return t.layoutFocusedTokenReading(gtx, reading)
+			})
+		}))
+	}
+	if t.focusedFuriganaMode == focusedFuriganaAbove {
+		children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(3))), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutFocusedTokenSlot(gtx, unit.Dp(14), func(gtx layout.Context) layout.Dimensions {
+				return t.layoutFocusedTokenMarker(gtx, inFlashcards, dictionaryReady)
+			})
+		}))
+	}
+	return layout.Inset{Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			pointer.CursorPointer.Add(gtx.Ops)
+			return bareutils.RoundedSurface(gtx, bg, unit.Dp(10), func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{
+					Top:    unit.Dp(5),
+					Bottom: unit.Dp(5),
+					Left:   unit.Dp(6),
+					Right:  unit.Dp(6),
+				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx, children...)
+				})
+			})
+		})
+	})
+}
+
+func (t *SentenceAnalysis) layoutFocusedTokenReading(gtx layout.Context, reading string) layout.Dimensions {
+	if reading == "" {
+		reading = " "
+	}
+	lbl := material.Body2(t.th, reading)
+	theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleBodyLarge)
+	lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
+	return lbl.Layout(gtx)
+}
+
+func (t *SentenceAnalysis) layoutFocusedTokenMarker(gtx layout.Context, inFlashcards, dictionaryReady bool) layout.Dimensions {
+	text := " "
+	fg := t.tc.GetCurrentColorToken().TextMutedNRGBA()
+	if inFlashcards {
+		text = "✓"
+		fg = t.tc.GetCurrentColorToken().PrimaryNRGBA()
+	} else if dictionaryReady {
+		text = "·"
+		fg = t.tc.GetCurrentColorToken().SecondaryNRGBA()
+	}
+	lbl := material.Body2(t.th, text)
+	theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleLabelSmall)
+	lbl.Color = fg
+	return lbl.Layout(gtx)
 }
 
 func (t *SentenceAnalysis) focusedSentenceTokenLines(gtx layout.Context, tokens []japanese.Token) [][]japanese.Token {
