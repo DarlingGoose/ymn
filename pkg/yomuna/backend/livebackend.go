@@ -41,10 +41,11 @@ func NewLive() *LiveBackend {
 		translator:     translate.NewOllamaClient(translate.OllamaConfig{}),
 	}
 }
+
 func (b *LiveBackend) IsGameRunning() bool {
-	//TODO implement me
-	return true
+	return b.currentRun != nil
 }
+
 func (b *LiveBackend) GetGames() []*game.Game {
 	b.gameMu.RLock()
 	if len(b.games) == 0 {
@@ -58,9 +59,13 @@ func (b *LiveBackend) GetGames() []*game.Game {
 }
 
 func (b *LiveBackend) SelectGameByName(n string) {
-	b.current = findGameByName(b.GetGames(), b.config.SelectGameName)
+	b.gameMu.Lock()
+	b.current = findGameByName(b.games, n)
+	b.config.SelectGameName = n
+	b.gameMu.Unlock()
 
 }
+
 func (b *LiveBackend) RunGame(ctx context.Context, g *game.Game) (*gr.Process, error) {
 	if g == nil {
 		return nil, fmt.Errorf("game is required")
@@ -73,6 +78,7 @@ func (b *LiveBackend) RunGame(ctx context.Context, g *game.Game) (*gr.Process, e
 	if err != nil {
 		return nil, err
 	}
+
 	b.gameMu.Lock()
 	b.current = g
 	b.currentRun = proc

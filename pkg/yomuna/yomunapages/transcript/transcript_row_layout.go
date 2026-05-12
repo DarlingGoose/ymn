@@ -2,7 +2,9 @@ package transcript
 
 import (
 	"context"
+	"fmt"
 	"image/color"
+	"log/slog"
 	"strings"
 
 	"gioui.org/io/pointer"
@@ -31,6 +33,9 @@ func (t *transcriptFollower) Layout(gtx layout.Context) layout.Dimensions {
 			Right:  unit.Dp(20),
 			Top:    unit.Dp(8),
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			if len(rows) <= index {
+				return layout.Dimensions{}
+			}
 			return t.layoutTranscriptRow(gtx, rows[index])
 		})
 	})
@@ -239,7 +244,7 @@ func (t *transcriptFollower) transcriptTimestampText(timestamp string) string {
 	return timestamp
 }
 
-func (t *transcriptFollower) toggleTranscriptRowTranslation(ctx context.Context, rowKey string) {
+func (t *transcriptFollower) toggleTranscriptRowTranslation(gtx layout.Context, ctx context.Context, rowKey string) {
 	row, ok := t.transcriptRowByKey(rowKey)
 	if !ok || row.Info {
 		return
@@ -260,14 +265,16 @@ func (t *transcriptFollower) toggleTranscriptRowTranslation(ctx context.Context,
 	//todo move to backend
 	entry, ok, err := translation.Load(t.activeGameName, row.Text, t.selectedTargetLanguage)
 	if err != nil {
+		slog.Error("failed loading", "err", err)
 		//p.showError("Translate Row Failed", err.Error())
 		return
 	}
+	fmt.Println(entry.Translation)
 	if ok {
 		t.rowTranslations[key] = entry.Translation
 		t.rowTranslationShown[row.Key] = true
 		return
 	}
 	t.rowTranslationShown[row.Key] = true
-	//p.generateTranscriptRowTranslation(ctx, w, row, key)
+	t.generateTranscriptRowTranslation(gtx, ctx, row, key)
 }

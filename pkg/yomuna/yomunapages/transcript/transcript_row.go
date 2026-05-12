@@ -5,14 +5,15 @@ import (
 	"strings"
 	"sync"
 
-	"gioui.org/app"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"github.com/DarlingGoose/wgl/pkg/translation"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
+	"github.com/DarlingGoose/wgl/pkg/yomuna/backend"
 	"github.com/google/uuid"
 )
 
@@ -60,14 +61,20 @@ type transcriptFollower struct {
 	activeGameName   string
 	selectedRow      func(row transcriptRow)
 	translatorConfig translation.Config
+
+	backend backend.Backend
+
+	autoTranslate bool
 }
 
-func newTranscriptFollower(th *material.Theme) transcriptFollower {
+func newTranscriptFollower(th *material.Theme, backend backend.Backend) transcriptFollower {
 	transcriptList := widget.List{}
 	transcriptList.Axis = layout.Vertical
 	transcriptList.ScrollToEnd = true
 	return transcriptFollower{
+		backend:                      backend,
 		th:                           th,
+		compactTimestamps:            true,
 		tc:                           theme.DefaultThemeClient,
 		transcriptList:               transcriptList,
 		transcriptRowClicks:          make(map[string]*widget.Clickable),
@@ -79,7 +86,7 @@ func newTranscriptFollower(th *material.Theme) transcriptFollower {
 		rowMutex:               sync.RWMutex{},
 		transcriptRows:         make([]transcriptRow, 0),
 		maxTranscriptRows:      200,         //todo add way to set this
-		fontSize:               unit.Sp(16), //allow this to be dynamicly set
+		fontSize:               unit.Sp(22), //allow this to be dynamicly set
 		radius:                 unit.Dp(12),
 		iconRadius:             unit.Dp(8),
 		selectedTargetLanguage: "english", //todo add way to set this
@@ -95,20 +102,118 @@ func (t *transcriptFollower) WithTranslatorConfig(cfg translation.Config) *trans
 	return t
 }
 
+func (t *transcriptFollower) WithAutoTranslate(at bool) *transcriptFollower {
+	t.autoTranslate = at
+	return t
+}
 func (t *transcriptFollower) WithSelectedRow(sr func(row transcriptRow)) {
 	t.selectedRow = sr
 }
-func (t *transcriptFollower) SetFoundSize(fontsize unit.Sp) {
-}
 
 func (t *transcriptFollower) SetGame(gameName string) {
-	//clear last logs if diff than current
-	// clear all maps as wel
+	t.rowMutex.Lock()
+	defer t.rowMutex.Unlock()
+
+	if t.activeGameName == gameName {
+		return
+	}
+
+	t.activeGameName = gameName
+	t.resetLocked()
 }
 
 func (t *transcriptFollower) Reset(gameName string) {
-	//clear last logs if diff than current
-	// clear all maps as wel
+	t.rowMutex.Lock()
+	defer t.rowMutex.Unlock()
+
+	t.activeGameName = gameName
+	t.resetLocked()
+}
+
+func (t *transcriptFollower) resetLocked() {
+	t.transcriptRows = nil
+	t.transcriptRowClicks = map[string]*widget.Clickable{}
+	t.transcriptRowTranslateClicks = map[string]*widget.Clickable{}
+	//t.transcriptRowVoiceClicks = map[string]*widget.Clickable{}
+	t.rowTranslationShown = map[string]bool{}
+
+	t.selectedLineKey = ""
+	t.selectedLineText = ""
+}
+
+func (t *transcriptFollower) AddRows(rows ...transcriptRow) {
+	t.rowMutex.Lock()
+	defer t.rowMutex.Unlock()
+
+	for _, r := range rows {
+		if r.Key == "" {
+			r.Key = uuid.NewString()
+		}
+		if t.autoTranslate {
+			//todo idk fix
+			t.transcriptRowTranslateClickable(r.Key).Click()
+			t.rowTranslationShown[r.Key] = true
+
+		}
+		t.transcriptRows = append(t.transcriptRows, r)
+	}
+
+	if len(t.transcriptRows) > 0 {
+		last := t.transcriptRows[len(t.transcriptRows)-1]
+		if !last.Info {
+			t.selectedLineKey = last.Key
+			t.selectedLineText = last.Text // not last.Key
+		}
+	}
+
+	if t.maxTranscriptRows <= 0 {
+		return
+	}
+
+	if len(t.transcriptRows) > t.maxTranscriptRows {
+		t.transcriptRows = t.transcriptRows[len(t.transcriptRows)-t.maxTranscriptRows:]
+	}
+
+	t.pruneTranscriptRowStateLocked()
+}
+
+func (t *transcriptFollower) pruneTranscriptRowStateLocked() {
+	valid := make(map[string]struct{}, len(t.transcriptRows))
+
+	for _, row := range t.transcriptRows {
+		if !row.Info {
+			valid[row.Key] = struct{}{}
+		}
+	}
+
+	for key := range t.transcriptRowClicks {
+		if _, ok := valid[key]; !ok {
+			delete(t.transcriptRowClicks, key)
+		}
+	}
+
+	for key := range t.transcriptRowTranslateClicks {
+		if _, ok := valid[key]; !ok {
+			delete(t.transcriptRowTranslateClicks, key)
+			delete(t.rowTranslationShown, key)
+		}
+	}
+
+	//for key := range t.transcriptRowVoiceClicks {
+	//	if _, ok := valid[key]; !ok {
+	//		delete(t.transcriptRowVoiceClicks, key)
+	//	}
+	//}
+
+	if t.selectedLineKey != "" {
+		if _, ok := valid[t.selectedLineKey]; !ok {
+			t.selectedLineKey = ""
+			t.selectedLineText = ""
+		}
+	}
+}
+
+func (t *transcriptFollower) SetFoundSize(fontsize unit.Sp) {
 }
 
 func (t *transcriptFollower) SetCompactTimestamp(compact bool) {
@@ -132,70 +237,16 @@ func (t *transcriptFollower) GetRows() []transcriptRow {
 	return t.transcriptRows
 }
 
-func (t *transcriptFollower) AddRows(rows ...transcriptRow) {
-	//todo set selected to the newest row?
-	t.rowMutex.Lock()
-	defer t.rowMutex.Unlock()
-	for _, r := range rows {
-		if r.Key == "" {
-			r.Key = uuid.NewString()
-		}
-		t.transcriptRows = append(t.transcriptRows, r)
-	}
-	if !t.transcriptRows[len(t.transcriptRows)-1].Info {
-		t.selectedLineKey = t.transcriptRows[len(t.transcriptRows)-1].Key
-		t.selectedLineText = t.transcriptRows[len(t.transcriptRows)-1].Key
-	}
-	if t.maxTranscriptRows <= 0 {
-		return
-	}
-	if len(t.transcriptRowClicks) < t.maxTranscriptRows {
-		return
-	}
-
-	//func (p *Page) pruneTranscriptRowClicks(rows []transcriptRow) {
-	//	valid := make(map[string]struct{}, len(rows))
-	//	validVoice := make(map[string]struct{}, len(rows))
-	//	for _, row := range rows {
-	//		if !row.Info {
-	//			valid[row.Key] = struct{}{}
-	//			validVoice[row.Key] = struct{}{}
-	//		}
-	//	}
-	//	for key := range p.transcriptRowClicks {
-	//		if _, ok := valid[key]; !ok {
-	//			delete(p.transcriptRowClicks, key)
-	//		}
-	//	}
-	//	for key := range p.transcriptRowTranslateClicks {
-	//		if _, ok := valid[key]; !ok {
-	//			delete(p.transcriptRowTranslateClicks, key)
-	//			delete(p.rowTranslationShown, key)
-	//		}
-	//	}
-	//	for key := range p.transcriptRowVoiceClicks {
-	//		if _, ok := validVoice[key]; !ok {
-	//			delete(p.transcriptRowVoiceClicks, key)
-	//		}
-	//	}
-	//	if p.selectedLineKey != "" {
-	//		if _, ok := valid[p.selectedLineKey]; !ok {
-	//			p.selectedLineKey = ""
-	//			p.selectedLineText = ""
-	//		}
-	//	}
-	//}
-	t.transcriptRows = t.transcriptRows[len(t.transcriptRows)-t.maxTranscriptRows:]
-}
 func (t *transcriptFollower) HandeEvents(gtx layout.Context) {
 	for key, click := range t.transcriptRowClicks {
 		for click.Clicked(gtx) {
 			t.selectTranscriptRow(key)
 		}
 	}
+
 	for key, click := range t.transcriptRowTranslateClicks {
 		for click.Clicked(gtx) {
-			t.toggleTranscriptRowTranslation(context.Background(), key)
+			t.toggleTranscriptRowTranslation(gtx, context.Background(), key)
 		}
 	}
 }
@@ -233,6 +284,7 @@ func (t *transcriptFollower) currentTranscriptRowKey() string {
 
 func (t *transcriptFollower) transcriptRowDisplayText(row transcriptRow) string {
 	if !t.isTranscriptRowTranslationShown(row) {
+
 		return row.Text
 	}
 	key := t.rowTranslationCacheKey(row)
@@ -283,7 +335,7 @@ func (t *transcriptFollower) transcriptRowTranslateClickable(key string) *widget
 	return t.transcriptRowTranslateClicks[key]
 }
 
-func (t *transcriptFollower) generateTranscriptRowTranslation(ctx context.Context, w *app.Window, row transcriptRow, key string) {
+func (t *transcriptFollower) generateTranscriptRowTranslation(gtx layout.Context, ctx context.Context, row transcriptRow, key string) {
 	if key == "" || t.rowTranslationGenerating[key] {
 		return
 	}
@@ -302,8 +354,7 @@ func (t *transcriptFollower) generateTranscriptRowTranslation(ctx context.Contex
 		t.rowTranslations[result.Key] = result.Entry.Translation
 		t.rowTranslationShown[result.RowKey] = true
 
-		if w != nil {
-			w.Invalidate()
-		}
+		gtx.Execute(op.InvalidateCmd{})
+
 	}()
 }

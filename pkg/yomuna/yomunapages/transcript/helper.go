@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/DarlingGoose/vntext/pkg/engine"
+	"github.com/google/uuid"
 )
 
 func cleanTranscriptText(text string) string {
@@ -63,5 +64,23 @@ func mixNRGBA(a, b color.NRGBA, amount float32) color.NRGBA {
 		G: uint8(float32(a.G)*amount + float32(b.G)*ia),
 		B: uint8(float32(a.B)*amount + float32(b.B)*ia),
 		A: uint8(float32(a.A)*amount + float32(b.A)*ia),
+	}
+}
+
+func transcriptRowFromEngineLine(line engine.Line) transcriptRow {
+	text := strings.TrimSpace(line.Text)
+
+	if text == "" {
+		text = strings.TrimSpace(fmt.Sprint(line))
+	}
+
+	return transcriptRow{
+		Key:     uuid.NewString(),
+		Hook:    line.Hook,
+		Text:    text,
+		Speaker: strings.TrimSpace(line.Speaker),
+		Raw:     line.Raw,
+		Info:    false,
+		Time:    line.Time.Format("15:04:05"),
 	}
 }
