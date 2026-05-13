@@ -3,6 +3,7 @@ package transcript
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gioui.org/layout"
@@ -11,6 +12,7 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
+	"github.com/DarlingGoose/tr/pkg/textractor"
 	"github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/dropdowns"
@@ -162,6 +164,7 @@ func (ui *TranscriptUI) invalidateUI() {
 
 func (ui *TranscriptUI) update(gtx layout.Context) {
 	ui.transcriptFollower.HandeEvents(gtx)
+	ui.transcriptFollower.SetShowHookLabels(ui.hookDropdownOpen && strings.TrimSpace(ui.selectedHook) == "")
 	ui.autoTranslateToggle.Update(gtx)
 	ui.transcriptFollower.WithAutoTranslate(ui.autoTranslateToggle.Checked)
 	ui.sentenceAnalysis.HandeEvents(gtx)
@@ -526,10 +529,10 @@ func newHookDropdown() *dropdowns.Dropdown {
 	d := dropdowns.NewDropdown([]dropdowns.DropdownItem{
 		{Label: "All Hooks", Value: ""},
 	})
-	d.Width = unit.Dp(180)
+	d.Width = unit.Dp(240)
 	d.Height = unit.Dp(38)
 	d.ItemHeight = unit.Dp(34)
-	d.MaxMenuHeight = unit.Dp(260)
+	d.MaxMenuHeight = unit.Dp(340)
 	d.Radius = unit.Dp(10)
 	d.Inset = unit.Dp(10)
 	d.WithRole(theme.TextRoleBodySmall)
@@ -602,7 +605,11 @@ func (ui *TranscriptUI) setHookDropdownItems(hooks []string, hasTextractor bool)
 	}
 	sort.Strings(normalizedHooks)
 
-	items := []dropdowns.DropdownItem{{Label: "All Hooks", Value: ""}}
+	allHooksLabel := "All Hooks"
+	if len(normalizedHooks) > 0 {
+		allHooksLabel = "All Hooks (" + strconv.Itoa(len(normalizedHooks)) + ")"
+	}
+	items := []dropdowns.DropdownItem{{Label: allHooksLabel, Value: ""}}
 	for _, hook := range normalizedHooks {
 		items = append(items, dropdowns.DropdownItem{
 			Label: hookDropdownLabel(hook),
@@ -650,6 +657,7 @@ func (ui *TranscriptUI) setSelectedHookFilter(ctx context.Context, hook string) 
 	}
 
 	ui.selectedHook = hook
+	ui.transcriptFollower.SetShowHookLabels(ui.hookDropdownOpen && hook == "")
 	g := ui.selectedGame()
 	if g == nil || ui.backend == nil {
 		ui.invalidateUI()
@@ -685,7 +693,7 @@ func (ui *TranscriptUI) transcriptLinePassesHookFilter(hook string) bool {
 	if selected == "" {
 		return true
 	}
-	return normalizeHookGroup(hook) == selected
+	return hookMatchesFilter(selected, hook)
 }
 
 func currentHookDropdownValues(d *dropdowns.Dropdown) []string {
@@ -711,14 +719,7 @@ func firstTextHookFilter(filters []string) string {
 }
 
 func normalizeHookGroup(hook string) string {
-	hook = strings.TrimSpace(hook)
-	if hook == "" {
-		return ""
-	}
-	if idx := strings.LastIndexByte(hook, '@'); idx >= 0 {
-		return hook[idx:]
-	}
-	return hook
+	return strings.TrimSpace(textractor.HookGroup(hook))
 }
 
 func hookDropdownLabel(hook string) string {
@@ -727,6 +728,21 @@ func hookDropdownLabel(hook string) string {
 		return "All Hooks"
 	}
 	return compactHookLabel(hook)
+}
+
+func hookMatchesFilter(filter string, hook string) bool {
+	filter = normalizeHookGroup(filter)
+	hook = normalizeHookGroup(hook)
+	if filter == "" {
+		return true
+	}
+	if hook == "" {
+		return false
+	}
+	if strings.EqualFold(filter, hook) {
+		return true
+	}
+	return false
 }
 
 func (ui *TranscriptUI) StopSelectedGame() {

@@ -1,5 +1,6 @@
 vendor
 .codex
 .idea
+.aur
 test*.sh
 wgl

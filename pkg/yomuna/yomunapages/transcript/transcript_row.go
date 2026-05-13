@@ -58,6 +58,7 @@ type transcriptFollower struct {
 	rowTranslationGenerating map[string]bool
 
 	selectedTargetLanguage string
+	showHookLabels         bool
 
 	activeGameName   string
 	selectedRow      func(row transcriptRow)
@@ -296,6 +297,13 @@ func (t *transcriptFollower) WithTargetLanguage(targetLanguage string) {
 
 }
 
+func (t *transcriptFollower) SetShowHookLabels(show bool) {
+	t.rowMutex.Lock()
+	defer t.rowMutex.Unlock()
+
+	t.showHookLabels = show
+}
+
 func (t *transcriptFollower) WithThemeClient(tc *theme.Client) *transcriptFollower {
 	t.tc = tc
 	return t
@@ -368,17 +376,27 @@ func (t *transcriptFollower) transcriptRowDisplayText(row transcriptRow) string 
 	t.rowMutex.RLock()
 	defer t.rowMutex.RUnlock()
 
+	text := row.Text
 	if !t.rowTranslationShown[row.Key] {
-
-		return row.Text
+		return t.withHookLabel(row, text)
 	}
 	if t.rowTranslationGenerating[key] {
-		return "Translating..."
+		text = "Translating..."
+	} else if translated := strings.TrimSpace(t.rowTranslations[key]); translated != "" {
+		text = translated
 	}
-	if text := strings.TrimSpace(t.rowTranslations[key]); text != "" {
+	return t.withHookLabel(row, text)
+}
+
+func (t *transcriptFollower) withHookLabel(row transcriptRow, text string) string {
+	if !t.showHookLabels {
 		return text
 	}
-	return row.Text
+	label := hookDropdownLabel(row.Hook)
+	if label == "" || label == "All Hooks" {
+		return text
+	}
+	return "[" + label + "] " + text
 }
 
 func (t *transcriptFollower) isTranscriptRowTranslationShown(row transcriptRow) bool {

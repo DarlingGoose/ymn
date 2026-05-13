@@ -11,11 +11,13 @@ import (
 	"sync"
 
 	"github.com/DarlingGoose/gr"
+	"github.com/DarlingGoose/gr/gamescope"
 	"github.com/DarlingGoose/jpndict"
 	"github.com/DarlingGoose/jpndict/translate"
 	"github.com/DarlingGoose/tr/pkg/textractor"
 	"github.com/DarlingGoose/vntext/pkg/engine"
 	"github.com/DarlingGoose/vntext/pkg/engine/auto"
+	"github.com/DarlingGoose/vntext/pkg/engine/enginerun"
 	"github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/vntext/pkg/gameConfig"
 	vnutil "github.com/DarlingGoose/vntext/pkg/util"
@@ -155,11 +157,7 @@ func (b *LiveBackend) RunGame(ctx context.Context, g *game.Game) (*gr.Process, e
 		return nil, fmt.Errorf("game is required")
 	}
 	g = sanitizeGameForRun(g)
-	e, err := b.GetGameEngine(ctx, g)
-	if err != nil {
-		return nil, err
-	}
-	proc, err := e.RunGame(ctx, g)
+	proc, err := b.runGame(ctx, g)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +168,95 @@ func (b *LiveBackend) RunGame(ctx context.Context, g *game.Game) (*gr.Process, e
 	b.config.SelectGameName = g.Name
 	b.gameMu.Unlock()
 	return proc, nil
+}
+
+func (b *LiveBackend) runGame(ctx context.Context, g *game.Game) (*gr.Process, error) {
+	if shouldLaunchGamescopeDirectly(g) {
+		return runGamescopeGame(ctx, g)
+	}
+
+	e, err := b.GetGameEngine(ctx, g)
+	if err != nil {
+		return nil, err
+	}
+	return e.RunGame(ctx, g)
+}
+
+func shouldLaunchGamescopeDirectly(g *game.Game) bool {
+	return g != nil &&
+		g.Runner == game.RunnerGamescope &&
+		g.GamescopeConfig != nil &&
+		hasGamescopeRuntimeConfig(g.GamescopeConfig) &&
+		!g.GamescopeConfig.Fullscreen
+}
+
+func runGamescopeGame(ctx context.Context, g *game.Game) (*gr.Process, error) {
+	if err := enginerun.ValidateGame(g); err != nil {
+		return nil, err
+	}
+
+	target, args := enginerun.WineTarget(g)
+	opts, err := enginerun.WineOptions(g, args...)
+	if err != nil {
+		return nil, err
+	}
+	opts = append(opts, gr.WithBackground(true))
+
+	return gamescope.NewFromOptions(gamescopeOptionsForGame(g)).Run(ctx, target, opts...)
+}
+
+func gamescopeOptionsForGame(g *game.Game) gamescope.Options {
+	cfg := gamescope.ApplyOptions()
+	if g != nil && hasGamescopeRuntimeConfig(g.GamescopeConfig) {
+		cfg = *g.GamescopeConfig
+	}
+	cfg.UseWine = true
+	if g == nil {
+		return cfg
+	}
+	if strings.TrimSpace(g.RunnerPath) != "" {
+		cfg.GamescopeBin = strings.TrimSpace(g.RunnerPath)
+	}
+	if strings.TrimSpace(cfg.DefaultWinePrefix) == "" {
+		cfg.DefaultWinePrefix = g.PrefixPath
+	}
+	if strings.TrimSpace(cfg.GamescopeBin) == "" {
+		cfg.GamescopeBin = "gamescope"
+	}
+	if strings.TrimSpace(cfg.WineBin) == "" {
+		cfg.WineBin = "wine"
+	}
+	if strings.TrimSpace(cfg.WineServerBin) == "" {
+		cfg.WineServerBin = "wineserver"
+	}
+	if strings.TrimSpace(cfg.Name) == "" {
+		cfg.Name = "gamescope"
+	}
+	return cfg
+}
+
+func hasGamescopeRuntimeConfig(c *gamescope.Options) bool {
+	return c != nil && (c.Name != "" ||
+		c.GamescopeBin != "" ||
+		c.WineBin != "" ||
+		c.WineServerBin != "" ||
+		c.DefaultWinePrefix != "" ||
+		c.UseWine ||
+		c.WineStartWait ||
+		c.KillWineOnExit ||
+		c.Width != 0 ||
+		c.Height != 0 ||
+		c.RefreshRate != 0 ||
+		c.OutputWidth != 0 ||
+		c.OutputHeight != 0 ||
+		c.Fullscreen ||
+		c.Borderless ||
+		c.ForceGrab ||
+		c.SteamDeckMode ||
+		c.ExposeWayland ||
+		c.Scaler != "" ||
+		c.Filter != "" ||
+		len(c.ExtraArgs) > 0)
 }
 
 func sanitizeGameForRun(g *game.Game) *game.Game {
