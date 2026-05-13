@@ -16,6 +16,7 @@ type transcriptPreferences struct {
 	LookupFontSizeSp     float32 `json:"lookup_font_size_sp,omitempty"`
 	SentenceFontSizeSp   float32 `json:"sentence_font_size_sp,omitempty"`
 	TranscriptFontSizeSp float32 `json:"transcript_font_size_sp,omitempty"`
+	MaxTranscriptRows    int     `json:"max_transcript_rows,omitempty"`
 }
 
 func defaultTranscriptPreferences() transcriptPreferences {
@@ -23,6 +24,7 @@ func defaultTranscriptPreferences() transcriptPreferences {
 		LookupFontSizeSp:     14,
 		SentenceFontSizeSp:   24,
 		TranscriptFontSizeSp: 22,
+		MaxTranscriptRows:    200,
 	}
 }
 
@@ -69,6 +71,7 @@ func (p *transcriptPreferences) normalize() {
 	if p.TranscriptFontSizeSp < 14 || p.TranscriptFontSizeSp > 34 {
 		p.TranscriptFontSizeSp = 22
 	}
+	p.MaxTranscriptRows = clampTranscriptRowLimit(p.MaxTranscriptRows)
 }
 
 func spToFloat(value unit.Sp) float32 {

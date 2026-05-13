@@ -22,6 +22,7 @@ import (
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/dropdowns"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/input"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/modal"
+	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/tabs"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/iconify"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/overlay"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
@@ -35,7 +36,10 @@ type GameUI struct {
 	theme   *theme.Client
 	backend backend.Backend
 
-	list layout.List
+	list      layout.List
+	panelList widget.List
+	tabList   layout.List
+	configTab *tabs.Layout
 
 	gameDropdown   *dropdowns.Dropdown
 	runnerDropdown *dropdowns.Dropdown
@@ -65,6 +69,7 @@ type GameUI struct {
 	filePickerTarget *input.TextInput
 	coverPreview     *media.View
 	coverPreviewPath string
+	activeLayer      *overlay.Overlay
 
 	basicSection    collapsibleSection
 	runnerSection   collapsibleSection
@@ -120,6 +125,10 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 		theme:   tc,
 		backend: b,
 		list:    layout.List{Axis: layout.Vertical},
+		panelList: widget.List{
+			List: layout.List{Axis: layout.Vertical},
+		},
+		tabList: layout.List{Axis: layout.Horizontal},
 
 		gameDropdown: dropdowns.NewDropdown(nil).
 			WithThemeClient(tc).
@@ -157,6 +166,41 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 		scalingSection:  newGameSection("Scaling", "Upscaling and filtering choices.", true),
 		advancedSection: newGameSection("Advanced", "Binary overrides and custom runner arguments.", false),
 	}
+	ui.configTab = tabs.New(
+		tabs.NewTabFunc(configPanelGeneral, "General", "", func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutScrollableConfigPanel(gtx, ui.layoutGameFields)
+		}),
+		tabs.NewTabFunc(configPanelRunner, "Runner", "", func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutScrollableConfigPanel(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutRunnerFields(gtx, ui.activeLayer)
+			})
+		}),
+		tabs.NewTabFunc(configPanelWine, "Wine", "", func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutScrollableConfigPanel(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutWineOptions(gtx, ui.activeLayer)
+			})
+		}),
+		tabs.NewTabFunc(configPanelDisplay, "Display", "", func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutScrollableConfigPanel(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutDisplayOptions(gtx, ui.activeLayer)
+			})
+		}),
+		tabs.NewTabFunc(configPanelWindow, "Window", "", func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutScrollableConfigPanel(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutWindowBehaviorOptions(gtx, ui.activeLayer)
+			})
+		}),
+		tabs.NewTabFunc(configPanelScaling, "Scaling", "", func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutScrollableConfigPanel(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutScalingOptions(gtx, ui.activeLayer)
+			})
+		}),
+		tabs.NewTabFunc(configPanelAdvanced, "Advanced", "", func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutScrollableConfigPanel(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutAdvancedOptions(gtx, ui.activeLayer)
+			})
+		}),
+	)
 	ui.saveButton.CollapseTextBelow = unit.Dp(140)
 	ui.cancelButton.CollapseTextBelow = unit.Dp(120)
 	ui.cancelButton.FillWidth = false
@@ -251,6 +295,7 @@ func (ui *GameUI) Layout(gtx layout.Context, layer *overlay.Overlay) layout.Dime
 	if ui == nil {
 		return layout.Dimensions{}
 	}
+	ui.activeLayer = layer
 	ui.syncGames()
 
 	dims := layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -282,53 +327,17 @@ func (ui *GameUI) layoutContentContainer(gtx layout.Context, content layout.Widg
 }
 
 func (ui *GameUI) layoutNarrow(gtx layout.Context, layer *overlay.Overlay) layout.Dimensions {
-	return ui.list.Layout(gtx, 17, func(gtx layout.Context, index int) layout.Dimensions {
+	return ui.list.Layout(gtx, 5, func(gtx layout.Context, index int) layout.Dimensions {
 		switch index {
 		case 0:
 			return ui.layoutHeader(gtx, layer)
 		case 1:
 			return layout.Spacer{Height: unit.Dp(14)}.Layout(gtx)
 		case 2:
-			return ui.layoutSection(gtx, &ui.basicSection, ui.layoutGameFields)
+			return ui.layoutConfigTabs(gtx)
 		case 3:
-			return layout.Spacer{Height: unit.Dp(10)}.Layout(gtx)
-		case 4:
-			return ui.layoutSection(gtx, &ui.runnerSection, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutRunnerFields(gtx, layer)
-			})
-		case 5:
-			return layout.Spacer{Height: unit.Dp(10)}.Layout(gtx)
-		case 6:
-			return ui.layoutSection(gtx, &ui.wineSection, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutWineOptions(gtx, layer)
-			})
-		case 7:
-			return layout.Spacer{Height: unit.Dp(10)}.Layout(gtx)
-		case 8:
-			return ui.layoutSection(gtx, &ui.displaySection, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutDisplayOptions(gtx, layer)
-			})
-		case 9:
-			return layout.Spacer{Height: unit.Dp(10)}.Layout(gtx)
-		case 10:
-			return ui.layoutSection(gtx, &ui.windowSection, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutWindowBehaviorOptions(gtx, layer)
-			})
-		case 11:
-			return layout.Spacer{Height: unit.Dp(10)}.Layout(gtx)
-		case 12:
-			return ui.layoutSection(gtx, &ui.scalingSection, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutScalingOptions(gtx, layer)
-			})
-		case 13:
-			return layout.Spacer{Height: unit.Dp(10)}.Layout(gtx)
-		case 14:
-			return ui.layoutSection(gtx, &ui.advancedSection, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutAdvancedOptions(gtx, layer)
-			})
-		case 15:
 			return layout.Spacer{Height: unit.Dp(24)}.Layout(gtx)
-		case 16:
+		case 4:
 			return layout.Dimensions{}
 		default:
 			return layout.Dimensions{}
@@ -344,55 +353,7 @@ func (ui *GameUI) layoutWide(gtx layout.Context, layer *overlay.Overlay) layout.
 		case 1:
 			return layout.Spacer{Height: unit.Dp(14)}.Layout(gtx)
 		case 2:
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Start}.Layout(gtx,
-				layout.Flexed(0.48, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSection(gtx, &ui.basicSection, ui.layoutGameFields)
-						}),
-						layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSection(gtx, &ui.runnerSection, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutRunnerFields(gtx, layer)
-							})
-						}),
-						layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSection(gtx, &ui.wineSection, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutWineOptions(gtx, layer)
-							})
-						}),
-					)
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(14)}.Layout),
-				layout.Flexed(0.52, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSection(gtx, &ui.displaySection, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutDisplayOptions(gtx, layer)
-							})
-						}),
-						layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSection(gtx, &ui.windowSection, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutWindowBehaviorOptions(gtx, layer)
-							})
-						}),
-						layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSection(gtx, &ui.scalingSection, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutScalingOptions(gtx, layer)
-							})
-						}),
-						layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSection(gtx, &ui.advancedSection, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutAdvancedOptions(gtx, layer)
-							})
-						}),
-					)
-				}),
-			)
+			return ui.layoutConfigTabs(gtx)
 		case 3:
 			return layout.Spacer{Height: unit.Dp(24)}.Layout(gtx)
 		default:
@@ -547,71 +508,124 @@ func (ui *GameUI) loadRunnerFields() {
 
 func (ui *GameUI) layoutHeader(gtx layout.Context, layer *overlay.Overlay) layout.Dimensions {
 	ct := ui.theme.GetCurrentColorToken()
-	return utils.SurfaceOutlined(gtx, ct.SurfaceNRGBA(), unit.Dp(10), utils.SurfaceBorder{Color: ct.BorderNRGBA(), Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Top: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return utils.SurfaceOutlined(gtx, ct.SurfaceAltNRGBA(), unit.Dp(8), utils.SurfaceBorder{Color: ct.BorderNRGBA(), Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleH3, theme.ThemeColorTextPrimary, "Game Configuration")
-								}),
-								layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, ui.headerSummary())
-								}),
-							)
+							return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Details")
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return ui.layoutStatusPill(gtx)
 						}),
 					)
 				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutDivider(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if gtx.Constraints.Max.X < gtx.Dp(unit.Dp(760)) {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutHeaderPreview(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutHeaderDetails(gtx, layer)
+							}),
+						)
+					}
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutField(gtx, "Editing", "Choose which installed game config to edit.", func(gtx layout.Context) layout.Dimensions {
-								if ui.gameDropdown == nil {
-									return layout.Dimensions{}
-								}
-								return ui.gameDropdown.Layout(gtx, layer)
-							})
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							gtx.Constraints.Min.Y = 0
-							return ui.layoutActions(gtx)
+							return ui.layoutHeaderPreview(gtx)
 						}),
-						//layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
-						//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						//	return ui.layoutRefreshButton(gtx)
-						//}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(26)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutHeaderDetails(gtx, layer)
+						}),
 					)
 				}),
-				//layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
-				//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				//	return ui.layoutActions(gtx)
-				//}),
 			)
 		})
 	})
 }
 
+func (ui *GameUI) layoutDivider(gtx layout.Context) layout.Dimensions {
+	ct := ui.theme.GetCurrentColorToken()
+	return utils.Surface(gtx, ct.BorderNRGBA(), 0, func(gtx layout.Context) layout.Dimensions {
+		return layout.Spacer{Height: unit.Dp(1)}.Layout(gtx)
+	})
+}
+
+func (ui *GameUI) layoutHeaderPreview(gtx layout.Context) layout.Dimensions {
+	ct := ui.theme.GetCurrentColorToken()
+	width := gtx.Dp(unit.Dp(184))
+	height := gtx.Dp(unit.Dp(132))
+	if gtx.Constraints.Max.X < gtx.Dp(unit.Dp(520)) {
+		width = gtx.Constraints.Max.X
+	}
+	gtx.Constraints.Min.X = width
+	gtx.Constraints.Max.X = width
+	gtx.Constraints.Min.Y = height
+	gtx.Constraints.Max.Y = height
+
+	return utils.SurfaceOutlined(gtx, ct.SurfaceNRGBA(), unit.Dp(8), utils.SurfaceBorder{Color: ct.BorderNRGBA(), Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
+		if ui.coverPreview != nil && strings.TrimSpace(ui.coverPreviewPath) != "" {
+			return layout.Center.Layout(gtx, ui.coverPreview.Layout)
+		}
+		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, "No cover image")
+		})
+	})
+}
+
+func (ui *GameUI) layoutHeaderDetails(gtx layout.Context, layer *overlay.Overlay) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleH2, theme.ThemeColorTextPrimary, ui.selectedGameTitle())
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleBodySmall, theme.ThemeColorTextMuted, ui.headerSummary())
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutField(gtx, "Editing", "Choose which installed game config to edit.", func(gtx layout.Context) layout.Dimensions {
+				if ui.gameDropdown == nil {
+					return layout.Dimensions{}
+				}
+				return ui.gameDropdown.Layout(gtx, layer)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.Y = 0
+			return ui.layoutActions(gtx)
+		}),
+	)
+}
+
+func (ui *GameUI) selectedGameTitle() string {
+	if ui != nil && ui.draft != nil {
+		if name := strings.TrimSpace(ui.draft.Name); name != "" {
+			return name
+		}
+	}
+	return "Game Configuration"
+}
+
 func (ui *GameUI) headerSummary() string {
-	name := "No game selected"
 	runner := "Runner not selected"
 	if ui.draft != nil {
-		if strings.TrimSpace(ui.draft.Name) != "" {
-			name = strings.TrimSpace(ui.draft.Name)
-		}
 		runner = runnerLabel(ui.draft.Runner)
 		if ui.draft.Runner == game.RunnerGamescope {
 			runner += " + Wine"
 		}
 	}
-	return "Editing: " + name + "  |  Runner: " + runner
+	return "Runner: " + runner
 }
 
 func (ui *GameUI) layoutStatusPill(gtx layout.Context) layout.Dimensions {
@@ -939,6 +953,93 @@ func (ui *GameUI) layoutSection(gtx layout.Context, section *collapsibleSection,
 			}
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 		})
+	})
+}
+
+const (
+	configPanelGeneral  = "general"
+	configPanelRunner   = "runner"
+	configPanelWine     = "wine"
+	configPanelDisplay  = "display"
+	configPanelWindow   = "window"
+	configPanelScaling  = "scaling"
+	configPanelAdvanced = "advanced"
+)
+
+func (ui *GameUI) layoutConfigTabs(gtx layout.Context) layout.Dimensions {
+	if ui == nil || ui.configTab == nil {
+		return layout.Dimensions{}
+	}
+	ui.configTab.Update(gtx)
+
+	ct := ui.theme.GetCurrentColorToken()
+	return utils.SurfaceOutlined(gtx, ct.SurfaceAltNRGBA(), unit.Dp(8), utils.SurfaceBorder{Color: ct.BorderNRGBA(), Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutConfigTabButtons(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.configTab.Layout(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (ui *GameUI) layoutConfigTabButtons(gtx layout.Context) layout.Dimensions {
+	buttons := ui.configTab.Buttons()
+	if len(buttons) == 0 {
+		return layout.Dimensions{}
+	}
+	return ui.tabList.Layout(gtx, len(buttons), func(gtx layout.Context, index int) layout.Dimensions {
+		btn := buttons[index]
+		return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutConfigTabButton(gtx, btn)
+		})
+	})
+}
+
+func (ui *GameUI) layoutConfigTabButton(gtx layout.Context, btn tabs.Button) layout.Dimensions {
+	if btn.Clickable == nil {
+		return layout.Dimensions{}
+	}
+	for btn.Clickable.Clicked(gtx) {
+		if ui.configTab != nil && ui.configTab.SwitchToID(btn.ID) {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+
+	ct := ui.theme.GetCurrentColorToken()
+	bg := ct.SurfaceNRGBA()
+	border := ct.BorderNRGBA()
+	textColor := theme.ThemeColorTextMuted
+	if btn.Active {
+		bg = ct.PrimaryNRGBA()
+		border = ct.PrimaryNRGBA()
+		textColor = theme.ThemeColorOnPrimary
+	} else if btn.Clickable.Hovered() {
+		bg = ct.SurfaceAltNRGBA()
+		border = ct.PrimaryNRGBA()
+		textColor = theme.ThemeColorTextPrimary
+	}
+
+	return btn.Clickable.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return utils.SurfaceOutlined(gtx, bg, unit.Dp(8), utils.SurfaceBorder{Color: border, Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(9), Bottom: unit.Dp(9), Left: unit.Dp(14), Right: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleLabel, textColor, btn.Name)
+			})
+		})
+	})
+}
+
+func (ui *GameUI) layoutScrollableConfigPanel(gtx layout.Context, body layout.Widget) layout.Dimensions {
+	return ui.panelList.Layout(gtx, 1, func(gtx layout.Context, index int) layout.Dimensions {
+		if body == nil {
+			return layout.Dimensions{}
+		}
+		return layout.UniformInset(unit.Dp(4)).Layout(gtx, body)
 	})
 }
 

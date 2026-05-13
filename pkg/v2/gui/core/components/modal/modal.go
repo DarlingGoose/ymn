@@ -287,19 +287,23 @@ func (m *Modal) OverlayLayout(gtx layout.Context) {
 	}
 
 	if m.ShowScrim {
-		m.layoutScrim(gtx, screen)
+		if m.layoutScrim(gtx, screen) {
+			return
+		}
 	}
 
 	m.layoutModal(gtx, screen)
 }
 
-func (m *Modal) layoutScrim(gtx layout.Context, screen image.Point) {
+func (m *Modal) layoutScrim(gtx layout.Context, screen image.Point) bool {
 	gtx.Constraints.Min = screen
 	gtx.Constraints.Max = screen
 
 	for m.scrimClick.Clicked(gtx) {
 		if m.CloseOnScrim {
 			m.Dismiss()
+			gtx.Execute(op.InvalidateCmd{})
+			return true
 		}
 	}
 
@@ -312,6 +316,14 @@ func (m *Modal) layoutScrim(gtx layout.Context, screen image.Point) {
 
 		return layout.Dimensions{Size: screen}
 	})
+
+	if m.CloseOnScrim && m.scrimClick.Pressed() {
+		m.Dismiss()
+		gtx.Execute(op.InvalidateCmd{})
+		return true
+	}
+
+	return false
 }
 
 func (m *Modal) layoutModal(gtx layout.Context, screen image.Point) {
@@ -463,6 +475,7 @@ func (m *Modal) layoutHeader(gtx layout.Context) layout.Dimensions {
 func (m *Modal) layoutCloseButton(gtx layout.Context) layout.Dimensions {
 	for m.closeClick.Clicked(gtx) {
 		m.Dismiss()
+		gtx.Execute(op.InvalidateCmd{})
 	}
 
 	tokens := m.tc.GetCurrentColorToken()
@@ -471,7 +484,7 @@ func (m *Modal) layoutCloseButton(gtx layout.Context) layout.Dimensions {
 	gtx.Constraints.Min = image.Pt(size, size)
 	gtx.Constraints.Max = image.Pt(size, size)
 
-	return m.closeClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	dims := m.closeClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return iconify.DefaultIconify.Layout(
 				gtx,
@@ -481,6 +494,13 @@ func (m *Modal) layoutCloseButton(gtx layout.Context) layout.Dimensions {
 			)
 		})
 	})
+
+	if m.closeClick.Pressed() {
+		m.Dismiss()
+		gtx.Execute(op.InvalidateCmd{})
+	}
+
+	return dims
 }
 
 func (m *Modal) offset(screen image.Point, size image.Point, margin int) image.Point {

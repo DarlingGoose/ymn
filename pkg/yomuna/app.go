@@ -40,6 +40,7 @@ type App struct {
 	Translation *yomunapages.TranslationUI
 	Transcript  *transcript.TranscriptUI
 	Game        *gamepage.GameUI
+	AddGame     *gamepage.AddGameUI
 	Settings    *pages.SettingsUI
 
 	legacySettings *guisettings.Settings
@@ -66,20 +67,23 @@ func New(initialSource string) *App {
 		Transcript:     transcript.NewTranscriptUI(th, tc, b),
 		Translation:    yomunapages.NewTranslationUI(th, tc).WithSource(initialSource),
 		Game:           gamepage.NewGameUI(th, tc, b),
+		AddGame:        gamepage.NewAddGameUI(th, tc, b),
 		Settings:       pages.NewSettingsUI(tc),
 		legacySettings: legacySettings,
 		legacyTheme:    legacyTheme,
 		legacyIconify:  legacyIconify,
 	}
 	ui.Settings.WithTranscriptSettings(&pages.TranscriptSettings{
-		SelectedGameName:  ui.Transcript.SelectedGameName,
-		TranscriptFont:    ui.Transcript.TranscriptFontSize,
-		SentenceFont:      ui.Transcript.SentenceFontSize,
-		LookupFont:        ui.Transcript.LookupFontSize,
-		SetTranscriptFont: ui.Transcript.SetTranscriptFontSize,
-		SetSentenceFont:   ui.Transcript.SetSentenceFontSize,
-		SetLookupFont:     ui.Transcript.SetLookupFontSize,
-		Save:              ui.Transcript.SavePreferences,
+		SelectedGameName:     ui.Transcript.SelectedGameName,
+		TranscriptFont:       ui.Transcript.TranscriptFontSize,
+		SentenceFont:         ui.Transcript.SentenceFontSize,
+		LookupFont:           ui.Transcript.LookupFontSize,
+		MaxTranscriptRows:    ui.Transcript.MaxTranscriptRows,
+		SetTranscriptFont:    ui.Transcript.SetTranscriptFontSize,
+		SetSentenceFont:      ui.Transcript.SetSentenceFontSize,
+		SetLookupFont:        ui.Transcript.SetLookupFontSize,
+		SetMaxTranscriptRows: ui.Transcript.SetMaxTranscriptRows,
+		Save:                 ui.Transcript.SavePreferences,
 	})
 	translatorCfg := b.TranslatorConfig()
 	ui.Settings.WithTranslatorSettings(&pages.TranslatorSettings{
@@ -119,6 +123,9 @@ func New(initialSource string) *App {
 		}),
 		tabs.NewTabFunc("game", "Game", "lucide:gamepad-2", func(gtx layout.Context) layout.Dimensions {
 			return ui.Game.Layout(gtx, ui.Overlay)
+		}),
+		tabs.NewTabFunc("add-game", "Add Game", "lucide:plus", func(gtx layout.Context) layout.Dimensions {
+			return ui.AddGame.Layout(gtx, ui.Overlay)
 		}),
 		tabs.NewTabFunc("settings", "Settings", "lucide:settings", func(gtx layout.Context) layout.Dimensions {
 			return ui.Settings.Layout(gtx, ui.Overlay)

@@ -88,7 +88,7 @@ func newTranscriptFollower(th *material.Theme, backend backend.Backend) transcri
 
 		rowMutex:               sync.RWMutex{},
 		transcriptRows:         make([]transcriptRow, 0),
-		maxTranscriptRows:      200,         //todo add way to set this
+		maxTranscriptRows:      200,
 		fontSize:               unit.Sp(22), //allow this to be dynamicly set
 		radius:                 unit.Dp(12),
 		iconRadius:             unit.Dp(8),
@@ -117,6 +117,37 @@ func (t *transcriptFollower) WithInvalidate(invalidate func()) *transcriptFollow
 
 func (t *transcriptFollower) WithSelectedRow(sr func(row transcriptRow)) {
 	t.selectedRow = sr
+}
+
+func (t *transcriptFollower) MaxTranscriptRows() int {
+	t.rowMutex.RLock()
+	defer t.rowMutex.RUnlock()
+
+	return clampTranscriptRowLimit(t.maxTranscriptRows)
+}
+
+func (t *transcriptFollower) SetMaxTranscriptRows(maxRows int) {
+	t.rowMutex.Lock()
+	defer t.rowMutex.Unlock()
+
+	t.maxTranscriptRows = clampTranscriptRowLimit(maxRows)
+	if len(t.transcriptRows) > t.maxTranscriptRows {
+		t.transcriptRows = t.transcriptRows[len(t.transcriptRows)-t.maxTranscriptRows:]
+		t.pruneTranscriptRowStateLocked()
+	}
+}
+
+func clampTranscriptRowLimit(maxRows int) int {
+	switch {
+	case maxRows <= 0:
+		return 200
+	case maxRows < 25:
+		return 25
+	case maxRows > 5000:
+		return 5000
+	default:
+		return maxRows
+	}
 }
 
 func (t *transcriptFollower) SetGame(gameName string) {

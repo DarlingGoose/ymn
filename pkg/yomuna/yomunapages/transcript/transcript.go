@@ -78,7 +78,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		hookDropdown: newHookDropdown(),
 		bodySplit: split.SplitH{
 			Ratio:    0,
-			Bar:      unit.Dp(4),
+			Bar:      unit.Dp(8),
 			MinRatio: -0.70,
 			MaxRatio: 0.70,
 		},
@@ -92,6 +92,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 	ui.sentenceAnalysis.SetLookupFontSize(unit.Sp(prefs.LookupFontSizeSp))
 	ui.sentenceAnalysis.sentenceFontSize = unit.Sp(prefs.SentenceFontSizeSp)
 	ui.transcriptFollower.fontSize = unit.Sp(prefs.TranscriptFontSizeSp)
+	ui.transcriptFollower.SetMaxTranscriptRows(prefs.MaxTranscriptRows)
 
 	playIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:play")
 	stopIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:square")
@@ -264,6 +265,7 @@ func (ui *TranscriptUI) SavePreferences() error {
 		LookupFontSizeSp:     spToFloat(ui.sentenceAnalysis.LookupFontSize()),
 		SentenceFontSizeSp:   spToFloat(ui.sentenceAnalysis.sentenceFontSize),
 		TranscriptFontSizeSp: spToFloat(ui.transcriptFollower.fontSize),
+		MaxTranscriptRows:    ui.transcriptFollower.MaxTranscriptRows(),
 	}
 	if err := saveTranscriptPreferences(prefs); err != nil {
 		return err
@@ -321,6 +323,21 @@ func (ui *TranscriptUI) SetLookupFontSize(size unit.Sp) {
 		return
 	}
 	ui.sentenceAnalysis.SetLookupFontSize(size)
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) MaxTranscriptRows() int {
+	if ui == nil {
+		return 200
+	}
+	return ui.transcriptFollower.MaxTranscriptRows()
+}
+
+func (ui *TranscriptUI) SetMaxTranscriptRows(maxRows int) {
+	if ui == nil {
+		return
+	}
+	ui.transcriptFollower.SetMaxTranscriptRows(maxRows)
 	ui.invalidateUI()
 }
 
@@ -880,12 +897,7 @@ func (ui *TranscriptUI) WithMaxTranscriptRows(maxRows int) *TranscriptUI {
 	if ui == nil {
 		return ui
 	}
-
-	if maxRows <= 0 {
-		maxRows = 200
-	}
-
-	ui.transcriptFollower.maxTranscriptRows = maxRows
+	ui.SetMaxTranscriptRows(maxRows)
 	return ui
 }
 

@@ -32,6 +32,8 @@ type SettingsUI struct {
 	sentenceUp         widget.Clickable
 	lookupDown         widget.Clickable
 	lookupUp           widget.Clickable
+	maxLinesDown       widget.Clickable
+	maxLinesUp         widget.Clickable
 	saveTranscript     widget.Clickable
 	saveTranslator     widget.Clickable
 	status             string
@@ -45,14 +47,16 @@ type SettingsUI struct {
 }
 
 type TranscriptSettings struct {
-	SelectedGameName  func() string
-	TranscriptFont    func() unit.Sp
-	SentenceFont      func() unit.Sp
-	LookupFont        func() unit.Sp
-	SetTranscriptFont func(unit.Sp)
-	SetSentenceFont   func(unit.Sp)
-	SetLookupFont     func(unit.Sp)
-	Save              func() error
+	SelectedGameName     func() string
+	TranscriptFont       func() unit.Sp
+	SentenceFont         func() unit.Sp
+	LookupFont           func() unit.Sp
+	MaxTranscriptRows    func() int
+	SetTranscriptFont    func(unit.Sp)
+	SetSentenceFont      func(unit.Sp)
+	SetLookupFont        func(unit.Sp)
+	SetMaxTranscriptRows func(int)
+	Save                 func() error
 }
 
 type TranslatorSettings struct {
@@ -208,6 +212,10 @@ func (ui *SettingsUI) layoutTranscriptSettings(gtx layout.Context) layout.Dimens
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFontSizeRow(gtx, "Lookup font", "Dictionary lookup panel text size.", ui.transcriptSettings.LookupFont, ui.transcriptSettings.SetLookupFont, &ui.lookupDown, &ui.lookupUp)
 		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutTranscriptLineLimitRow(gtx)
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSaveTranscriptSettings(gtx)
@@ -246,6 +254,41 @@ func (ui *SettingsUI) layoutFontSizeRow(gtx layout.Context, label, description s
 			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutSmallButton(gtx, up, "+")
+			}),
+		)
+	})
+}
+
+func (ui *SettingsUI) layoutTranscriptLineLimitRow(gtx layout.Context) layout.Dimensions {
+	return row.New("Max transcript lines", "Maximum live transcript rows kept in memory.").WithThemeClient(ui.theme).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		value := 200
+		if ui.transcriptSettings != nil && ui.transcriptSettings.MaxTranscriptRows != nil {
+			value = ui.transcriptSettings.MaxTranscriptRows()
+		}
+		for ui.maxLinesDown.Clicked(gtx) {
+			if ui.transcriptSettings != nil && ui.transcriptSettings.SetMaxTranscriptRows != nil {
+				ui.transcriptSettings.SetMaxTranscriptRows(value - 25)
+			}
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		for ui.maxLinesUp.Clicked(gtx) {
+			if ui.transcriptSettings != nil && ui.transcriptSettings.SetMaxTranscriptRows != nil {
+				ui.transcriptSettings.SetMaxTranscriptRows(value + 25)
+			}
+			gtx.Execute(op.InvalidateCmd{})
+		}
+
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutSmallButton(gtx, &ui.maxLinesDown, "-")
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleLabel, theme.ThemeColorTextPrimary, fmt.Sprintf("%d lines", value))
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutSmallButton(gtx, &ui.maxLinesUp, "+")
 			}),
 		)
 	})

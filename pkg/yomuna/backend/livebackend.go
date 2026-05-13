@@ -138,6 +138,18 @@ func (b *LiveBackend) SelectGameByName(n string) {
 
 }
 
+func (b *LiveBackend) InstallGameConfig(ctx context.Context, inputPath string, installHook bool) (*game.Game, error) {
+	g, _, err := gameConfig.InstallGame(ctx, inputPath, installHook, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := b.ReloadGames(); err != nil {
+		return nil, err
+	}
+	b.SelectGameByName(g.Name)
+	return b.CurrentGame(), nil
+}
+
 func (b *LiveBackend) RunGame(ctx context.Context, g *game.Game) (*gr.Process, error) {
 	if g == nil {
 		return nil, fmt.Errorf("game is required")
