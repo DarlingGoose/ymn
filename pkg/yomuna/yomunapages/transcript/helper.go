@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/DarlingGoose/vntext/pkg/engine"
 	"github.com/google/uuid"
@@ -91,4 +92,32 @@ func transcriptRowFromEngineLine(line engine.Line) transcriptRow {
 		Info:    info,
 		Time:    line.Time.Format("15:04:05"),
 	}
+}
+
+func transcriptRowLooksLikeLanguage(row transcriptRow) bool {
+	if row.Info {
+		return true
+	}
+
+	text := strings.TrimSpace(row.Text + " " + row.Speaker)
+	if text == "" || containsReplacementGlyph(text) {
+		return false
+	}
+
+	for _, r := range text {
+		if unicode.IsLetter(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsReplacementGlyph(text string) bool {
+	for _, r := range text {
+		switch r {
+		case unicode.ReplacementChar, '\u25a1', '\u25a0', '\u25fb', '\u25fc':
+			return true
+		}
+	}
+	return false
 }

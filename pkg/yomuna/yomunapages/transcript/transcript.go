@@ -39,6 +39,7 @@ type TranscriptUI struct {
 	hookDropdown   *dropdowns.Dropdown
 
 	autoTranslateToggle *toggles.Toggle
+	languageOnlyToggle  *toggles.Toggle
 	runGameButton       *components.IconButton
 	stopGameButton      *components.IconButton
 
@@ -89,6 +90,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		transcriptFollower:  newTranscriptFollower(th, backend),
 		sentenceAnalysis:    NewSentenceAnalysis(th, backend),
 		autoTranslateToggle: toggles.NewToggle("Auto Translate", false),
+		languageOnlyToggle:  toggles.NewToggle("Language Only", prefs.ShowLanguageOnly),
 		preferences:         prefs,
 	}
 	ui.sentenceAnalysis.SetLookupFontSize(unit.Sp(prefs.LookupFontSizeSp))
@@ -141,6 +143,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		ui.invalidateUI()
 	})
 	ui.transcriptFollower.WithThemeClient(tc)
+	ui.languageOnlyToggle.WithThemeClient(tc)
 	ui.sentenceAnalysis.WithThemeClient(tc)
 	ui.ReloadGames()
 	return ui
@@ -166,6 +169,10 @@ func (ui *TranscriptUI) update(gtx layout.Context) {
 	ui.transcriptFollower.HandeEvents(gtx)
 	ui.transcriptFollower.SetShowHookLabels(ui.hookDropdownOpen && strings.TrimSpace(ui.selectedHook) == "")
 	ui.autoTranslateToggle.Update(gtx)
+	if ui.languageOnlyToggle.Update(gtx) {
+		ui.preferences.ShowLanguageOnly = ui.languageOnlyToggle.Checked
+		_ = saveTranscriptPreferences(ui.preferences)
+	}
 	ui.transcriptFollower.WithAutoTranslate(ui.autoTranslateToggle.Checked)
 	ui.sentenceAnalysis.HandeEvents(gtx)
 }
@@ -464,21 +471,29 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.autoTranslateToggle.Layout(gtx)
 		}),
+		layout.Rigid(bareutils.SpacerW(gap)),
+
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.languageOnlyToggle.Layout(gtx)
+		}),
 	)
 }
 
 func (ui *TranscriptUI) layoutHeaderResponsiveControls(gtx layout.Context) {
-	if ui == nil || ui.autoTranslateToggle == nil {
+	if ui == nil || ui.autoTranslateToggle == nil || ui.languageOnlyToggle == nil {
 		return
 	}
 	width := gtx.Constraints.Max.X
 	switch {
 	case width > 0 && width < gtx.Dp(unit.Dp(650)):
 		ui.autoTranslateToggle.WithLabel("")
+		ui.languageOnlyToggle.WithLabel("")
 	case width > 0 && width < gtx.Dp(unit.Dp(820)):
 		ui.autoTranslateToggle.WithLabel("Auto")
+		ui.languageOnlyToggle.WithLabel("Text")
 	default:
 		ui.autoTranslateToggle.WithLabel("Auto Translate")
+		ui.languageOnlyToggle.WithLabel("Language Only")
 	}
 }
 
@@ -990,7 +1005,11 @@ func (ui *TranscriptUI) StartFollowingGame(ctx context.Context, g *game.Game) {
 				if !ui.transcriptLinePassesHookFilter(line.Hook) {
 					continue
 				}
-				ui.transcriptFollower.AddRows(transcriptRowFromEngineLine(line))
+				row := transcriptRowFromEngineLine(line)
+				if ui.languageOnlyToggle != nil && ui.languageOnlyToggle.Checked && !transcriptRowLooksLikeLanguage(row) {
+					continue
+				}
+				ui.transcriptFollower.AddRows(row)
 			}
 		}
 	}()

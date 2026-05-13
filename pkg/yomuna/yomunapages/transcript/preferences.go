@@ -17,6 +17,7 @@ type transcriptPreferences struct {
 	SentenceFontSizeSp   float32 `json:"sentence_font_size_sp,omitempty"`
 	TranscriptFontSizeSp float32 `json:"transcript_font_size_sp,omitempty"`
 	MaxTranscriptRows    int     `json:"max_transcript_rows,omitempty"`
+	ShowLanguageOnly     bool    `json:"show_language_only,omitempty"`
 }
 
 func defaultTranscriptPreferences() transcriptPreferences {
