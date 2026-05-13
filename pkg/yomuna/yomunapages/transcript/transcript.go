@@ -678,11 +678,6 @@ func (ui *TranscriptUI) setSelectedHookFilter(ctx context.Context, hook string) 
 	ui.hookStatus = ""
 	ui.setHookDropdownItems(currentHookDropdownValues(ui.hookDropdown), ui.hookDropdownOpen)
 	ui.invalidateUI()
-
-	if ui.following && ui.backend.IsGameRunning() {
-		ui.transcriptFollower.Reset(g.Name)
-		ui.StartFollowingGame(ctx, g)
-	}
 }
 
 func (ui *TranscriptUI) transcriptLinePassesHookFilter(hook string) bool {
