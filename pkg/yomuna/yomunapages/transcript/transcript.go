@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"gioui.org/layout"
@@ -33,6 +34,7 @@ type TranscriptUI struct {
 
 	transcriptList widget.List
 	gameDropdown   *dropdowns.Dropdown
+	hookDropdown   *dropdowns.Dropdown
 
 	autoTranslateToggle *toggles.Toggle
 	runGameButton       *components.IconButton
@@ -44,6 +46,11 @@ type TranscriptUI struct {
 
 	selectedGameName string
 	gameStatus       string
+	hookStatus       string
+	hookDropdownOpen bool
+	selectedHook     string
+	hookRefreshToken int
+	hookRefreshBusy  bool
 	following        bool
 
 	followCtx    context.Context
@@ -68,6 +75,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		th:           th,
 		theme:        tc,
 		gameDropdown: dropdowns.NewDropdown([]dropdowns.DropdownItem{}),
+		hookDropdown: newHookDropdown(),
 		bodySplit: split.SplitH{
 			Ratio:    0,
 			Bar:      unit.Dp(4),
@@ -118,6 +126,12 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		}
 		ui.selectGameByName(item.Value, true)
 	})
+	ui.hookDropdown.SelectItemEvent(func(item dropdowns.DropdownItem, valid bool) {
+		if !valid {
+			return
+		}
+		ui.setSelectedHookFilter(context.Background(), item.Value)
+	})
 
 	ui.transcriptFollower.WithSelectedRow(func(row transcriptRow) {
 		ui.sentenceAnalysis.SetSentence(&row)
@@ -162,6 +176,9 @@ func (ui *TranscriptUI) WithThemeClient(tc *theme.Client) *TranscriptUI {
 	ui.theme = tc
 	if ui.gameDropdown != nil {
 		ui.gameDropdown.WithThemeClient(tc)
+	}
+	if ui.hookDropdown != nil {
+		ui.hookDropdown.WithThemeClient(tc)
 	}
 	if ui.runGameButton != nil {
 		ui.runGameButton.WithThemeClient(tc)
@@ -227,8 +244,11 @@ func (ui *TranscriptUI) selectGameByName(name string, followIfRunning bool) {
 	}
 
 	ui.gameStatus = "Selected"
+	ui.selectedHook = firstTextHookFilter(g.TextHookFilter)
+	ui.setHookDropdownItems(nil, false)
 	ui.transcriptFollower.SetGame(g.Name)
 	ui.sentenceAnalysis.Reset()
+	ui.refreshHookDropdown(context.Background(), g)
 
 	if followIfRunning {
 		ui.StartFollowingGame(context.Background(), g)
@@ -406,6 +426,17 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 		layout.Rigid(bareutils.SpacerW(gap)),
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutHookDropdown(gtx)
+		}),
+
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if ui.hookDropdownOpen {
+				return bareutils.SpacerW(gap)(gtx)
+			}
+			return layout.Dimensions{}
+		}),
+
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutGameActionButtons(gtx)
 		}),
 		layout.Rigid(bareutils.SpacerW(gap)),
@@ -465,6 +496,220 @@ func (ui *TranscriptUI) layoutGameActionButtons(gtx layout.Context) layout.Dimen
 			return ui.stopGameButton.Layout(gtx)
 		}),
 	)
+}
+
+func (ui *TranscriptUI) layoutHookDropdown(gtx layout.Context) layout.Dimensions {
+	if ui == nil || ui.hookDropdown == nil || !ui.hookDropdownOpen {
+		return layout.Dimensions{}
+	}
+	return ui.hookDropdown.Layout(gtx, &ui.Overlay)
+}
+
+func newHookDropdown() *dropdowns.Dropdown {
+	d := dropdowns.NewDropdown([]dropdowns.DropdownItem{
+		{Label: "All Hooks", Value: ""},
+	})
+	d.Width = unit.Dp(180)
+	d.Height = unit.Dp(38)
+	d.ItemHeight = unit.Dp(34)
+	d.MaxMenuHeight = unit.Dp(260)
+	d.Radius = unit.Dp(10)
+	d.Inset = unit.Dp(10)
+	d.WithRole(theme.TextRoleBodySmall)
+	return d
+}
+
+func (ui *TranscriptUI) refreshHookDropdown(ctx context.Context, g *game.Game) {
+	if ui == nil || ui.backend == nil || g == nil {
+		return
+	}
+
+	ui.hookRefreshBusy = true
+	ui.hookRefreshToken++
+	token := ui.hookRefreshToken
+	gameName := g.Name
+	ui.invalidateUI()
+
+	go func() {
+		hooks, hasTextractor, err := ui.backend.GetGameTextHooks(ctx, g)
+		if ctx != nil && ctx.Err() != nil {
+			return
+		}
+		if token != ui.hookRefreshToken || strings.TrimSpace(ui.selectedGameName) != strings.TrimSpace(gameName) {
+			return
+		}
+
+		ui.hookRefreshBusy = false
+		if err != nil {
+			ui.hookStatus = err.Error()
+			ui.setHookDropdownItems(nil, false)
+			ui.invalidateUI()
+			return
+		}
+
+		ui.hookStatus = ""
+		ui.setHookDropdownItems(hooks, hasTextractor)
+		ui.invalidateUI()
+	}()
+}
+
+func (ui *TranscriptUI) setHookDropdownItems(hooks []string, hasTextractor bool) {
+	if ui == nil || ui.hookDropdown == nil {
+		return
+	}
+
+	ui.hookDropdownOpen = hasTextractor
+	if !hasTextractor {
+		ui.hookDropdown.SetItems([]dropdowns.DropdownItem{{Label: "All Hooks", Value: ""}})
+		ui.hookDropdown.SelectItem("")
+		return
+	}
+
+	selected := strings.TrimSpace(ui.selectedHook)
+	selectedPresent := selected == ""
+	seen := map[string]struct{}{}
+	normalizedHooks := make([]string, 0, len(hooks))
+	for _, hook := range hooks {
+		hook = normalizeHookGroup(hook)
+		if hook == "" {
+			continue
+		}
+		if _, ok := seen[hook]; ok {
+			continue
+		}
+		seen[hook] = struct{}{}
+		if hook == selected {
+			selectedPresent = true
+		}
+		normalizedHooks = append(normalizedHooks, hook)
+	}
+	sort.Strings(normalizedHooks)
+
+	items := []dropdowns.DropdownItem{{Label: "All Hooks", Value: ""}}
+	for _, hook := range normalizedHooks {
+		items = append(items, dropdowns.DropdownItem{
+			Label: hookDropdownLabel(hook),
+			Value: hook,
+		})
+	}
+	if !selectedPresent {
+		items = append(items, dropdowns.DropdownItem{
+			Label: hookDropdownLabel(selected),
+			Value: selected,
+		})
+	}
+
+	ui.hookDropdown.SetItems(items)
+	ui.hookDropdown.SelectItem(selected)
+}
+
+func (ui *TranscriptUI) ensureHookDropdownOption(hook string) {
+	if ui == nil || ui.hookDropdown == nil || !ui.hookDropdownOpen {
+		return
+	}
+	hook = normalizeHookGroup(hook)
+	if hook == "" {
+		return
+	}
+	for _, item := range ui.hookDropdown.Items {
+		if normalizeHookGroup(item.Value) == hook {
+			return
+		}
+	}
+
+	hooks := currentHookDropdownValues(ui.hookDropdown)
+	hooks = append(hooks, hook)
+	ui.setHookDropdownItems(hooks, true)
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) setSelectedHookFilter(ctx context.Context, hook string) {
+	if ui == nil {
+		return
+	}
+	hook = normalizeHookGroup(hook)
+	if hook == strings.TrimSpace(ui.selectedHook) {
+		return
+	}
+
+	ui.selectedHook = hook
+	g := ui.selectedGame()
+	if g == nil || ui.backend == nil {
+		ui.invalidateUI()
+		return
+	}
+
+	filters := []string(nil)
+	if hook != "" {
+		filters = []string{hook}
+	}
+	if err := ui.backend.SetGameTextHookFilter(g, filters); err != nil {
+		ui.hookStatus = err.Error()
+		ui.invalidateUI()
+		return
+	}
+
+	g.TextHookFilter = append([]string(nil), filters...)
+	ui.hookStatus = ""
+	ui.setHookDropdownItems(currentHookDropdownValues(ui.hookDropdown), ui.hookDropdownOpen)
+	ui.invalidateUI()
+
+	if ui.following && ui.backend.IsGameRunning() {
+		ui.transcriptFollower.Reset(g.Name)
+		ui.StartFollowingGame(ctx, g)
+	}
+}
+
+func (ui *TranscriptUI) transcriptLinePassesHookFilter(hook string) bool {
+	if ui == nil {
+		return true
+	}
+	selected := normalizeHookGroup(ui.selectedHook)
+	if selected == "" {
+		return true
+	}
+	return normalizeHookGroup(hook) == selected
+}
+
+func currentHookDropdownValues(d *dropdowns.Dropdown) []string {
+	if d == nil {
+		return nil
+	}
+	out := make([]string, 0, len(d.Items))
+	for _, item := range d.Items {
+		if value := normalizeHookGroup(item.Value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func firstTextHookFilter(filters []string) string {
+	for _, filter := range filters {
+		if hook := normalizeHookGroup(filter); hook != "" {
+			return hook
+		}
+	}
+	return ""
+}
+
+func normalizeHookGroup(hook string) string {
+	hook = strings.TrimSpace(hook)
+	if hook == "" {
+		return ""
+	}
+	if idx := strings.LastIndexByte(hook, '@'); idx >= 0 {
+		return hook[idx:]
+	}
+	return hook
+}
+
+func hookDropdownLabel(hook string) string {
+	hook = normalizeHookGroup(hook)
+	if hook == "" {
+		return "All Hooks"
+	}
+	return compactHookLabel(hook)
 }
 
 func (ui *TranscriptUI) StopSelectedGame() {
@@ -680,7 +925,10 @@ func (ui *TranscriptUI) StartFollowingGame(ctx context.Context, g *game.Game) {
 	ui.gameStatus = "Following logs"
 	ui.invalidateUI()
 
-	ch, err := ui.backend.FollowGameText(followCtx, g)
+	followGame := *g
+	followGame.TextHookFilter = nil
+
+	ch, err := ui.backend.FollowGameText(followCtx, &followGame)
 	if err != nil {
 		ui.gameStatus = "Follow failed"
 		ui.transcriptFollower.AddRows(transcriptRow{
@@ -696,6 +944,7 @@ func (ui *TranscriptUI) StartFollowingGame(ctx context.Context, g *game.Game) {
 		Info: true,
 		Text: "Following logs for " + g.Name,
 	})
+	ui.refreshHookDropdown(followCtx, g)
 
 	go func() {
 		for {
@@ -714,6 +963,10 @@ func (ui *TranscriptUI) StartFollowingGame(ctx context.Context, g *game.Game) {
 					return
 				}
 
+				ui.ensureHookDropdownOption(line.Hook)
+				if !ui.transcriptLinePassesHookFilter(line.Hook) {
+					continue
+				}
 				ui.transcriptFollower.AddRows(transcriptRowFromEngineLine(line))
 			}
 		}

@@ -7,7 +7,8 @@ require (
 	github.com/DarlingGoose/bare v0.0.6
 	github.com/DarlingGoose/gr v0.0.22
 	github.com/DarlingGoose/jpndict v0.0.11
-	github.com/DarlingGoose/vntext v0.0.18
+	github.com/DarlingGoose/tr v0.0.1
+	github.com/DarlingGoose/vntext v0.0.19
 	github.com/faiface/beep v1.1.0
 	github.com/google/uuid v1.6.0
 	github.com/ikawaha/kagome-dict/ipa v1.2.6
@@ -23,7 +24,6 @@ require (
 require (
 	gioui.org/shader v1.0.8 // indirect
 	github.com/DarlingGoose/krkrxp3 v0.0.0-20260506230704-7038f45dab8d // indirect
-	github.com/DarlingGoose/tr v0.0.1 // indirect
 	github.com/PuerkitoBio/goquery v1.12.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/go-gst/go-glib v1.4.0 // indirect

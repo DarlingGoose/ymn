@@ -23,6 +23,7 @@ import (
 type SettingsUI struct {
 	ModeToggle    *toggles.ThemeModeToggle
 	ThemeDropdown *dropdowns.ThemeDropdown
+	settingsList  widget.List
 
 	transcriptSettings *TranscriptSettings
 	transcriptDown     widget.Clickable
@@ -71,6 +72,7 @@ func NewSettingsUI(tc *theme.Client) *SettingsUI {
 		theme:         tc,
 		ModeToggle:    toggles.NewThemeModeToggle(tc),
 		ThemeDropdown: dropdowns.NewThemeDropdown(tc),
+		settingsList:  widget.List{List: layout.List{Axis: layout.Vertical}},
 		ollamaModelInput: input.NewTextInput("Model", "translategemma:4b").
 			WithThemeClient(tc),
 		ollamaBaseURLInput: input.NewTextInput("Endpoint", "http://localhost:11434").
@@ -126,25 +128,40 @@ func (ui *SettingsUI) Layout(gtx layout.Context, layer *overlay.Overlay) layout.
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
-	return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{
-			Axis: layout.Vertical,
-		}.Layout(gtx,
-			layout.Rigid(ui.ModeToggle.Layout),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.ThemeDropdown.Layout(gtx, layer)
-			}),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutTranscriptSettings(gtx)
-			}),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutTranslatorSettings(gtx)
-			}),
-		)
+	items := []layout.Widget{
+		ui.ModeToggle.Layout,
+		func(gtx layout.Context) layout.Dimensions {
+			return ui.ThemeDropdown.Layout(gtx, layer)
+		},
+		ui.layoutTranscriptSettings,
+		ui.layoutTranslatorSettings,
+	}
+
+	return layout.Inset{Top: unit.Dp(16), Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		list := material.List(material.NewTheme(), &ui.settingsList)
+		return list.Layout(gtx, len(items), func(gtx layout.Context, index int) layout.Dimensions {
+			if index < 0 || index >= len(items) {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{
+				Left:   unit.Dp(16),
+				Right:  unit.Dp(16),
+				Bottom: settingsRowBottomSpacing(index, len(items)),
+			}.Layout(gtx, items[index])
+		})
 	})
+}
+
+func settingsRowBottomSpacing(index, count int) unit.Dp {
+	if index < 0 || index >= count-1 {
+		return unit.Dp(0)
+	}
+	switch index {
+	case 0:
+		return unit.Dp(12)
+	default:
+		return unit.Dp(18)
+	}
 }
 
 func (ui *SettingsUI) syncTranslatorInputs() {

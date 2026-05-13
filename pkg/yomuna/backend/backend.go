@@ -30,6 +30,8 @@ type GameLogic interface {
 	FollowGameText(ctx context.Context, g *game.Game) (chan engine.Line, error)
 	//todo GetTesseract()
 	GetGameEngine(ctx context.Context, g *game.Game) (engine.EngineV2, error)
+	GetGameTextHooks(ctx context.Context, g *game.Game) ([]string, bool, error)
+	SetGameTextHookFilter(g *game.Game, filters []string) error
 	SelectGame(g *game.Game)
 	SelectGameByName(n string)
 	CurrentGame() *game.Game

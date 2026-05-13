@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/DarlingGoose/gr"
 	"github.com/DarlingGoose/jpndict"
 	"github.com/DarlingGoose/jpndict/translate"
+	"github.com/DarlingGoose/tr/pkg/textractor"
 	"github.com/DarlingGoose/vntext/pkg/engine"
 	"github.com/DarlingGoose/vntext/pkg/engine/auto"
 	"github.com/DarlingGoose/vntext/pkg/game"
@@ -190,6 +192,83 @@ func (b *LiveBackend) FollowGameText(ctx context.Context, g *game.Game) (chan en
 		return nil, err
 	}
 	return e.FollowGameText(ctx, g, engine.FollowGameOptions{History: true, MaxLines: 200})
+}
+
+func (b *LiveBackend) GetGameTextHooks(ctx context.Context, g *game.Game) ([]string, bool, error) {
+	if g == nil {
+		return nil, false, fmt.Errorf("game is required")
+	}
+	e, err := b.GetGameEngine(ctx, g)
+	if err != nil {
+		return nil, false, err
+	}
+	tr := e.GetTextractor(g)
+	if tr == nil {
+		return nil, false, nil
+	}
+
+	seen := map[string]struct{}{}
+	for hook := range tr.Hooks() {
+		group := strings.TrimSpace(textractor.HookGroup(hook))
+		if group != "" {
+			seen[group] = struct{}{}
+		}
+	}
+	for _, hook := range tr.HookGroups() {
+		group := strings.TrimSpace(textractor.HookGroup(hook))
+		if group != "" {
+			seen[group] = struct{}{}
+		}
+	}
+
+	hooks := make([]string, 0, len(seen))
+	for hook := range seen {
+		hooks = append(hooks, hook)
+	}
+	sort.Strings(hooks)
+	return hooks, true, nil
+}
+
+func (b *LiveBackend) SetGameTextHookFilter(g *game.Game, filters []string) error {
+	if g == nil {
+		return fmt.Errorf("game is required")
+	}
+
+	normalized := normalizeTextHookFilters(filters)
+
+	b.gameMu.Lock()
+	for _, saved := range b.games {
+		if saved == nil || saved.Name != g.Name {
+			continue
+		}
+		saved.TextHookFilter = append([]string(nil), normalized...)
+		g = saved
+		break
+	}
+	if b.current != nil && b.current.Name == g.Name {
+		b.current.TextHookFilter = append([]string(nil), normalized...)
+	}
+	g.TextHookFilter = append([]string(nil), normalized...)
+	b.gameMu.Unlock()
+
+	return gameConfig.WriteGameConfig(gameConfig.DefaultGameConfigPath(g), g)
+}
+
+func normalizeTextHookFilters(filters []string) []string {
+	out := make([]string, 0, len(filters))
+	seen := map[string]struct{}{}
+	for _, filter := range filters {
+		filter = strings.TrimSpace(textractor.HookGroup(filter))
+		if filter == "" {
+			continue
+		}
+		if _, ok := seen[filter]; ok {
+			continue
+		}
+		out = append(out, filter)
+		seen[filter] = struct{}{}
+	}
+	return out
 }
 
 func (b *LiveBackend) GetGameEngine(ctx context.Context, g *game.Game) (engine.EngineV2, error) {
