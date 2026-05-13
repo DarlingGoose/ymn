@@ -2,15 +2,21 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	//"github.com/DarlingGoose/vntext/pkg/runner"
+	"github.com/DarlingGoose/wgl/pkg/util"
 	"github.com/spf13/cobra"
 )
 
 var runGameName string
 var runGameSaveLauncher bool
 var runGameLauncherDir string
+var runGameVirtualDesktop string
+var runGameDisableVirtualDesktop bool
 
 var runGameCmd = &cobra.Command{
 	Use:     "run-game [game-name]",
@@ -18,36 +24,46 @@ var runGameCmd = &cobra.Command{
 	Short:   "Launch a previously added game",
 	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		selectedName := strings.TrimSpace(runGameName)
-		if selectedName == "" && len(args) > 0 {
-			selectedName = args[0]
-		}
-
-		var cfg GameConfig
-		var err error
-		if selectedName == "" {
-			cfg, err = selectGameConfigWithTUI("Select a game to launch", "launch")
-			if err != nil {
-				return err
-			}
-		} else {
-			cfg, err = findGameConfig(selectedName)
-			if err != nil {
-				return err
-			}
-		}
-
-		if runGameSaveLauncher {
-			desktopPath, err := saveDesktopEntry(cfg, runGameLauncherDir)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "saved launcher: %s\n", desktopPath)
-			return nil
-		}
-
-		fmt.Fprintf(cmd.OutOrStdout(), "launching %s with %s\n", cfg.Name, cfg.Runner)
-		return launchGame(cfg)
+		//name := strings.TrimSpace(runGameName)
+		//if name == "" && len(args) > 0 {
+		//	name = strings.TrimSpace(args[0])
+		//}
+		//if name == "" {
+		//	return fmt.Errorf("game name is required")
+		//}
+		//
+		//configs, err := loadInstalledGameConfigs()
+		//if err != nil {
+		//	return err
+		//}
+		//cfg, err := gameConfig.FindInstalledGame(configs, name)
+		//if err != nil {
+		//	return err
+		//}
+		//
+		//if cmd.Flags().Changed("virtual-desktop") {
+		//	cfg.VirtualDesktop = strings.TrimSpace(runGameVirtualDesktop)
+		//}
+		//if runGameDisableVirtualDesktop {
+		//	cfg.VirtualDesktop = "off"
+		//}
+		//
+		//if runGameSaveLauncher {
+		//	path, err := writeGameDesktopLauncher(cfg.Name, cfg.IconPath, cfg.VirtualDesktop)
+		//	if err != nil {
+		//		return err
+		//	}
+		//	fmt.Fprintf(cmd.OutOrStdout(), "Wrote launcher: %s\n", path)
+		//}
+		//
+		//status, err := runner.New().Run(cfg)
+		//if err != nil {
+		//	return err
+		//}
+		//if status != nil && strings.TrimSpace(status.Message) != "" {
+		//	fmt.Fprintln(cmd.OutOrStdout(), status.Message)
+		//}
+		return nil
 	},
 }
 
@@ -56,93 +72,66 @@ func init() {
 	runGameCmd.Flags().StringVarP(&runGameName, "game", "g", "", "name of the saved game to launch")
 	runGameCmd.Flags().BoolVar(&runGameSaveLauncher, "save-launcher", false, "write a .desktop launcher so rofi and Linux app launchers can find the game")
 	runGameCmd.Flags().StringVar(&runGameLauncherDir, "launcher-dir", "", "directory where the .desktop launcher is written (default: ~/.local/share/applications)")
+	runGameCmd.Flags().StringVar(&runGameVirtualDesktop, "virtual-desktop", "", "Wine/Proton virtual desktop size, for example 1280x720; use off to disable")
+	runGameCmd.Flags().BoolVar(&runGameDisableVirtualDesktop, "no-virtual-desktop", false, "disable the Wine/Proton virtual desktop for this launch")
 }
 
-type gamePickerModel struct {
-	games    []GameConfig
-	cursor   int
-	selected *GameConfig
-	quitting bool
-	title    string
-	action   string
-}
+func writeGameDesktopLauncher(name, iconPath, virtualDesktop string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("game name is required")
+	}
 
-func selectGameConfigWithTUI(title, action string) (GameConfig, error) {
-	configs, err := listGameConfigs()
+	exe, err := os.Executable()
 	if err != nil {
-		return GameConfig{}, err
+		return "", fmt.Errorf("resolve executable path: %w", err)
 	}
-	if len(configs) == 0 {
-		return GameConfig{}, fmt.Errorf("no saved games found in %s", configBaseDir())
-	}
-
-	program := tea.NewProgram(gamePickerModel{
-		games:  configs,
-		title:  title,
-		action: action,
-	}, tea.WithAltScreen())
-	finalModel, err := program.Run()
+	exe, err = filepath.Abs(exe)
 	if err != nil {
-		return GameConfig{}, err
+		return "", fmt.Errorf("resolve executable path: %w", err)
 	}
 
-	model, ok := finalModel.(gamePickerModel)
-	if !ok {
-		return GameConfig{}, fmt.Errorf("unexpected picker state %T", finalModel)
+	dir := strings.TrimSpace(runGameLauncherDir)
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home dir: %w", err)
+		}
+		dir = filepath.Join(home, ".local", "share", "applications")
 	}
-	if model.selected == nil {
-		return GameConfig{}, fmt.Errorf("game selection cancelled")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create launcher dir: %w", err)
 	}
-	return *model.selected, nil
+
+	path := filepath.Join(dir, "yomuna-"+util.SanitizeName(name)+".desktop")
+	var b strings.Builder
+	b.WriteString("[Desktop Entry]\n")
+	b.WriteString("Type=Application\n")
+	b.WriteString("Name=" + desktopEntryValue("Yomuna - "+name) + "\n")
+	b.WriteString("Comment=" + desktopEntryValue("Launch "+name+" with Yomuna") + "\n")
+	b.WriteString("Exec=" + shellQuote(exe) + " run-game --game " + shellQuote(name))
+	if strings.TrimSpace(virtualDesktop) != "" {
+		b.WriteString(" --virtual-desktop " + shellQuote(strings.TrimSpace(virtualDesktop)))
+	}
+	b.WriteString("\n")
+	if strings.TrimSpace(iconPath) != "" {
+		b.WriteString("Icon=" + desktopEntryValue(strings.TrimSpace(iconPath)) + "\n")
+	}
+	b.WriteString("Terminal=false\n")
+	b.WriteString("Categories=Game;\n")
+
+	if err := os.WriteFile(path, []byte(b.String()), 0o755); err != nil {
+		return "", fmt.Errorf("write launcher: %w", err)
+	}
+	return path, nil
 }
 
-func (m gamePickerModel) Init() tea.Cmd {
-	return nil
+func desktopEntryValue(value string) string {
+	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.ReplaceAll(value, "\r", " ")
+	return strings.TrimSpace(value)
 }
 
-func (m gamePickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
-			m.quitting = true
-			return m, tea.Quit
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.games)-1 {
-				m.cursor++
-			}
-		case "enter":
-			selected := m.games[m.cursor]
-			m.selected = &selected
-			return m, tea.Quit
-		}
-	}
-	return m, nil
-}
-
-func (m gamePickerModel) View() string {
-	if m.quitting && m.selected == nil {
-		return "Selection cancelled.\n"
-	}
-
-	var builder strings.Builder
-	builder.WriteString(m.title)
-	builder.WriteString("\n\n")
-	for i, game := range m.games {
-		cursor := "  "
-		if i == m.cursor {
-			cursor = "> "
-		}
-		launchMode := "direct"
-		if game.RequiresSteam || game.Runner == RunnerSteam {
-			launchMode = "steam"
-		}
-		builder.WriteString(fmt.Sprintf("%s%s [%s/%s]\n", cursor, game.Name, game.Runner, launchMode))
-	}
-	builder.WriteString(fmt.Sprintf("\nUse ↑/↓ or j/k, press Enter to %s, q to cancel.\n", m.action))
-	return builder.String()
+func shellQuote(value string) string {
+	return strconv.Quote(value)
 }
