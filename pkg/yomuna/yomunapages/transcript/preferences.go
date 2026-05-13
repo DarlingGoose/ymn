@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"gioui.org/unit"
-	"github.com/DarlingGoose/wgl/pkg/util"
+	"github.com/DarlingGoose/ymn/pkg/util"
 )
 
 type transcriptPreferences struct {

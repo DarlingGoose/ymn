@@ -11,13 +11,13 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/dropdowns"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/input"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/row"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/toggles"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/overlay"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/dropdowns"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/input"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/row"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/toggles"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
 )
 
 type SettingsUI struct {

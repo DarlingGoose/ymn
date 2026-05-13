@@ -10,10 +10,10 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	"github.com/DarlingGoose/wgl/pkg/translation"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
-	"github.com/DarlingGoose/wgl/pkg/yomuna/backend"
+	"github.com/DarlingGoose/ymn/pkg/translation"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
+	"github.com/DarlingGoose/ymn/pkg/yomuna/backend"
 	"github.com/google/uuid"
 )
 

@@ -4,9 +4,9 @@ import (
 	"fmt"
 
 	"gioui.org/layout"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/backend/media"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/pages/fileexplorer"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/pages/fileexplorer"
 )
 
 type FileExplore struct {

@@ -9,7 +9,7 @@ import (
 	"github.com/DarlingGoose/jpndict/translate"
 	"github.com/DarlingGoose/vntext/pkg/engine"
 	"github.com/DarlingGoose/vntext/pkg/game"
-	"github.com/DarlingGoose/wgl/pkg/japanese"
+	"github.com/DarlingGoose/ymn/pkg/japanese"
 )
 
 type Backend interface {

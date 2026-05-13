@@ -15,11 +15,11 @@ import (
 	"github.com/DarlingGoose/bare/pkg/ui/icons"
 	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
-	"github.com/DarlingGoose/wgl/pkg/anki"
-	flashcards "github.com/DarlingGoose/wgl/pkg/flashcard"
-	"github.com/DarlingGoose/wgl/pkg/gui"
-	guitoast "github.com/DarlingGoose/wgl/pkg/gui/toast"
-	"github.com/DarlingGoose/wgl/pkg/util"
+	"github.com/DarlingGoose/ymn/pkg/anki"
+	flashcards "github.com/DarlingGoose/ymn/pkg/flashcard"
+	"github.com/DarlingGoose/ymn/pkg/gui"
+	guitoast "github.com/DarlingGoose/ymn/pkg/gui/toast"
+	"github.com/DarlingGoose/ymn/pkg/util"
 )
 
 var _ gui.EvenHandler = &Page{}

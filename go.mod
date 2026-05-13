@@ -1,4 +1,4 @@
-module github.com/DarlingGoose/wgl
+module github.com/DarlingGoose/ymn
 
 go 1.26.2
 

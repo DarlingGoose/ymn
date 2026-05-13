@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"gioui.org/widget/material"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 )
 
 func unitSeconds(seconds float64) time.Duration {

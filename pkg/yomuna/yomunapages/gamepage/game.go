@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 
 	"gioui.org/layout"
@@ -17,18 +18,18 @@ import (
 	"github.com/DarlingGoose/gr/gamescope"
 	"github.com/DarlingGoose/gr/wine"
 	"github.com/DarlingGoose/vntext/pkg/game"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/backend/media"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/dropdowns"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/input"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/modal"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/tabs"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/iconify"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/overlay"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/pages/fileexplorer"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
-	"github.com/DarlingGoose/wgl/pkg/yomuna/backend"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/dropdowns"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/input"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/modal"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/tabs"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/pages/fileexplorer"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
+	"github.com/DarlingGoose/ymn/pkg/yomuna/backend"
 )
 
 type GameUI struct {
@@ -36,10 +37,13 @@ type GameUI struct {
 	theme   *theme.Client
 	backend backend.Backend
 
-	list      layout.List
-	panelList widget.List
-	tabList   layout.List
-	configTab *tabs.Layout
+	list                    layout.List
+	panelList               widget.List
+	tabList                 layout.List
+	winetrickConfiguredList layout.List
+	winetrickCommonList     layout.List
+	winetrickInstalledList  layout.List
+	configTab               *tabs.Layout
 
 	gameDropdown   *dropdowns.Dropdown
 	runnerDropdown *dropdowns.Dropdown
@@ -49,6 +53,7 @@ type GameUI struct {
 	imageInput      *input.TextInput
 	runnerPathInput *input.TextInput
 	prefixInput     *input.TextInput
+	winetrickInput  *input.TextInput
 
 	gamescopeFields []*runnerOptionField
 	wineFields      []*runnerOptionField
@@ -63,6 +68,9 @@ type GameUI struct {
 	imageBrowse              *components.IconButton
 	runnerBrowse             *components.IconButton
 	prefixBrowse             *components.IconButton
+	addWinetrickClick        widget.Clickable
+	winetrickCommonClicks    map[string]*widget.Clickable
+	winetrickRemoveClicks    map[string]*widget.Clickable
 
 	filePickerModal  *modal.Modal
 	filePicker       *fileexplorer.FileExplorer
@@ -128,7 +136,10 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 		panelList: widget.List{
 			List: layout.List{Axis: layout.Vertical},
 		},
-		tabList: layout.List{Axis: layout.Horizontal},
+		tabList:                 layout.List{Axis: layout.Horizontal},
+		winetrickConfiguredList: layout.List{Axis: layout.Horizontal},
+		winetrickCommonList:     layout.List{Axis: layout.Horizontal},
+		winetrickInstalledList:  layout.List{Axis: layout.Horizontal},
 
 		gameDropdown: dropdowns.NewDropdown(nil).
 			WithThemeClient(tc).
@@ -145,6 +156,7 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 		imageInput:      input.NewPathInput("Picture", "/path/to/image.png").WithMaterialTheme(th).WithThemeClient(tc),
 		runnerPathInput: input.NewPathInput("Runner path", "Optional runner executable").WithMaterialTheme(th).WithThemeClient(tc),
 		prefixInput:     input.NewPathInput("Wine prefix", "Optional Wine prefix").WithMaterialTheme(th).WithThemeClient(tc),
+		winetrickInput:  input.NewTextInput("Winetricks verb", "fakejapanese").WithMaterialTheme(th).WithThemeClient(tc),
 
 		saveButton:               components.NewIconButton("Save Game", nil, saveIcon).WithThemeClient(tc),
 		cancelButton:             components.NewIconButton("Cancel", nil, cancelIcon).WithThemeClient(tc),
@@ -157,6 +169,8 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 		runnerBrowse:             components.NewIconButton("Browse", nil, folderIcon).WithThemeClient(tc),
 		prefixBrowse:             components.NewIconButton("Browse", nil, folderIcon).WithThemeClient(tc),
 		coverPreview:             media.NewView(media.DefaultRegistry),
+		winetrickCommonClicks:    map[string]*widget.Clickable{},
+		winetrickRemoveClicks:    map[string]*widget.Clickable{},
 
 		basicSection:    newGameSection("General", "Name and artwork.", true),
 		runnerSection:   newGameSection("Runner", "Runner type and executable paths.", true),
@@ -263,6 +277,10 @@ func (ui *GameUI) configureMainInputs() {
 	configure(ui.imageInput, "Optional file path")
 	configure(ui.runnerPathInput, "Leave empty to use the selected runner default")
 	configure(ui.prefixInput, "Leave empty to use the game or runner default")
+	configure(ui.winetrickInput, "Winetricks verb, for example fakejapanese")
+	if ui.winetrickInput != nil {
+		ui.winetrickInput.OnChange = nil
+	}
 	if ui.imageInput != nil {
 		ui.imageInput.OnChange = func(path string) {
 			ui.loadCoverPreview(path)
@@ -759,10 +777,356 @@ func (ui *GameUI) layoutWineOptions(gtx layout.Context, layer *overlay.Overlay) 
 		return ui.layoutEmpty(gtx)
 	}
 	fields := ui.filterRunnerFields("DefaultWinePrefix", "DefaultPrefix", "UseWine", "WineStartWait", "KillWineOnExit")
-	if len(fields) == 0 {
-		return ui.layoutMutedText(gtx, "No Wine options are available for this runner.")
+	children := []layout.FlexChild{}
+	if len(fields) > 0 {
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFieldGrid(gtx, fields, layer)
+		}))
+	} else {
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutMutedText(gtx, "No Wine options are available for this runner.")
+		}))
 	}
-	return ui.layoutFieldGrid(gtx, fields, layer)
+	children = append(children,
+		layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutWinetricksOptions(gtx)
+		}),
+	)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func (ui *GameUI) layoutWinetricksOptions(gtx layout.Context) layout.Dimensions {
+	if ui == nil || ui.draft == nil {
+		return layout.Dimensions{}
+	}
+	ct := ui.theme.GetCurrentColorToken()
+	return utils.SurfaceOutlined(gtx, ct.SurfaceNRGBA(), unit.Dp(8), utils.SurfaceBorder{Color: ct.BorderNRGBA(), Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleLabel, theme.ThemeColorTextPrimary, "Winetricks dependencies")
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutMutedText(gtx, "Configured verbs are saved with this game. Installed verbs are read from the Wine prefix winetricks.log.")
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutWinetricksConfigured(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutWinetricksAdder(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutWinetricksCommon(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutInstalledWinetricks(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (ui *GameUI) layoutWinetricksConfigured(gtx layout.Context) layout.Dimensions {
+	deps := ui.configuredWinetricks()
+	children := []layout.FlexChild{
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, "Configured")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+	}
+	if len(deps) == 0 {
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutMutedText(gtx, "No winetricks dependencies are configured.")
+		}))
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	}
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return ui.winetrickConfiguredList.Layout(gtx, len(deps), func(gtx layout.Context, index int) layout.Dimensions {
+			dep := deps[index]
+			return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				click := ui.winetrickRemoveClicks[dep]
+				if click == nil {
+					click = &widget.Clickable{}
+					ui.winetrickRemoveClicks[dep] = click
+				}
+				for click.Clicked(gtx) {
+					if ui.removeConfiguredWinetrick(dep) {
+						gtx.Execute(op.InvalidateCmd{})
+					}
+				}
+				return ui.layoutWinetrickChip(gtx, click, dep+" x", true)
+			})
+		})
+	}))
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func (ui *GameUI) layoutWinetricksAdder(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.End}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if ui.winetrickInput == nil {
+				return layout.Dimensions{}
+			}
+			oldLabel := ui.winetrickInput.Label
+			ui.winetrickInput.Label = ""
+			dims := ui.winetrickInput.Layout(gtx)
+			ui.winetrickInput.Label = oldLabel
+			return dims
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			for ui.addWinetrickClick.Clicked(gtx) {
+				if ui.addConfiguredWinetrick(ui.winetrickInput.Text()) {
+					ui.winetrickInput.SetText("")
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			}
+			return ui.layoutTextButton(gtx, &ui.addWinetrickClick, "Add")
+		}),
+	)
+}
+
+func (ui *GameUI) layoutWinetricksCommon(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, "Common Japanese VN helpers")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			common := commonWinetrickVerbs()
+			return ui.winetrickCommonList.Layout(gtx, len(common), func(gtx layout.Context, index int) layout.Dimensions {
+				dep := common[index]
+				return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					click := ui.winetrickCommonClicks[dep]
+					if click == nil {
+						click = &widget.Clickable{}
+						ui.winetrickCommonClicks[dep] = click
+					}
+					for click.Clicked(gtx) {
+						if ui.addConfiguredWinetrick(dep) {
+							gtx.Execute(op.InvalidateCmd{})
+						}
+					}
+					return ui.layoutWinetrickChip(gtx, click, dep, false)
+				})
+			})
+		}),
+	)
+}
+
+func (ui *GameUI) layoutInstalledWinetricks(gtx layout.Context) layout.Dimensions {
+	installed, source := ui.installedWinetricks()
+	label := "Installed"
+	if source != "" {
+		label += " from " + source
+	}
+	children := []layout.FlexChild{
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, label)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+	}
+	if len(installed) == 0 {
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutMutedText(gtx, "No winetricks.log entries found for this prefix.")
+		}))
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	}
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return ui.winetrickInstalledList.Layout(gtx, len(installed), func(gtx layout.Context, index int) layout.Dimensions {
+			return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutWinetrickChip(gtx, nil, installed[index], false)
+			})
+		})
+	}))
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func commonWinetrickVerbs() []string {
+	return []string{
+		"fakejapanese", "cjkfonts", "corefonts", "riched20",
+		"vcrun6", "vcrun2010", "vcrun2019", "vcrun2022",
+		"d3dx9", "quartz", "gdiplus", "dotnet40",
+	}
+}
+
+func (ui *GameUI) layoutWinetrickChip(gtx layout.Context, click *widget.Clickable, label string, active bool) layout.Dimensions {
+	ct := ui.theme.GetCurrentColorToken()
+	bg := ct.SurfaceAltNRGBA()
+	border := ct.BorderNRGBA()
+	textRole := theme.ThemeColorTextSecondary
+	if active {
+		bg = ct.PrimaryNRGBA()
+		border = ct.PrimaryNRGBA()
+		textRole = theme.ThemeColorOnPrimary
+	} else if click != nil && click.Hovered() {
+		border = ct.PrimaryNRGBA()
+		textRole = theme.ThemeColorTextPrimary
+	}
+	content := func(gtx layout.Context) layout.Dimensions {
+		return utils.SurfaceOutlined(gtx, bg, unit.Dp(8), utils.SurfaceBorder{Color: border, Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleCaption, textRole, label)
+			})
+		})
+	}
+	if click == nil {
+		return content(gtx)
+	}
+	return click.Layout(gtx, content)
+}
+
+func (ui *GameUI) layoutTextButton(gtx layout.Context, click *widget.Clickable, label string) layout.Dimensions {
+	ct := ui.theme.GetCurrentColorToken()
+	bg := ct.PrimaryNRGBA()
+	if click != nil && click.Hovered() {
+		bg = ct.PrimaryHoverNRGBA()
+	}
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return utils.Surface(gtx, bg, unit.Dp(8), func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(10), Left: unit.Dp(14), Right: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleLabel, theme.ThemeColorOnPrimary, label)
+			})
+		})
+	})
+}
+
+func (ui *GameUI) configuredWinetricks() []string {
+	if ui == nil || ui.draft == nil {
+		return nil
+	}
+	return normalizeWinetrickList(ui.draft.RunnerConfig.Dependencies)
+}
+
+func (ui *GameUI) addConfiguredWinetrick(dep string) bool {
+	if ui == nil || ui.draft == nil {
+		return false
+	}
+	dep = normalizeWinetrickVerb(dep)
+	if dep == "" {
+		return false
+	}
+	next := append(ui.configuredWinetricks(), dep)
+	normalized := normalizeWinetrickList(next)
+	if stringListEqual(normalized, ui.draft.RunnerConfig.Dependencies) {
+		return false
+	}
+	ui.draft.RunnerConfig.Dependencies = normalized
+	ui.markDirty()
+	return true
+}
+
+func (ui *GameUI) removeConfiguredWinetrick(dep string) bool {
+	if ui == nil || ui.draft == nil {
+		return false
+	}
+	dep = normalizeWinetrickVerb(dep)
+	if dep == "" {
+		return false
+	}
+	current := ui.configuredWinetricks()
+	next := make([]string, 0, len(current))
+	removed := false
+	for _, item := range current {
+		if item == dep {
+			removed = true
+			continue
+		}
+		next = append(next, item)
+	}
+	if !removed {
+		return false
+	}
+	ui.draft.RunnerConfig.Dependencies = next
+	ui.markDirty()
+	return true
+}
+
+func (ui *GameUI) installedWinetricks() ([]string, string) {
+	prefix := ui.effectiveWinePrefix()
+	if prefix == "" {
+		return nil, ""
+	}
+	logPath := filepath.Join(prefix, "winetricks.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return nil, ""
+	}
+	return parseWinetricksLog(string(data)), "winetricks.log"
+}
+
+func (ui *GameUI) effectiveWinePrefix() string {
+	if ui == nil || ui.draft == nil {
+		return ""
+	}
+	candidates := []string{
+		ui.prefixInput.Text(),
+		ui.draft.PrefixPath,
+		ui.draft.RunnerConfig.WinePrefix,
+	}
+	if ui.draft.WineConfig != nil {
+		candidates = append(candidates, ui.draft.WineConfig.DefaultPrefix)
+	}
+	for _, candidate := range candidates {
+		if path := strings.TrimSpace(candidate); path != "" {
+			return path
+		}
+	}
+	return ""
+}
+
+func parseWinetricksLog(text string) []string {
+	lines := strings.FieldsFunc(text, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '\t' || r == ' '
+	})
+	return normalizeWinetrickList(lines)
+}
+
+func normalizeWinetrickList(items []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		verb := normalizeWinetrickVerb(item)
+		if verb == "" {
+			continue
+		}
+		if _, ok := seen[verb]; ok {
+			continue
+		}
+		seen[verb] = struct{}{}
+		out = append(out, verb)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizeWinetrickVerb(verb string) string {
+	verb = strings.TrimSpace(strings.ToLower(verb))
+	verb = strings.Trim(verb, "\"'")
+	if verb == "" || strings.HasPrefix(verb, "#") {
+		return ""
+	}
+	return verb
+}
+
+func stringListEqual(a, b []string) bool {
+	a = normalizeWinetrickList(a)
+	b = normalizeWinetrickList(b)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (ui *GameUI) layoutDisplayOptions(gtx layout.Context, layer *overlay.Overlay) layout.Dimensions {

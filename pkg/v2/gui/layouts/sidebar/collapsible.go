@@ -18,13 +18,13 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/tabs"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/iconify"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/tabs"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
 
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/animations/tween"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/animations/tween"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
 )
 
 type CollapsibleSidebar struct {

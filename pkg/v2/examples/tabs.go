@@ -2,7 +2,7 @@ package examples
 
 import (
 	"gioui.org/layout"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/tabs"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/tabs"
 )
 
 type TabApp struct {

@@ -23,9 +23,9 @@ import (
 	vngame "github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/vntext/pkg/gameConfig"
 	vnutil "github.com/DarlingGoose/vntext/pkg/util"
-	flashcards "github.com/DarlingGoose/wgl/pkg/flashcard"
-	pkggui "github.com/DarlingGoose/wgl/pkg/gui"
-	"github.com/DarlingGoose/wgl/pkg/util"
+	flashcards "github.com/DarlingGoose/ymn/pkg/flashcard"
+	pkggui "github.com/DarlingGoose/ymn/pkg/gui"
+	"github.com/DarlingGoose/ymn/pkg/util"
 )
 
 var _ pkggui.EvenHandler = &Page{}

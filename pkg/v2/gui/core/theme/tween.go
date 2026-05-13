@@ -5,8 +5,8 @@ import (
 	"image/color"
 	"time"
 
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/animations/tween"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/animations/tween"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
 )
 
 type ColorTokenTweens struct {

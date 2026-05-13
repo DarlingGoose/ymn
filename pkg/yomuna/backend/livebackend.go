@@ -19,8 +19,8 @@ import (
 	"github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/vntext/pkg/gameConfig"
 	vnutil "github.com/DarlingGoose/vntext/pkg/util"
-	"github.com/DarlingGoose/wgl/pkg/japanese"
-	"github.com/DarlingGoose/wgl/pkg/util"
+	"github.com/DarlingGoose/ymn/pkg/japanese"
+	"github.com/DarlingGoose/ymn/pkg/util"
 )
 
 var _ Backend = &LiveBackend{}

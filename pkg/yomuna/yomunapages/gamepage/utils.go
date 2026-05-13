@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/DarlingGoose/vntext/pkg/game"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/input"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/input"
 )
 
 // String Utils

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/DarlingGoose/wgl/pkg/yomuna"
+	"github.com/DarlingGoose/ymn/pkg/yomuna"
 	"github.com/spf13/cobra"
 )
 

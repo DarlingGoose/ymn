@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/backend/media"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/backend/media/player"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media/player"
 )
 
 func readDir(dir, query string, showHidden bool, sortBy SortBy, desc bool) ([]entry, error) {

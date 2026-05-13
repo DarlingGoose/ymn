@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DarlingGoose/wgl/pkg/flashcard"
+	"github.com/DarlingGoose/ymn/pkg/flashcard"
 )
 
 func TestInvokeRetriesEOF(t *testing.T) {

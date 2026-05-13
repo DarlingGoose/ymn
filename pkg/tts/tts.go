@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	vntts "github.com/DarlingGoose/vntext/pkg/tts"
-	"github.com/DarlingGoose/wgl/pkg/util"
+	"github.com/DarlingGoose/ymn/pkg/util"
 )
 
 type Reference struct {

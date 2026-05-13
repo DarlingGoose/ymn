@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DarlingGoose/wgl/pkg/util"
+	"github.com/DarlingGoose/ymn/pkg/util"
 )
 
 const (

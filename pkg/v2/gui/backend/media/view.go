@@ -5,7 +5,7 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/widget/material"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/backend/media/player"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media/player"
 )
 
 type View struct {

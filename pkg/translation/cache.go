@@ -14,7 +14,7 @@ import (
 	"time"
 
 	jpndicttranslate "github.com/DarlingGoose/jpndict/translate"
-	"github.com/DarlingGoose/wgl/pkg/util"
+	"github.com/DarlingGoose/ymn/pkg/util"
 )
 
 type Entry struct {
