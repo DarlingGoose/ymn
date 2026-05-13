@@ -34,11 +34,12 @@ type rowTranslationResult struct {
 }
 
 type transcriptFollower struct {
-	th                           *material.Theme
-	tc                           *theme.Client
-	transcriptList               widget.List
-	transcriptRowClicks          map[string]*widget.Clickable
-	transcriptRowTranslateClicks map[string]*widget.Clickable
+	th                             *material.Theme
+	tc                             *theme.Client
+	transcriptList                 widget.List
+	transcriptRowClicks            map[string]*widget.Clickable
+	transcriptRowTranslateClicks   map[string]*widget.Clickable
+	transcriptRowRetranslateClicks map[string]*widget.Clickable
 
 	selectedLineKey  string
 	selectedLineText string
@@ -73,16 +74,17 @@ func newTranscriptFollower(th *material.Theme, backend backend.Backend) transcri
 	transcriptList.Axis = layout.Vertical
 	transcriptList.ScrollToEnd = true
 	return transcriptFollower{
-		backend:                      backend,
-		th:                           th,
-		compactTimestamps:            true,
-		tc:                           theme.DefaultThemeClient,
-		transcriptList:               transcriptList,
-		transcriptRowClicks:          make(map[string]*widget.Clickable),
-		transcriptRowTranslateClicks: make(map[string]*widget.Clickable),
-		rowTranslations:              make(map[string]string),
-		rowTranslationGenerating:     make(map[string]bool),
-		rowTranslationShown:          map[string]bool{},
+		backend:                        backend,
+		th:                             th,
+		compactTimestamps:              true,
+		tc:                             theme.DefaultThemeClient,
+		transcriptList:                 transcriptList,
+		transcriptRowClicks:            make(map[string]*widget.Clickable),
+		transcriptRowTranslateClicks:   make(map[string]*widget.Clickable),
+		transcriptRowRetranslateClicks: make(map[string]*widget.Clickable),
+		rowTranslations:                make(map[string]string),
+		rowTranslationGenerating:       make(map[string]bool),
+		rowTranslationShown:            map[string]bool{},
 
 		rowMutex:               sync.RWMutex{},
 		transcriptRows:         make([]transcriptRow, 0),
@@ -141,6 +143,7 @@ func (t *transcriptFollower) resetLocked() {
 	t.transcriptRows = nil
 	t.transcriptRowClicks = map[string]*widget.Clickable{}
 	t.transcriptRowTranslateClicks = map[string]*widget.Clickable{}
+	t.transcriptRowRetranslateClicks = map[string]*widget.Clickable{}
 	//t.transcriptRowVoiceClicks = map[string]*widget.Clickable{}
 	t.rowTranslationShown = map[string]bool{}
 
@@ -229,6 +232,11 @@ func (t *transcriptFollower) pruneTranscriptRowStateLocked() {
 			delete(t.rowTranslationShown, key)
 		}
 	}
+	for key := range t.transcriptRowRetranslateClicks {
+		if _, ok := valid[key]; !ok {
+			delete(t.transcriptRowRetranslateClicks, key)
+		}
+	}
 
 	//for key := range t.transcriptRowVoiceClicks {
 	//	if _, ok := valid[key]; !ok {
@@ -280,6 +288,11 @@ func (t *transcriptFollower) HandeEvents(gtx layout.Context) {
 	for key, click := range t.transcriptRowTranslateClicks {
 		for click.Clicked(gtx) {
 			t.toggleTranscriptRowTranslation(gtx, context.Background(), key)
+		}
+	}
+	for key, click := range t.transcriptRowRetranslateClicks {
+		for click.Clicked(gtx) {
+			t.forceTranscriptRowTranslation(context.Background(), key)
 		}
 	}
 }
@@ -343,6 +356,16 @@ func (t *transcriptFollower) isTranscriptRowTranslationShown(row transcriptRow) 
 	return t.rowTranslationShown[row.Key]
 }
 
+func (t *transcriptFollower) isTranscriptRowTranslationGenerating(row transcriptRow) bool {
+	key := t.rowTranslationCacheKey(row)
+	if key == "" {
+		return false
+	}
+	t.rowMutex.RLock()
+	defer t.rowMutex.RUnlock()
+	return t.rowTranslationGenerating[key]
+}
+
 func (t *transcriptFollower) rowTranslationCacheKey(row transcriptRow) string {
 	source := utils.CleanInlineText(row.Text)
 	t.rowMutex.RLock()
@@ -382,6 +405,16 @@ func (t *transcriptFollower) transcriptRowTranslateClickable(key string) *widget
 	return t.transcriptRowTranslateClicks[key]
 }
 
+func (t *transcriptFollower) transcriptRowRetranslateClickable(key string) *widget.Clickable {
+	if t.transcriptRowRetranslateClicks == nil {
+		t.transcriptRowRetranslateClicks = make(map[string]*widget.Clickable)
+	}
+	if t.transcriptRowRetranslateClicks[key] == nil {
+		t.transcriptRowRetranslateClicks[key] = new(widget.Clickable)
+	}
+	return t.transcriptRowRetranslateClicks[key]
+}
+
 func (t *transcriptFollower) showTranscriptRowTranslation(ctx context.Context, row transcriptRow) {
 	if row.Info {
 		return
@@ -412,7 +445,33 @@ func (t *transcriptFollower) showTranscriptRowTranslation(ctx context.Context, r
 	t.generateTranscriptRowTranslation(ctx, row, key)
 }
 
-func (t *transcriptFollower) generateTranscriptRowTranslation(ctx context.Context, row transcriptRow, key string) {
+func (t *transcriptFollower) forceTranscriptRowTranslation(ctx context.Context, rowKey string) {
+	row, ok := t.transcriptRowByKey(rowKey)
+	if !ok || row.Info {
+		return
+	}
+	key := t.rowTranslationCacheKey(row)
+	if key == "" {
+		return
+	}
+
+	t.rowMutex.Lock()
+	if t.rowTranslationGenerating[key] {
+		t.rowTranslationShown[row.Key] = true
+		t.rowMutex.Unlock()
+		t.invalidateUI()
+		return
+	}
+	delete(t.rowTranslations, key)
+	t.rowTranslationShown[row.Key] = true
+	t.rowTranslationGenerating[key] = true
+	t.rowMutex.Unlock()
+
+	t.invalidateUI()
+	t.generateTranscriptRowTranslation(ctx, row, key, true)
+}
+
+func (t *transcriptFollower) generateTranscriptRowTranslation(ctx context.Context, row transcriptRow, key string, force ...bool) {
 	if key == "" {
 		return
 	}
@@ -424,14 +483,22 @@ func (t *transcriptFollower) generateTranscriptRowTranslation(ctx context.Contex
 	gameName := t.activeGameName
 	targetLanguage := t.selectedTargetLanguage
 	cfg := t.translatorConfig
+	forceGenerate := len(force) > 0 && force[0]
 	t.rowMutex.RUnlock()
 	go func() {
-		entry, ok, err := translation.Load(gameName, source, targetLanguage)
-		if err != nil {
-			slog.Error("failed loading transcript row translation", "err", err)
-		}
-		if !ok && err == nil {
+		var entry translation.Entry
+		var err error
+		if forceGenerate {
 			entry, err = translation.Generate(ctx, cfg, gameName, source, targetLanguage)
+		} else {
+			var ok bool
+			entry, ok, err = translation.Load(gameName, source, targetLanguage)
+			if err != nil {
+				slog.Error("failed loading transcript row translation", "err", err)
+			}
+			if !ok && err == nil {
+				entry, err = translation.Generate(ctx, cfg, gameName, source, targetLanguage)
+			}
 		}
 		result := rowTranslationResult{Key: key, RowKey: row.Key, Entry: entry, Err: err}
 

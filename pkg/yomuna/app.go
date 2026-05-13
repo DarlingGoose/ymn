@@ -81,6 +81,28 @@ func New(initialSource string) *App {
 		SetLookupFont:     ui.Transcript.SetLookupFontSize,
 		Save:              ui.Transcript.SavePreferences,
 	})
+	translatorCfg := b.TranslatorConfig()
+	ui.Settings.WithTranslatorSettings(&pages.TranslatorSettings{
+		OllamaModel: func() string {
+			return translatorCfg.OllamaModel
+		},
+		OllamaBaseURL: func() string {
+			return translatorCfg.OllamaBaseURL
+		},
+		SetOllamaModel: func(model string) {
+			translatorCfg.OllamaModel = model
+		},
+		SetOllamaBaseURL: func(baseURL string) {
+			translatorCfg.OllamaBaseURL = baseURL
+		},
+		Save: func() error {
+			if err := b.SaveTranslatorConfig(translatorCfg); err != nil {
+				return err
+			}
+			translatorCfg = b.TranslatorConfig()
+			return nil
+		},
+	})
 
 	menuIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:panel-left-close")
 	ui.ToggleButton = components.NewIconButton("Toggle", nil, menuIcon).WithThemeClient(tc)

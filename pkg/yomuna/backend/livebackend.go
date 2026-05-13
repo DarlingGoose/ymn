@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,6 +31,8 @@ type LiveBackend struct {
 	currentRun *gr.Process
 
 	engineSelector *auto.EngineSelectorV2
+	translatorMu   sync.Mutex
+	translatorCfg  TranslatorConfig
 	translator     translate.Translate
 
 	dictMu sync.Mutex
@@ -39,12 +42,74 @@ type LiveBackend struct {
 }
 
 func NewLive() *LiveBackend {
+	cfg := loadTranslatorConfig()
 	return &LiveBackend{
 		engineSelector: auto.NewEngineSelectorV2(""),
-		translator: translate.NewOllamaClient(translate.OllamaConfig{
-			Model: "translategemma:4b",
-		}),
+		translatorCfg:  cfg,
+		translator:     newOllamaTranslator(cfg),
 	}
+}
+
+func defaultTranslatorConfig() TranslatorConfig {
+	return TranslatorConfig{
+		OllamaModel:   "translategemma:4b",
+		OllamaBaseURL: "http://localhost:11434",
+	}
+}
+
+func loadTranslatorConfig() TranslatorConfig {
+	cfg := defaultTranslatorConfig()
+	data, err := os.ReadFile(translatorConfigPath())
+	if err != nil {
+		return cfg
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return defaultTranslatorConfig()
+	}
+	cfg.normalize()
+	return cfg
+}
+
+func saveTranslatorConfig(cfg TranslatorConfig) error {
+	cfg.normalize()
+	if err := os.MkdirAll(filepath.Dir(translatorConfigPath()), 0o755); err != nil {
+		return fmt.Errorf("create translator config dir: %w", err)
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode translator config: %w", err)
+	}
+	if err := os.WriteFile(translatorConfigPath(), append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write translator config: %w", err)
+	}
+	return nil
+}
+
+func translatorConfigPath() string {
+	return filepath.Join(util.ConfigBaseDir(), "guiv2-translator.json")
+}
+
+func (c *TranslatorConfig) normalize() {
+	if c == nil {
+		return
+	}
+	defaults := defaultTranslatorConfig()
+	c.OllamaModel = strings.TrimSpace(c.OllamaModel)
+	c.OllamaBaseURL = strings.TrimRight(strings.TrimSpace(c.OllamaBaseURL), "/")
+	if c.OllamaModel == "" {
+		c.OllamaModel = defaults.OllamaModel
+	}
+	if c.OllamaBaseURL == "" {
+		c.OllamaBaseURL = defaults.OllamaBaseURL
+	}
+}
+
+func newOllamaTranslator(cfg TranslatorConfig) translate.Translate {
+	cfg.normalize()
+	return translate.NewOllamaClient(translate.OllamaConfig{
+		BaseURL: cfg.OllamaBaseURL,
+		Model:   cfg.OllamaModel,
+	})
 }
 
 func (b *LiveBackend) IsGameRunning() bool {
@@ -314,45 +379,83 @@ func (b *LiveBackend) AnalyzeSentence(sentence string) (japanese.Analysis, error
 	return japanese.AnalyzeSentence(sentence)
 }
 
-func (b *LiveBackend) Translate(ctx context.Context, r *translate.Request) (*translate.Response, error) {
-	if b.translator == nil {
-		b.translator = translate.NewOllamaClient(translate.OllamaConfig{})
+func (b *LiveBackend) TranslatorConfig() TranslatorConfig {
+	if b == nil {
+		return defaultTranslatorConfig()
 	}
-	return b.translator.Translate(ctx, r)
+	b.translatorMu.Lock()
+	defer b.translatorMu.Unlock()
+	cfg := b.translatorCfg
+	cfg.normalize()
+	return cfg
+}
+
+func (b *LiveBackend) SaveTranslatorConfig(cfg TranslatorConfig) error {
+	if b == nil {
+		return fmt.Errorf("backend is required")
+	}
+	cfg.normalize()
+	if err := saveTranslatorConfig(cfg); err != nil {
+		return err
+	}
+
+	b.translatorMu.Lock()
+	old := b.translator
+	b.translatorCfg = cfg
+	b.translator = newOllamaTranslator(cfg)
+	b.translatorMu.Unlock()
+
+	if old != nil {
+		old.Close()
+	}
+	return nil
+}
+
+func (b *LiveBackend) Translate(ctx context.Context, r *translate.Request) (*translate.Response, error) {
+	translator := b.currentTranslator()
+	return translator.Translate(ctx, r)
 }
 
 func (b *LiveBackend) Search(ctx context.Context, r *translate.Request) (*translate.Response, error) {
-	if b.translator == nil {
-		b.translator = translate.NewOllamaClient(translate.OllamaConfig{})
-	}
-	return b.translator.Search(ctx, r)
+	translator := b.currentTranslator()
+	return translator.Search(ctx, r)
 }
 
 func (b *LiveBackend) Close() {
-	if b.translator != nil {
-		b.translator.Close()
+	if b == nil {
+		return
+	}
+	b.translatorMu.Lock()
+	translator := b.translator
+	b.translator = nil
+	b.translatorMu.Unlock()
+	if translator != nil {
+		translator.Close()
 	}
 }
 
 func (b *LiveBackend) SupportedLanguage() []translate.Language {
-	if b.translator == nil {
-		b.translator = translate.NewOllamaClient(translate.OllamaConfig{})
-	}
-	return b.translator.SupportedLanguage()
+	translator := b.currentTranslator()
+	return translator.SupportedLanguage()
 }
 
 func (b *LiveBackend) IsLanguageSupported(from translate.Language, to translate.Language) bool {
-	if b.translator == nil {
-		b.translator = translate.NewOllamaClient(translate.OllamaConfig{})
-	}
-	return b.translator.IsLanguageSupported(from, to)
+	translator := b.currentTranslator()
+	return translator.IsLanguageSupported(from, to)
 }
 
 func (b *LiveBackend) SupportedModels() []string {
+	translator := b.currentTranslator()
+	return translator.SupportedModels()
+}
+
+func (b *LiveBackend) currentTranslator() translate.Translate {
+	b.translatorMu.Lock()
+	defer b.translatorMu.Unlock()
 	if b.translator == nil {
-		b.translator = translate.NewOllamaClient(translate.OllamaConfig{})
+		b.translator = newOllamaTranslator(b.translatorCfg)
 	}
-	return b.translator.SupportedModels()
+	return b.translator
 }
 
 func (b *LiveBackend) dictionary() (jpndict.Dictonary, error) {

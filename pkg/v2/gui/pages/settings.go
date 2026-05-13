@@ -3,6 +3,7 @@ package pages
 import (
 	"fmt"
 	"image/color"
+	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -11,6 +12,7 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/dropdowns"
+	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/input"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/row"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/toggles"
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/overlay"
@@ -30,7 +32,13 @@ type SettingsUI struct {
 	lookupDown         widget.Clickable
 	lookupUp           widget.Clickable
 	saveTranscript     widget.Clickable
+	saveTranslator     widget.Clickable
 	status             string
+	translatorStatus   string
+
+	translatorSettings *TranslatorSettings
+	ollamaModelInput   *input.TextInput
+	ollamaBaseURLInput *input.TextInput
 
 	theme *theme.Client
 }
@@ -46,16 +54,34 @@ type TranscriptSettings struct {
 	Save              func() error
 }
 
+type TranslatorSettings struct {
+	OllamaModel      func() string
+	OllamaBaseURL    func() string
+	SetOllamaModel   func(string)
+	SetOllamaBaseURL func(string)
+	Save             func() error
+}
+
 func NewSettingsUI(tc *theme.Client) *SettingsUI {
 	if tc == nil {
 		tc = theme.DefaultThemeClient
 	}
 
-	return &SettingsUI{
+	ui := &SettingsUI{
 		theme:         tc,
 		ModeToggle:    toggles.NewThemeModeToggle(tc),
 		ThemeDropdown: dropdowns.NewThemeDropdown(tc),
+		ollamaModelInput: input.NewTextInput("Model", "translategemma:4b").
+			WithThemeClient(tc),
+		ollamaBaseURLInput: input.NewTextInput("Endpoint", "http://localhost:11434").
+			WithThemeClient(tc),
 	}
+	ui.ollamaModelInput.LeadingIcon = "lucide:brain"
+	ui.ollamaBaseURLInput.LeadingIcon = "lucide:server"
+	ui.ollamaBaseURLInput.Normalize = func(text string) string {
+		return strings.TrimRight(strings.TrimSpace(text), "/")
+	}
+	return ui
 }
 
 func (ui *SettingsUI) WithTranscriptSettings(settings *TranscriptSettings) *SettingsUI {
@@ -63,6 +89,31 @@ func (ui *SettingsUI) WithTranscriptSettings(settings *TranscriptSettings) *Sett
 		return ui
 	}
 	ui.transcriptSettings = settings
+	return ui
+}
+
+func (ui *SettingsUI) WithTranslatorSettings(settings *TranslatorSettings) *SettingsUI {
+	if ui == nil {
+		return ui
+	}
+	ui.translatorSettings = settings
+	ui.syncTranslatorInputs()
+	if ui.ollamaModelInput != nil {
+		ui.ollamaModelInput.OnChange = func(text string) {
+			ui.translatorStatus = "Unsaved translator changes"
+			if ui.translatorSettings != nil && ui.translatorSettings.SetOllamaModel != nil {
+				ui.translatorSettings.SetOllamaModel(strings.TrimSpace(text))
+			}
+		}
+	}
+	if ui.ollamaBaseURLInput != nil {
+		ui.ollamaBaseURLInput.OnChange = func(text string) {
+			ui.translatorStatus = "Unsaved translator changes"
+			if ui.translatorSettings != nil && ui.translatorSettings.SetOllamaBaseURL != nil {
+				ui.translatorSettings.SetOllamaBaseURL(strings.TrimRight(strings.TrimSpace(text), "/"))
+			}
+		}
+	}
 	return ui
 }
 
@@ -88,8 +139,24 @@ func (ui *SettingsUI) Layout(gtx layout.Context, layer *overlay.Overlay) layout.
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutTranscriptSettings(gtx)
 			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutTranslatorSettings(gtx)
+			}),
 		)
 	})
+}
+
+func (ui *SettingsUI) syncTranslatorInputs() {
+	if ui == nil || ui.translatorSettings == nil {
+		return
+	}
+	if ui.ollamaModelInput != nil && ui.translatorSettings.OllamaModel != nil {
+		ui.ollamaModelInput.SetText(ui.translatorSettings.OllamaModel())
+	}
+	if ui.ollamaBaseURLInput != nil && ui.translatorSettings.OllamaBaseURL != nil {
+		ui.ollamaBaseURLInput.SetText(ui.translatorSettings.OllamaBaseURL())
+	}
 }
 
 func (ui *SettingsUI) layoutTranscriptSettings(gtx layout.Context) layout.Dimensions {
@@ -189,6 +256,74 @@ func (ui *SettingsUI) layoutSaveTranscriptSettings(gtx layout.Context) layout.Di
 				return layout.Dimensions{}
 			}
 			return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, ui.status)
+		}),
+	)
+}
+
+func (ui *SettingsUI) layoutTranslatorSettings(gtx layout.Context) layout.Dimensions {
+	if ui.translatorSettings == nil {
+		return layout.Dimensions{}
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Ollama")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return row.New("Model", "Model name passed to Ollama for translations.").WithThemeClient(ui.theme).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if ui.ollamaModelInput == nil {
+					return layout.Dimensions{}
+				}
+				gtx.Constraints.Min.X = gtx.Dp(unit.Dp(260))
+				return ui.ollamaModelInput.Layout(gtx)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return row.New("Endpoint", "Base URL for the Ollama server.").WithThemeClient(ui.theme).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if ui.ollamaBaseURLInput == nil {
+					return layout.Dimensions{}
+				}
+				gtx.Constraints.Min.X = gtx.Dp(unit.Dp(260))
+				return ui.ollamaBaseURLInput.Layout(gtx)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSaveTranslatorSettings(gtx)
+		}),
+	)
+}
+
+func (ui *SettingsUI) layoutSaveTranslatorSettings(gtx layout.Context) layout.Dimensions {
+	if ui.translatorSettings == nil || ui.translatorSettings.Save == nil {
+		return layout.Dimensions{}
+	}
+	for ui.saveTranslator.Clicked(gtx) {
+		if ui.ollamaModelInput != nil && ui.translatorSettings.SetOllamaModel != nil {
+			ui.translatorSettings.SetOllamaModel(strings.TrimSpace(ui.ollamaModelInput.Text()))
+		}
+		if ui.ollamaBaseURLInput != nil && ui.translatorSettings.SetOllamaBaseURL != nil {
+			ui.translatorSettings.SetOllamaBaseURL(strings.TrimRight(strings.TrimSpace(ui.ollamaBaseURLInput.Text()), "/"))
+		}
+		if err := ui.translatorSettings.Save(); err != nil {
+			ui.translatorStatus = "Save failed"
+		} else {
+			ui.translatorStatus = "Ollama settings saved"
+			ui.syncTranslatorInputs()
+		}
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutPrimaryButton(gtx, &ui.saveTranslator, "Save Ollama Settings")
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if ui.translatorStatus == "" {
+				return layout.Dimensions{}
+			}
+			return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, ui.translatorStatus)
 		}),
 	)
 }

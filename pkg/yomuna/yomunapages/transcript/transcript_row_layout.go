@@ -118,7 +118,15 @@ func (t *transcriptFollower) layoutTranscriptRow(gtx layout.Context, row transcr
 					}),
 					layout.Rigid(utils.SpacerW(unit.Dp(8))),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return t.layoutTranscriptTranslateIcon(gtx, row)
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return t.layoutTranscriptRetranslateIcon(gtx, row)
+							}),
+							layout.Rigid(utils.SpacerW(unit.Dp(6))),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return t.layoutTranscriptTranslateIcon(gtx, row)
+							}),
+						)
 					}),
 				)
 			})
@@ -141,6 +149,24 @@ func (t *transcriptFollower) layoutTranscriptTranslateIcon(gtx layout.Context, r
 		return t.layoutRowIcon(gtx, icon, true, click.Hovered())
 	})
 
+}
+
+func (t *transcriptFollower) layoutTranscriptRetranslateIcon(gtx layout.Context, row transcriptRow) layout.Dimensions {
+	enabled := strings.TrimSpace(row.Text) != "" &&
+		strings.TrimSpace(t.selectedTargetLanguage) != "" &&
+		t.isTranscriptRowTranslationShown(row)
+	if !enabled {
+		return layout.Dimensions{}
+	}
+	click := t.transcriptRowRetranslateClickable(row.Key)
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		icon := "mdi:refresh"
+		if t.isTranscriptRowTranslationGenerating(row) {
+			icon = "mdi:sync"
+		}
+		return t.layoutRowIcon(gtx, icon, true, click.Hovered())
+	})
 }
 
 func (t *transcriptFollower) layoutTranscriptSpeaker(gtx layout.Context, speaker string, selected bool) layout.Dimensions {

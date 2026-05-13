@@ -40,6 +40,11 @@ type GameLogic interface {
 	IsGameRunning() bool
 }
 
+type TranslatorConfig struct {
+	OllamaModel   string `json:"ollama_model,omitempty"`
+	OllamaBaseURL string `json:"ollama_base_url,omitempty"`
+}
+
 // load/save
 type TranscriptConfig struct {
 	SelectGameName      string  `yaml:"selectGameName"`
