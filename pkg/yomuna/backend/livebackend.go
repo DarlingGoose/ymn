@@ -41,7 +41,9 @@ type LiveBackend struct {
 func NewLive() *LiveBackend {
 	return &LiveBackend{
 		engineSelector: auto.NewEngineSelectorV2(""),
-		translator:     translate.NewOllamaClient(translate.OllamaConfig{}),
+		translator: translate.NewOllamaClient(translate.OllamaConfig{
+			Model: "translategemma:4b",
+		}),
 	}
 }
 
@@ -73,6 +75,7 @@ func (b *LiveBackend) RunGame(ctx context.Context, g *game.Game) (*gr.Process, e
 	if g == nil {
 		return nil, fmt.Errorf("game is required")
 	}
+	g = sanitizeGameForRun(g)
 	e, err := b.GetGameEngine(ctx, g)
 	if err != nil {
 		return nil, err
@@ -88,6 +91,29 @@ func (b *LiveBackend) RunGame(ctx context.Context, g *game.Game) (*gr.Process, e
 	b.config.SelectGameName = g.Name
 	b.gameMu.Unlock()
 	return proc, nil
+}
+
+func sanitizeGameForRun(g *game.Game) *game.Game {
+	if g == nil || strings.TrimSpace(g.RunnerPath) == "" {
+		return g
+	}
+	path := strings.TrimSpace(g.RunnerPath)
+	name := strings.ToLower(filepath.Base(path))
+	switch g.Runner {
+	case game.RunnerGamescope:
+		if strings.Contains(name, "wine") || strings.Contains(name, "proton") {
+			cp := *g
+			cp.RunnerPath = ""
+			return &cp
+		}
+	case game.RunnerWine:
+		if strings.Contains(name, "gamescope") {
+			cp := *g
+			cp.RunnerPath = ""
+			return &cp
+		}
+	}
+	return g
 }
 
 func (b *LiveBackend) FollowGameText(ctx context.Context, g *game.Game) (chan engine.Line, error) {
@@ -190,6 +216,58 @@ func (b *LiveBackend) SaveGameConfig(g *game.Game, previousName string) error {
 	b.gameMu.Lock()
 	b.current = g
 	b.config.SelectGameName = g.Name
+	b.gameMu.Unlock()
+
+	return b.ReloadGames()
+}
+
+func (b *LiveBackend) DeleteGameConfig(g *game.Game) error {
+	if g == nil {
+		return fmt.Errorf("game is required")
+	}
+	name := strings.TrimSpace(g.Name)
+	if name == "" {
+		return fmt.Errorf("game name is required")
+	}
+
+	file := vnutil.SanitizeName(name) + ".json"
+	paths := []string{
+		filepath.Join(gameConfig.ConfigBaseDir(), "games", file),
+		filepath.Join(util.ConfigBaseDir(), "games", file),
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	b.gameMu.Lock()
+	if b.current != nil && strings.TrimSpace(b.current.Name) == name {
+		b.current = nil
+		b.currentRun = nil
+		b.config.SelectGameName = ""
+	}
+	b.gameMu.Unlock()
+
+	return b.ReloadGames()
+}
+
+func (b *LiveBackend) DeleteCustomRunnerConfig(g *game.Game) error {
+	if g == nil {
+		return fmt.Errorf("game is required")
+	}
+	g.RunnerPath = ""
+	g.RunnerConfig = gr.Config{}
+	g.WineConfig = nil
+	g.GamescopeConfig = nil
+	if err := gameConfig.WriteGameConfig(gameConfig.DefaultGameConfigPath(g), g); err != nil {
+		return err
+	}
+
+	b.gameMu.Lock()
+	if b.current != nil && strings.TrimSpace(b.current.Name) == strings.TrimSpace(g.Name) {
+		b.current = g
+	}
 	b.gameMu.Unlock()
 
 	return b.ReloadGames()

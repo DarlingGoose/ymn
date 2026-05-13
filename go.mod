@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	gioui.org v0.9.0
 	github.com/DarlingGoose/bare v0.0.6
-	github.com/DarlingGoose/gr v0.0.21
+	github.com/DarlingGoose/gr v0.0.22
 	github.com/DarlingGoose/jpndict v0.0.11
 	github.com/DarlingGoose/vntext v0.0.18
 	github.com/faiface/beep v1.1.0

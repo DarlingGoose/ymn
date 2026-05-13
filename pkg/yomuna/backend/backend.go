@@ -34,6 +34,8 @@ type GameLogic interface {
 	SelectGameByName(n string)
 	CurrentGame() *game.Game
 	SaveGameConfig(g *game.Game, previousName string) error
+	DeleteGameConfig(g *game.Game) error
+	DeleteCustomRunnerConfig(g *game.Game) error
 	StopCurrentGame()
 	IsGameRunning() bool
 }

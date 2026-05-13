@@ -23,6 +23,7 @@ import (
 	"github.com/DarlingGoose/wgl/pkg/v2/gui/pages"
 	"github.com/DarlingGoose/wgl/pkg/yomuna/backend"
 	"github.com/DarlingGoose/wgl/pkg/yomuna/yomunapages"
+	"github.com/DarlingGoose/wgl/pkg/yomuna/yomunapages/gamepage"
 	"github.com/DarlingGoose/wgl/pkg/yomuna/yomunapages/transcript"
 )
 
@@ -38,7 +39,7 @@ type App struct {
 
 	Translation *yomunapages.TranslationUI
 	Transcript  *transcript.TranscriptUI
-	Game        *yomunapages.GameUI
+	Game        *gamepage.GameUI
 	Settings    *pages.SettingsUI
 
 	legacySettings *guisettings.Settings
@@ -64,7 +65,7 @@ func New(initialSource string) *App {
 		Overlay:        &overlay.Overlay{},
 		Transcript:     transcript.NewTranscriptUI(th, tc, b),
 		Translation:    yomunapages.NewTranslationUI(th, tc).WithSource(initialSource),
-		Game:           yomunapages.NewGameUI(th, tc, b),
+		Game:           gamepage.NewGameUI(th, tc, b),
 		Settings:       pages.NewSettingsUI(tc),
 		legacySettings: legacySettings,
 		legacyTheme:    legacyTheme,
