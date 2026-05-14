@@ -1,7 +1,6 @@
 package input
 
 import (
-	"errors"
 	"image"
 	"image/color"
 	"io"
@@ -213,8 +212,8 @@ func (in *TextInput) ErrorText() string {
 		return ""
 	}
 
-	var errs []error
-	if errors.As(in.LastError, &errs) {
+	if joined, ok := in.LastError.(interface{ Unwrap() []error }); ok {
+		errs := joined.Unwrap()
 		parts := make([]string, 0, len(errs))
 		for _, err := range errs {
 			if err != nil {

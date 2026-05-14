@@ -224,11 +224,15 @@ func (ui *TranscriptUI) ReloadGames() {
 
 	ui.gameDropdown.SetItems(items)
 	if ui.selectedGameName == "" && ui.preferences.SelectedGameName != "" {
-		ui.selectGameByName(ui.preferences.SelectedGameName, false)
+		ui.applyGameSelection(ui.preferences.SelectedGameName, false, false)
 	}
 }
 
 func (ui *TranscriptUI) selectGameByName(name string, followIfRunning bool) {
+	ui.applyGameSelection(name, followIfRunning, true)
+}
+
+func (ui *TranscriptUI) applyGameSelection(name string, followIfRunning, saveSelection bool) {
 	if ui == nil {
 		return
 	}
@@ -261,6 +265,11 @@ func (ui *TranscriptUI) selectGameByName(name string, followIfRunning bool) {
 	ui.sentenceAnalysis.Reset()
 	ui.refreshHookDropdown(context.Background(), g)
 
+	if saveSelection {
+		ui.preferences.SelectedGameName = name
+		_ = saveTranscriptPreferences(ui.preferences)
+	}
+
 	if followIfRunning {
 		ui.StartFollowingGame(context.Background(), g)
 	}
@@ -276,6 +285,7 @@ func (ui *TranscriptUI) SavePreferences() error {
 		SentenceFontSizeSp:   spToFloat(ui.sentenceAnalysis.sentenceFontSize),
 		TranscriptFontSizeSp: spToFloat(ui.transcriptFollower.fontSize),
 		MaxTranscriptRows:    ui.transcriptFollower.MaxTranscriptRows(),
+		ShowLanguageOnly:     ui.preferences.ShowLanguageOnly,
 	}
 	if err := saveTranscriptPreferences(prefs); err != nil {
 		return err
@@ -1040,6 +1050,15 @@ func (ui *TranscriptUI) RunSelectedGame(ctx context.Context) {
 	})
 
 	go func() {
+		if deps, err := ui.backend.MissingWinetrickDependencies(g); err == nil && len(deps) > 0 {
+			ui.gameStatus = "Installing dependencies..."
+			ui.invalidateUI()
+			ui.transcriptFollower.AddRows(transcriptRow{
+				Info: true,
+				Text: "Installing missing winetricks dependencies: " + strings.Join(deps, ", "),
+			})
+		}
+
 		proc, err := ui.backend.RunGame(ctx, g)
 		if err != nil {
 			ui.starting = false

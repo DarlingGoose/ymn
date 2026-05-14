@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -156,7 +157,12 @@ func (b *LiveBackend) RunGame(ctx context.Context, g *game.Game) (*gr.Process, e
 	if g == nil {
 		return nil, fmt.Errorf("game is required")
 	}
+	g = b.latestGameForRun(g)
 	g = sanitizeGameForRun(g)
+	if err := installGamescopeRunDeps(ctx, g); err != nil {
+		return nil, err
+	}
+	b.resetGameEngineState(ctx, g)
 	proc, err := b.runGame(ctx, g)
 	if err != nil {
 		return nil, err
@@ -170,6 +176,37 @@ func (b *LiveBackend) RunGame(ctx context.Context, g *game.Game) (*gr.Process, e
 	return proc, nil
 }
 
+func (b *LiveBackend) MissingWinetrickDependencies(g *game.Game) ([]string, error) {
+	if g == nil {
+		return nil, fmt.Errorf("game is required")
+	}
+	g = b.latestGameForRun(g)
+	g = sanitizeGameForRun(g)
+	return missingGamescopeRunDeps(g)
+}
+
+func (b *LiveBackend) latestGameForRun(g *game.Game) *game.Game {
+	if b == nil || g == nil {
+		return g
+	}
+	name := strings.TrimSpace(g.Name)
+	if name == "" {
+		return g
+	}
+
+	b.gameMu.RLock()
+	defer b.gameMu.RUnlock()
+	if b.current != nil && strings.TrimSpace(b.current.Name) == name {
+		return b.current
+	}
+	for _, saved := range b.games {
+		if saved != nil && strings.TrimSpace(saved.Name) == name {
+			return saved
+		}
+	}
+	return g
+}
+
 func (b *LiveBackend) runGame(ctx context.Context, g *game.Game) (*gr.Process, error) {
 	if shouldLaunchGamescopeDirectly(g) {
 		return runGamescopeGame(ctx, g)
@@ -180,6 +217,14 @@ func (b *LiveBackend) runGame(ctx context.Context, g *game.Game) (*gr.Process, e
 		return nil, err
 	}
 	return e.RunGame(ctx, g)
+}
+
+func (b *LiveBackend) resetGameEngineState(ctx context.Context, g *game.Game) {
+	e, err := b.GetGameEngine(ctx, g)
+	if err != nil || e == nil {
+		return
+	}
+	_ = e.Shutdown()
 }
 
 func shouldLaunchGamescopeDirectly(g *game.Game) bool {
@@ -203,6 +248,185 @@ func runGamescopeGame(ctx context.Context, g *game.Game) (*gr.Process, error) {
 	opts = append(opts, gr.WithBackground(true))
 
 	return gamescope.NewFromOptions(gamescopeOptionsForGame(g)).Run(ctx, target, opts...)
+}
+
+func installGamescopeRunDeps(ctx context.Context, g *game.Game) error {
+	deps, opts, err := missingGamescopeRunDepsWithOptions(g)
+	if err != nil {
+		return err
+	}
+	if len(deps) == 0 {
+		return nil
+	}
+	return installGamescopeWinetricksDeps(ctx, g, opts, deps)
+}
+
+func missingGamescopeRunDeps(g *game.Game) ([]string, error) {
+	deps, _, err := missingGamescopeRunDepsWithOptions(g)
+	return deps, err
+}
+
+func missingGamescopeRunDepsWithOptions(g *game.Game) ([]string, []gr.Option, error) {
+	if g == nil || g.Runner != game.RunnerGamescope {
+		return nil, nil, nil
+	}
+	if err := enginerun.ValidateGame(g); err != nil {
+		return nil, nil, err
+	}
+	_, args := enginerun.WineTarget(g)
+	opts, err := enginerun.WineOptions(g, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	o := gr.ApplyOptions(opts...)
+	return missingWinetrickDeps(gamescopeWinePrefix(g, o), o.Dependencies()), opts, nil
+}
+
+func installGamescopeWinetricksDeps(ctx context.Context, g *game.Game, opts []gr.Option, deps []string) error {
+	o := gr.ApplyOptions(opts...)
+	deps = normalizeWinetrickDeps(deps)
+	if len(deps) == 0 {
+		return nil
+	}
+
+	prefix := gamescopeWinePrefix(g, o)
+	if strings.TrimSpace(prefix) == "" {
+		return fmt.Errorf("wine prefix is required to install winetricks dependencies")
+	}
+	if err := os.MkdirAll(prefix, 0o755); err != nil {
+		return fmt.Errorf("create wine prefix: %w", err)
+	}
+
+	args := append([]string{"-q"}, deps...)
+	cmd := exec.CommandContext(ctx, winetricksBinForGame(g), args...)
+	cmd.Env = gamescopeWinetricksEnv(prefix, o)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("install winetricks deps %v: %w", deps, err)
+	}
+	return nil
+}
+
+func gamescopeWinePrefix(g *game.Game, o gr.Options) string {
+	if prefix := strings.TrimSpace(o.WinePrefix()); prefix != "" {
+		return prefix
+	}
+	if g == nil {
+		return ""
+	}
+	if g.GamescopeConfig != nil {
+		if prefix := strings.TrimSpace(g.GamescopeConfig.DefaultWinePrefix); prefix != "" {
+			return prefix
+		}
+	}
+	return strings.TrimSpace(g.PrefixPath)
+}
+
+func winetricksBinForGame(g *game.Game) string {
+	if g != nil && g.WineConfig != nil {
+		if bin := strings.TrimSpace(g.WineConfig.WineTricksBin); bin != "" {
+			return bin
+		}
+	}
+	return "winetricks"
+}
+
+func gamescopeWinetricksEnv(prefix string, o gr.Options) []string {
+	env := os.Environ()
+	env = upsertEnv(env, "WINEPREFIX", prefix)
+
+	switch strings.ToLower(strings.TrimSpace(o.SystemArch())) {
+	case "win32", "32":
+		env = upsertEnv(env, "WINEARCH", "win32")
+	case "win64", "64":
+		env = upsertEnv(env, "WINEARCH", "win64")
+	}
+
+	for _, item := range o.Envs() {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		key, _, ok := strings.Cut(item, "=")
+		if !ok || strings.TrimSpace(key) == "" {
+			env = append(env, item)
+			continue
+		}
+		env = upsertEnv(env, key, strings.TrimPrefix(item, key+"="))
+	}
+	return env
+}
+
+func upsertEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	entry := prefix + value
+	for i, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			env[i] = entry
+			return env
+		}
+	}
+	return append(env, entry)
+}
+
+func missingWinetrickDeps(prefix string, deps []string) []string {
+	deps = normalizeWinetrickDeps(deps)
+	if len(deps) == 0 {
+		return nil
+	}
+
+	installed := installedWinetrickDeps(prefix)
+	if len(installed) == 0 {
+		return deps
+	}
+
+	missing := make([]string, 0, len(deps))
+	for _, dep := range deps {
+		if _, ok := installed[dep]; !ok {
+			missing = append(missing, dep)
+		}
+	}
+	return missing
+}
+
+func installedWinetrickDeps(prefix string) map[string]struct{} {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(prefix, "winetricks.log"))
+	if err != nil {
+		return nil
+	}
+	items := strings.FieldsFunc(string(data), func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '\t' || r == ' '
+	})
+	installed := make(map[string]struct{})
+	for _, item := range normalizeWinetrickDeps(items) {
+		installed[item] = struct{}{}
+	}
+	return installed
+}
+
+func normalizeWinetrickDeps(items []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(strings.ToLower(item))
+		item = strings.Trim(item, "\"'")
+		if item == "" || strings.HasPrefix(item, "#") {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func gamescopeOptionsForGame(g *game.Game) gamescope.Options {
@@ -521,13 +745,16 @@ func (b *LiveBackend) StopCurrentGame() {
 	g := b.current
 	proc := b.currentRun
 	b.gameMu.RUnlock()
-	if g == nil || proc == nil {
+	if g == nil {
 		return
 	}
 
 	e, err := b.GetGameEngine(context.Background(), g)
 	if err == nil && e != nil {
-		_, _ = e.StopGame(context.Background(), proc)
+		if proc != nil {
+			_, _ = e.StopGame(context.Background(), proc)
+		}
+		_ = e.Shutdown()
 	}
 
 	b.gameMu.Lock()
