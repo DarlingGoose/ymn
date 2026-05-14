@@ -8,15 +8,15 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/panel"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/panel"
 
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/tabs"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/iconify"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/overlay"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/layouts/sidebar"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/pages"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/tabs"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/layouts/sidebar"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/pages"
 )
 
 type SidebarAppUI struct {
@@ -153,7 +153,6 @@ func (ui *SidebarAppUI) layoutSidebar(gtx layout.Context) layout.Dimensions {
 			}),
 
 			layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
-
 
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return ui.Sidebar.LayoutTabButtons(gtx)

@@ -6,8 +6,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/widget"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/overlay"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 )
 
 type ThemeDropdown struct {

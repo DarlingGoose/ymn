@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync"
 
-	audioplayer "github.com/DarlingGoose/wgl/pkg/v2/gui/backend/media/audioPlayer"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/backend/media/player"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
+	audioplayer "github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media/audioPlayer"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media/player"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 )
 
 type RendererFactory func() player.Renderer

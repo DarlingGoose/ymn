@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/backend/media/player"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media/player"
 
 	"github.com/faiface/beep"
 	"github.com/faiface/beep/effects"

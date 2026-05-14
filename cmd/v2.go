@@ -10,7 +10,7 @@ import (
 	"gioui.org/app"
 	"gioui.org/op"
 	"gioui.org/widget/material"
-	"github.com/DarlingGoose/wgl/pkg/v2/examples"
+	"github.com/DarlingGoose/ymn/pkg/v2/examples"
 	"github.com/spf13/cobra"
 )
 

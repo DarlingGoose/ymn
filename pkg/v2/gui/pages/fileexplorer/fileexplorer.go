@@ -12,15 +12,15 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/layouts/split"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/layouts/split"
 
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/backend/media"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/dropdowns"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/input"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/iconify"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/overlay"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/panel"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/dropdowns"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/input"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/panel"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 )
 
 type FileExplorer struct {

@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
-	"github.com/DarlingGoose/wgl/pkg/dictionary"
-	flashcards "github.com/DarlingGoose/wgl/pkg/flashcard"
+	"github.com/DarlingGoose/ymn/pkg/dictionary"
+	flashcards "github.com/DarlingGoose/ymn/pkg/flashcard"
 )
 
 func TestTranscriptRowsKeepEscapedNewlinesInSpeakerLine(t *testing.T) {

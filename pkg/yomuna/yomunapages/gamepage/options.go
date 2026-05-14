@@ -14,10 +14,10 @@ import (
 	"github.com/DarlingGoose/gr/monitors"
 	"github.com/DarlingGoose/gr/wine"
 	vngame "github.com/DarlingGoose/vntext/pkg/game"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/dropdowns"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/input"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/toggles"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/dropdowns"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/input"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/toggles"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 )
 
 func runnerOptionLabel(name string) string {

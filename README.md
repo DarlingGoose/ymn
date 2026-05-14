@@ -31,12 +31,48 @@ sudo pacman -S go git wine gst-plugins-base gst-plugins-good gst-plugins-bad gst
 go build ./...
 ```
 
+## Launcher install
+
+Install the `ymn` binary, the `ymn-guiv2` launcher wrapper, and the desktop entry used by Wofi and other app launchers:
+
+```sh
+sudo make install PREFIX=/usr
+```
+
+After installing, launch the v2 GUI with either:
+
+```sh
+ymn guiv2
+ymn-guiv2
+```
+
 For package validation:
 
 ```sh
 makepkg -si
+makepkg --printsrcinfo > .SRCINFO
 namcap PKGBUILD
 namcap *.pkg.tar.zst
+```
+
+## AUR publish
+
+The AUR package is a separate Git repository. The Makefile keeps that checkout under `.aur/ymn-git`, copies `PKGBUILD` and `.SRCINFO` into it, commits, and pushes:
+
+```sh
+make aur-push
+```
+
+To build the package first and then push the AUR metadata:
+
+```sh
+make aur-release
+```
+
+Override the AUR remote if needed:
+
+```sh
+make aur-push AUR_REMOTE=ssh://aur@aur.archlinux.org/ymn-git.git
 ```
 
 

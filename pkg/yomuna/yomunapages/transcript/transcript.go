@@ -3,6 +3,7 @@ package transcript
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gioui.org/layout"
@@ -11,16 +12,17 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
+	"github.com/DarlingGoose/tr/pkg/textractor"
 	"github.com/DarlingGoose/vntext/pkg/game"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/dropdowns"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/toggles"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/iconify"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/overlay"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/panel"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/layouts/split"
-	"github.com/DarlingGoose/wgl/pkg/yomuna/backend"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/dropdowns"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/toggles"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/panel"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/layouts/split"
+	"github.com/DarlingGoose/ymn/pkg/yomuna/backend"
 )
 
 type TranscriptUI struct {
@@ -37,6 +39,7 @@ type TranscriptUI struct {
 	hookDropdown   *dropdowns.Dropdown
 
 	autoTranslateToggle *toggles.Toggle
+	languageOnlyToggle  *toggles.Toggle
 	runGameButton       *components.IconButton
 	stopGameButton      *components.IconButton
 
@@ -87,6 +90,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		transcriptFollower:  newTranscriptFollower(th, backend),
 		sentenceAnalysis:    NewSentenceAnalysis(th, backend),
 		autoTranslateToggle: toggles.NewToggle("Auto Translate", false),
+		languageOnlyToggle:  toggles.NewToggle("Language Only", prefs.ShowLanguageOnly),
 		preferences:         prefs,
 	}
 	ui.sentenceAnalysis.SetLookupFontSize(unit.Sp(prefs.LookupFontSizeSp))
@@ -139,6 +143,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		ui.invalidateUI()
 	})
 	ui.transcriptFollower.WithThemeClient(tc)
+	ui.languageOnlyToggle.WithThemeClient(tc)
 	ui.sentenceAnalysis.WithThemeClient(tc)
 	ui.ReloadGames()
 	return ui
@@ -162,7 +167,12 @@ func (ui *TranscriptUI) invalidateUI() {
 
 func (ui *TranscriptUI) update(gtx layout.Context) {
 	ui.transcriptFollower.HandeEvents(gtx)
+	ui.transcriptFollower.SetShowHookLabels(ui.hookDropdownOpen && strings.TrimSpace(ui.selectedHook) == "")
 	ui.autoTranslateToggle.Update(gtx)
+	if ui.languageOnlyToggle.Update(gtx) {
+		ui.preferences.ShowLanguageOnly = ui.languageOnlyToggle.Checked
+		_ = saveTranscriptPreferences(ui.preferences)
+	}
 	ui.transcriptFollower.WithAutoTranslate(ui.autoTranslateToggle.Checked)
 	ui.sentenceAnalysis.HandeEvents(gtx)
 }
@@ -214,11 +224,15 @@ func (ui *TranscriptUI) ReloadGames() {
 
 	ui.gameDropdown.SetItems(items)
 	if ui.selectedGameName == "" && ui.preferences.SelectedGameName != "" {
-		ui.selectGameByName(ui.preferences.SelectedGameName, false)
+		ui.applyGameSelection(ui.preferences.SelectedGameName, false, false)
 	}
 }
 
 func (ui *TranscriptUI) selectGameByName(name string, followIfRunning bool) {
+	ui.applyGameSelection(name, followIfRunning, true)
+}
+
+func (ui *TranscriptUI) applyGameSelection(name string, followIfRunning, saveSelection bool) {
 	if ui == nil {
 		return
 	}
@@ -251,6 +265,11 @@ func (ui *TranscriptUI) selectGameByName(name string, followIfRunning bool) {
 	ui.sentenceAnalysis.Reset()
 	ui.refreshHookDropdown(context.Background(), g)
 
+	if saveSelection {
+		ui.preferences.SelectedGameName = name
+		_ = saveTranscriptPreferences(ui.preferences)
+	}
+
 	if followIfRunning {
 		ui.StartFollowingGame(context.Background(), g)
 	}
@@ -266,6 +285,7 @@ func (ui *TranscriptUI) SavePreferences() error {
 		SentenceFontSizeSp:   spToFloat(ui.sentenceAnalysis.sentenceFontSize),
 		TranscriptFontSizeSp: spToFloat(ui.transcriptFollower.fontSize),
 		MaxTranscriptRows:    ui.transcriptFollower.MaxTranscriptRows(),
+		ShowLanguageOnly:     ui.preferences.ShowLanguageOnly,
 	}
 	if err := saveTranscriptPreferences(prefs); err != nil {
 		return err
@@ -461,21 +481,29 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.autoTranslateToggle.Layout(gtx)
 		}),
+		layout.Rigid(bareutils.SpacerW(gap)),
+
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.languageOnlyToggle.Layout(gtx)
+		}),
 	)
 }
 
 func (ui *TranscriptUI) layoutHeaderResponsiveControls(gtx layout.Context) {
-	if ui == nil || ui.autoTranslateToggle == nil {
+	if ui == nil || ui.autoTranslateToggle == nil || ui.languageOnlyToggle == nil {
 		return
 	}
 	width := gtx.Constraints.Max.X
 	switch {
 	case width > 0 && width < gtx.Dp(unit.Dp(650)):
 		ui.autoTranslateToggle.WithLabel("")
+		ui.languageOnlyToggle.WithLabel("")
 	case width > 0 && width < gtx.Dp(unit.Dp(820)):
 		ui.autoTranslateToggle.WithLabel("Auto")
+		ui.languageOnlyToggle.WithLabel("Text")
 	default:
 		ui.autoTranslateToggle.WithLabel("Auto Translate")
+		ui.languageOnlyToggle.WithLabel("Language Only")
 	}
 }
 
@@ -526,10 +554,10 @@ func newHookDropdown() *dropdowns.Dropdown {
 	d := dropdowns.NewDropdown([]dropdowns.DropdownItem{
 		{Label: "All Hooks", Value: ""},
 	})
-	d.Width = unit.Dp(180)
+	d.Width = unit.Dp(240)
 	d.Height = unit.Dp(38)
 	d.ItemHeight = unit.Dp(34)
-	d.MaxMenuHeight = unit.Dp(260)
+	d.MaxMenuHeight = unit.Dp(340)
 	d.Radius = unit.Dp(10)
 	d.Inset = unit.Dp(10)
 	d.WithRole(theme.TextRoleBodySmall)
@@ -602,7 +630,11 @@ func (ui *TranscriptUI) setHookDropdownItems(hooks []string, hasTextractor bool)
 	}
 	sort.Strings(normalizedHooks)
 
-	items := []dropdowns.DropdownItem{{Label: "All Hooks", Value: ""}}
+	allHooksLabel := "All Hooks"
+	if len(normalizedHooks) > 0 {
+		allHooksLabel = "All Hooks (" + strconv.Itoa(len(normalizedHooks)) + ")"
+	}
+	items := []dropdowns.DropdownItem{{Label: allHooksLabel, Value: ""}}
 	for _, hook := range normalizedHooks {
 		items = append(items, dropdowns.DropdownItem{
 			Label: hookDropdownLabel(hook),
@@ -650,6 +682,7 @@ func (ui *TranscriptUI) setSelectedHookFilter(ctx context.Context, hook string) 
 	}
 
 	ui.selectedHook = hook
+	ui.transcriptFollower.SetShowHookLabels(ui.hookDropdownOpen && hook == "")
 	g := ui.selectedGame()
 	if g == nil || ui.backend == nil {
 		ui.invalidateUI()
@@ -670,11 +703,6 @@ func (ui *TranscriptUI) setSelectedHookFilter(ctx context.Context, hook string) 
 	ui.hookStatus = ""
 	ui.setHookDropdownItems(currentHookDropdownValues(ui.hookDropdown), ui.hookDropdownOpen)
 	ui.invalidateUI()
-
-	if ui.following && ui.backend.IsGameRunning() {
-		ui.transcriptFollower.Reset(g.Name)
-		ui.StartFollowingGame(ctx, g)
-	}
 }
 
 func (ui *TranscriptUI) transcriptLinePassesHookFilter(hook string) bool {
@@ -685,7 +713,7 @@ func (ui *TranscriptUI) transcriptLinePassesHookFilter(hook string) bool {
 	if selected == "" {
 		return true
 	}
-	return normalizeHookGroup(hook) == selected
+	return hookMatchesFilter(selected, hook)
 }
 
 func currentHookDropdownValues(d *dropdowns.Dropdown) []string {
@@ -711,14 +739,7 @@ func firstTextHookFilter(filters []string) string {
 }
 
 func normalizeHookGroup(hook string) string {
-	hook = strings.TrimSpace(hook)
-	if hook == "" {
-		return ""
-	}
-	if idx := strings.LastIndexByte(hook, '@'); idx >= 0 {
-		return hook[idx:]
-	}
-	return hook
+	return strings.TrimSpace(textractor.HookGroup(hook))
 }
 
 func hookDropdownLabel(hook string) string {
@@ -727,6 +748,21 @@ func hookDropdownLabel(hook string) string {
 		return "All Hooks"
 	}
 	return compactHookLabel(hook)
+}
+
+func hookMatchesFilter(filter string, hook string) bool {
+	filter = normalizeHookGroup(filter)
+	hook = normalizeHookGroup(hook)
+	if filter == "" {
+		return true
+	}
+	if hook == "" {
+		return false
+	}
+	if strings.EqualFold(filter, hook) {
+		return true
+	}
+	return false
 }
 
 func (ui *TranscriptUI) StopSelectedGame() {
@@ -979,7 +1015,11 @@ func (ui *TranscriptUI) StartFollowingGame(ctx context.Context, g *game.Game) {
 				if !ui.transcriptLinePassesHookFilter(line.Hook) {
 					continue
 				}
-				ui.transcriptFollower.AddRows(transcriptRowFromEngineLine(line))
+				row := transcriptRowFromEngineLine(line)
+				if ui.languageOnlyToggle != nil && ui.languageOnlyToggle.Checked && !transcriptRowLooksLikeLanguage(row) {
+					continue
+				}
+				ui.transcriptFollower.AddRows(row)
 			}
 		}
 	}()
@@ -1010,6 +1050,15 @@ func (ui *TranscriptUI) RunSelectedGame(ctx context.Context) {
 	})
 
 	go func() {
+		if deps, err := ui.backend.MissingWinetrickDependencies(g); err == nil && len(deps) > 0 {
+			ui.gameStatus = "Installing dependencies..."
+			ui.invalidateUI()
+			ui.transcriptFollower.AddRows(transcriptRow{
+				Info: true,
+				Text: "Installing missing winetricks dependencies: " + strings.Join(deps, ", "),
+			})
+		}
+
 		proc, err := ui.backend.RunGame(ctx, g)
 		if err != nil {
 			ui.starting = false

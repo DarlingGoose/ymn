@@ -1,7 +1,6 @@
 package input
 
 import (
-	"errors"
 	"image"
 	"image/color"
 	"io"
@@ -15,9 +14,9 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/iconify"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
 )
 
 type Kind int
@@ -213,8 +212,8 @@ func (in *TextInput) ErrorText() string {
 		return ""
 	}
 
-	var errs []error
-	if errors.As(in.LastError, &errs) {
+	if joined, ok := in.LastError.(interface{ Unwrap() []error }); ok {
+		errs := joined.Unwrap()
 		parts := make([]string, 0, len(errs))
 		for _, err := range errs {
 			if err != nil {

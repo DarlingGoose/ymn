@@ -11,7 +11,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 )
 
 type HighlightedText struct {

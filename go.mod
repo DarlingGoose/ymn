@@ -1,4 +1,4 @@
-module github.com/DarlingGoose/wgl
+module github.com/DarlingGoose/ymn
 
 go 1.26.2
 
@@ -7,8 +7,8 @@ require (
 	github.com/DarlingGoose/bare v0.0.6
 	github.com/DarlingGoose/gr v0.0.22
 	github.com/DarlingGoose/jpndict v0.0.11
-	github.com/DarlingGoose/tr v0.0.1
-	github.com/DarlingGoose/vntext v0.0.19
+	github.com/DarlingGoose/tr v0.0.2
+	github.com/DarlingGoose/vntext v0.0.20
 	github.com/faiface/beep v1.1.0
 	github.com/google/uuid v1.6.0
 	github.com/ikawaha/kagome-dict/ipa v1.2.6

@@ -9,7 +9,7 @@ import (
 	"github.com/DarlingGoose/jpndict/translate"
 	"github.com/DarlingGoose/vntext/pkg/engine"
 	"github.com/DarlingGoose/vntext/pkg/game"
-	"github.com/DarlingGoose/wgl/pkg/japanese"
+	"github.com/DarlingGoose/ymn/pkg/japanese"
 )
 
 type Backend interface {
@@ -28,6 +28,7 @@ type GameLogic interface {
 	GetGames() []*game.Game
 	InstallGameConfig(ctx context.Context, inputPath string, installHook bool) (*game.Game, error)
 	RunGame(ctx context.Context, g *game.Game) (*gr.Process, error)
+	MissingWinetrickDependencies(g *game.Game) ([]string, error)
 	FollowGameText(ctx context.Context, g *game.Game) (chan engine.Line, error)
 	//todo GetTesseract()
 	GetGameEngine(ctx context.Context, g *game.Game) (engine.EngineV2, error)

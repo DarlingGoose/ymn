@@ -17,7 +17,7 @@ import (
 	"github.com/DarlingGoose/bare/pkg/ui/icons"
 	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
-	"github.com/DarlingGoose/wgl/pkg/gui"
+	"github.com/DarlingGoose/ymn/pkg/gui"
 )
 
 const (

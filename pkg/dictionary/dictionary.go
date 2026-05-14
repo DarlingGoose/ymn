@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/DarlingGoose/jpndict"
-	"github.com/DarlingGoose/wgl/pkg/util"
+	"github.com/DarlingGoose/ymn/pkg/util"
 )
 
 func init() {

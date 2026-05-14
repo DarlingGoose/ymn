@@ -2,7 +2,7 @@ package toggles
 
 import (
 	"gioui.org/layout"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 )
 
 type ThemeModeToggle struct {

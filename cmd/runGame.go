@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	//"github.com/DarlingGoose/vntext/pkg/runner"
-	"github.com/DarlingGoose/wgl/pkg/util"
+	"github.com/DarlingGoose/ymn/pkg/util"
 	"github.com/spf13/cobra"
 )
 

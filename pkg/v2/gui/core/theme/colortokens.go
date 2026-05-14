@@ -5,7 +5,7 @@ import (
 	"image/color"
 	"strings"
 
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
 )
 
 const (

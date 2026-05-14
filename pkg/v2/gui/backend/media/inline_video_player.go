@@ -7,8 +7,8 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/op"
-	player2 "github.com/DarlingGoose/wgl/pkg/v2/gui/backend/media/player"
-	videoplayer "github.com/DarlingGoose/wgl/pkg/v2/gui/backend/media/videoPlayer"
+	player2 "github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media/player"
+	videoplayer "github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media/videoPlayer"
 )
 
 type InlineVideoPlayer struct {

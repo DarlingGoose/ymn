@@ -7,11 +7,11 @@ import (
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/dropdowns"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/input"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/toggles"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/overlay"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/dropdowns"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/input"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/toggles"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 )
 
 type runnerOptionField struct {

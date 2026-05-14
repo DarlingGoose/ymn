@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/animations/tween"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/animations/tween"
 	"gopkg.in/yaml.v3"
 )
 

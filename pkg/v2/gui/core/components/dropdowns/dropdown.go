@@ -12,16 +12,17 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/iconify"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
 
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/animations/tween"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/overlay"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/utils"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/animations/tween"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
 )
 
 var dropdownIDCounter uint64
@@ -530,10 +531,73 @@ func (d *Dropdown) layoutMenu(
 		listGtx.Constraints.Min.Y = menuHeight
 		listGtx.Constraints.Max.Y = menuHeight
 
-		return d.List.Layout(listGtx, len(d.Items), func(gtx layout.Context, index int) layout.Dimensions {
+		dims := d.List.Layout(listGtx, len(d.Items), func(gtx layout.Context, index int) layout.Dimensions {
 			return d.layoutItem(gtx, style, index)
 		})
+		d.layoutScrollIndicator(gtx, style, menuHeight)
+		return dims
 	})
+}
+
+func (d *Dropdown) layoutScrollIndicator(gtx layout.Context, style dropdownStyle, menuHeight int) {
+	if d == nil || len(d.Items) == 0 || menuHeight <= 0 {
+		return
+	}
+
+	itemHeight := gtx.Dp(d.ItemHeight)
+	if itemHeight <= 0 {
+		return
+	}
+
+	fullHeight := itemHeight * len(d.Items)
+	if fullHeight <= menuHeight {
+		return
+	}
+
+	trackHeight := menuHeight - gtx.Dp(unit.Dp(16))
+	if trackHeight <= 0 {
+		return
+	}
+
+	thumbHeight := menuHeight * trackHeight / fullHeight
+	minThumbHeight := gtx.Dp(unit.Dp(24))
+	if thumbHeight < minThumbHeight {
+		thumbHeight = minThumbHeight
+	}
+	if thumbHeight > trackHeight {
+		thumbHeight = trackHeight
+	}
+
+	maxScroll := fullHeight - menuHeight
+	scrollTop := d.List.Position.First*itemHeight - d.List.Position.Offset
+	if scrollTop < 0 {
+		scrollTop = 0
+	}
+	if scrollTop > maxScroll {
+		scrollTop = maxScroll
+	}
+
+	thumbTop := gtx.Dp(unit.Dp(8))
+	if maxScroll > 0 {
+		thumbTop += scrollTop * (trackHeight - thumbHeight) / maxScroll
+	}
+
+	width := gtx.Dp(unit.Dp(3))
+	x := gtx.Constraints.Max.X - gtx.Dp(unit.Dp(7))
+	if x < 0 {
+		x = 0
+	}
+
+	trackColor := style.Muted
+	trackColor.A = 48
+	thumbColor := style.Text
+	thumbColor.A = 150
+
+	track := image.Rect(x, gtx.Dp(unit.Dp(8)), x+width, gtx.Dp(unit.Dp(8))+trackHeight)
+	thumb := image.Rect(x, thumbTop, x+width, thumbTop+thumbHeight)
+
+	paint.FillShape(gtx.Ops, trackColor, clip.UniformRRect(track, width/2).Op(gtx.Ops))
+	paint.FillShape(gtx.Ops, thumbColor, clip.UniformRRect(thumb, width/2).Op(gtx.Ops))
 }
 
 func (d *Dropdown) layoutItem(

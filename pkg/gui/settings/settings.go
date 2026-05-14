@@ -18,9 +18,9 @@ import (
 	"github.com/DarlingGoose/bare/pkg/ui/icons"
 	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
-	"github.com/DarlingGoose/wgl/pkg/gui"
-	"github.com/DarlingGoose/wgl/pkg/translation"
-	"github.com/DarlingGoose/wgl/pkg/util"
+	"github.com/DarlingGoose/ymn/pkg/gui"
+	"github.com/DarlingGoose/ymn/pkg/translation"
+	"github.com/DarlingGoose/ymn/pkg/util"
 )
 
 var _ gui.EvenHandler = &Settings{}

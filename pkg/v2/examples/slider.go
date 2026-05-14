@@ -6,11 +6,11 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/components/dropdowns"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/overlay"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/panel"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/theme"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/pages"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/dropdowns"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/panel"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/pages"
 )
 
 type SliderAppUI struct {

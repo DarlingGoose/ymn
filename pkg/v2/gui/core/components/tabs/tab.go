@@ -12,7 +12,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/widget"
-	"github.com/DarlingGoose/wgl/pkg/v2/gui/core/animations/tween"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/animations/tween"
 )
 
 type Tab struct {
