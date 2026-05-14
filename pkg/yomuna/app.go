@@ -10,9 +10,6 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
-	bareicons "github.com/DarlingGoose/bare/pkg/ui/icons"
-	barethemes "github.com/DarlingGoose/bare/pkg/ui/themes"
-	guisettings "github.com/DarlingGoose/ymn/pkg/gui/settings"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/tabs"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
@@ -45,41 +42,28 @@ type App struct {
 	Game        *gamepage.GameUI
 	AddGame     *gamepage.AddGameUI
 	Settings    *pages.SettingsUI
-
-	legacySettings *guisettings.Settings
-	legacyTheme    barethemes.Theme
-	legacyIconify  *bareicons.Iconify
 }
 
 func New(initialSource string) *App {
 	th := material.NewTheme()
 	tc := theme.DefaultThemeClient
-	legacyTheme := barethemes.DefaultConfig().Theme(false)
-	legacySettings, _ := guisettings.LoadSettings()
-	if legacySettings != nil {
-		legacyTheme = legacySettings.Theme()
-	}
-	legacyIconify := bareicons.NewIconify()
 
 	b := backend.NewLive()
 	appPrefs := loadAppPreferences()
 	notificationClient := notifications.DefaultNotificationClient.WithThemeClient(tc).WithMaterialTheme(th)
 	notificationClient.NotificationLevel = appPrefs.notificationLevel()
 	ui := &App{
-		th:             th,
-		theme:          tc,
-		ctx:            context.Background(),
-		Overlay:        &overlay.Overlay{},
-		Notifications:  notificationClient,
-		Transcript:     transcript.NewTranscriptUI(th, tc, b),
-		Translation:    yomunapages.NewTranslationUI(th, tc).WithSource(initialSource),
-		Flashcards:     yomunapages.NewFlashcardsUI(th, tc, b),
-		Game:           gamepage.NewGameUI(th, tc, b),
-		AddGame:        gamepage.NewAddGameUI(th, tc, b),
-		Settings:       pages.NewSettingsUI(tc),
-		legacySettings: legacySettings,
-		legacyTheme:    legacyTheme,
-		legacyIconify:  legacyIconify,
+		th:            th,
+		theme:         tc,
+		ctx:           context.Background(),
+		Overlay:       &overlay.Overlay{},
+		Notifications: notificationClient,
+		Transcript:    transcript.NewTranscriptUI(th, tc, b),
+		Translation:   yomunapages.NewTranslationUI(th, tc).WithSource(initialSource),
+		Flashcards:    yomunapages.NewFlashcardsUI(th, tc, b),
+		Game:          gamepage.NewGameUI(th, tc, b),
+		AddGame:       gamepage.NewAddGameUI(th, tc, b),
+		Settings:      pages.NewSettingsUI(tc),
 	}
 	ui.Settings.WithTranscriptSettings(&pages.TranscriptSettings{
 		SelectedGameName:     ui.Transcript.SelectedGameName,
@@ -232,8 +216,9 @@ func (ui *App) Layout(gtx layout.Context, ctx context.Context, window *gioapp.Wi
 	if ui.Notifications != nil && window != nil {
 		ui.Notifications.WithInvalidate(window.Invalidate)
 	}
-	ui.syncLegacyTranscript(gtx, ctx, window)
-
+	if ui.Settings != nil && window != nil {
+		ui.Settings.WithInvalidate(window.Invalidate)
+	}
 	return ui.Overlay.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		dims := ui.Sidebar.Layout(
 			gtx,
@@ -252,44 +237,6 @@ func (ui *App) Layout(gtx layout.Context, ctx context.Context, window *gioapp.Wi
 		}
 		return dims
 	})
-}
-
-func (ui *App) syncLegacyTranscript(gtx layout.Context, ctx context.Context, window *gioapp.Window) {
-	//if ui == nil || ui.Transcript == nil {
-	//	return
-	//}
-	//
-	//if ui.legacySettings != nil {
-	//	ui.legacyTheme = ui.legacySettings.Theme()
-	//	ui.Transcript.
-	//		WithTheme(ui.legacyTheme).
-	//		SetTranscriptOptions(
-	//			ui.legacySettings.TranscriptSize(),
-	//			ui.legacySettings.TranscriptSizeLabel(),
-	//			ui.legacySettings.RecentLineLimit(),
-	//			ui.legacySettings.RecentLineLabel(),
-	//		).
-	//		SetTranscriptDisplayOptions(
-	//			ui.legacySettings.ShowSpeakerOnlyTranscriptLines(),
-	//			ui.legacySettings.UseCompactTranscriptTimestamps(),
-	//		).
-	//		SetTranslateTextOptions(
-	//			ui.legacySettings.FocusedSentenceSize(),
-	//			ui.legacySettings.TranslateDetailSize(),
-	//		).
-	//		SetTranslatorConfig(ui.legacySettings.TranslatorConfig()).
-	//		SetDefaultTargetLanguage(ui.legacySettings.DefaultTranslationLanguage()).
-	//		SetFocusedFuriganaDefault(ui.legacySettings.FocusedFuriganaMode()).
-	//		SetAutoPlayHighlightAudio(ui.legacySettings.AutoPlayHighlightAudio()).
-	//		SetColorizeHighlights(ui.legacySettings.ColorizeHighlightText())
-	//} else {
-	//	ui.Transcript.WithTheme(ui.legacyTheme)
-	//}
-	//
-	//ui.Transcript.SetStatus("Transcript tab is available in guiv2. Game watching is not wired into guiv2 yet.")
-	//if window != nil {
-	//	ui.Transcript.HandleEvents(gtx, ctx, window)
-	//}
 }
 
 func (ui *App) layoutSidebar(gtx layout.Context) layout.Dimensions {

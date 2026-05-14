@@ -24,7 +24,7 @@ func LookupWord(word string) (*Lookup, error) {
 		return nil, err
 	}
 
-	resp, err := dict.Search(word)
+	resp, err := dict.Search(jpndict.Search{Text: word})
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func LookupWords(word string) ([]Lookup, error) {
 		return nil, err
 	}
 
-	responses, err := dict.SearchAll(word)
+	responses, err := dict.SearchAll(jpndict.Search{Text: word})
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func PlayAudioForText(text string) error {
 		return err
 	}
 
-	resp, err := dict.Search(text)
+	resp, err := dict.Search(jpndict.Search{Text: text})
 	if err != nil {
 		return err
 	}

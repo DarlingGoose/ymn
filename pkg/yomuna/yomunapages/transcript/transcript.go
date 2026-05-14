@@ -11,7 +11,6 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
 	"github.com/DarlingGoose/tr/pkg/textractor"
 	"github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
@@ -553,7 +552,7 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 			return ui.gameDropdown.Layout(gtx, &ui.Overlay)
 		}),
 
-		//layout.Rigid(bareutils.SpacerW(gap)),
+		//layout.Rigid(spacerW(gap)),
 		//
 		//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 		//	status := strings.TrimSpace(ui.gameStatus)
@@ -571,7 +570,7 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 		//	)
 		//}),
 
-		layout.Rigid(bareutils.SpacerW(gap)),
+		layout.Rigid(spacerW(gap)),
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutHookDropdown(gtx)
@@ -579,7 +578,7 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if ui.hookDropdownOpen {
-				return bareutils.SpacerW(gap)(gtx)
+				return spacerW(gap)(gtx)
 			}
 			return layout.Dimensions{}
 		}),
@@ -587,7 +586,7 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutGameActionButtons(gtx)
 		}),
-		layout.Rigid(bareutils.SpacerW(gap)),
+		layout.Rigid(spacerW(gap)),
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutControlsButton(gtx)
@@ -632,7 +631,7 @@ func (ui *TranscriptUI) layoutHeaderGameRow(gtx layout.Context, gap unit.Dp) lay
 
 			return layoutDropdownToMaxWidth(gtx, ui.gameDropdown, &ui.Overlay)
 		}),
-		//layout.Rigid(bareutils.SpacerW(gap)),
+		//layout.Rigid(spacerW(gap)),
 		//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 		//	status := strings.TrimSpace(ui.gameStatus)
 		//	if status == "" {
@@ -673,7 +672,7 @@ func (ui *TranscriptUI) layoutHeaderControlsRow(gtx layout.Context, gap unit.Dp)
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutGameActionButtons(gtx)
 		}),
-		layout.Rigid(bareutils.SpacerW(gap)),
+		layout.Rigid(spacerW(gap)),
 		layout.Flexed(1, layout.Spacer{}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutControlsButton(gtx)
@@ -1065,7 +1064,7 @@ func (ui *TranscriptUI) layoutDetails(gtx layout.Context) layout.Dimensions {
 //			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //				return ui.layoutCardHeader(gtx, "Live Transcript", "Scanning mode: saved words are highlighted inline")
 //			}),
-//				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+//				layout.Rigid(spacerH(unit.Dp(12))),
 //				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 //					if !ui.backend.IsGameRunning() { //should this be a bool var instead? sometimes it doesn't trigger on
 //						return ui.layoutTranscriptIdleState(gtx)
@@ -1127,7 +1126,7 @@ func (ui *TranscriptUI) layoutTranscriptIdleState(gtx layout.Context) layout.Dim
 					"Transcript Hidden",
 				)
 			}),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+			layout.Rigid(spacerH(unit.Dp(8))),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return theme.ThemedLabel(
 					gtx,
@@ -1138,7 +1137,7 @@ func (ui *TranscriptUI) layoutTranscriptIdleState(gtx layout.Context) layout.Dim
 					"Start the game to show live transcript text here.",
 				)
 			}),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+			layout.Rigid(spacerH(unit.Dp(6))),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return theme.ThemedLabel(
 					gtx,

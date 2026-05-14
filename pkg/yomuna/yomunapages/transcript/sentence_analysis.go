@@ -849,15 +849,15 @@ func katakanaToHiragana(text string) string {
 //			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //				return p.layoutCardHeader(gtx, "Focused Sentence", "Select text, click a saved word, or use the latest transcript line")
 //			}),
-//			layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+//			layout.Rigid(spacerH(unit.Dp(12))),
 //			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //				return p.layoutFocusedSentenceText(gtx)
 //			}),
-//			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+//			layout.Rigid(spacerH(unit.Dp(10))),
 //			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //				return p.layoutFocusedFuriganaControls(gtx)
 //			}),
-//			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+//			layout.Rigid(spacerH(unit.Dp(8))),
 //			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //				return p.layoutFocusedTokenActions(gtx)
 //			}),
@@ -870,15 +870,15 @@ func katakanaToHiragana(text string) string {
 //			//		return p.layoutFocusedSentenceChips(gtx, analysis, errText)
 //			//	})
 //			//}),
-//			//layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+//			//layout.Rigid(spacerH(unit.Dp(10))),
 //			//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //			//	return p.layoutFocusedLookupBar(gtx)
 //			//}),
-//			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+//			layout.Rigid(spacerH(unit.Dp(10))),
 //			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //				return p.layoutFocusedTranslationSection(gtx)
 //			}),
-//			//layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+//			//layout.Rigid(spacerH(unit.Dp(10))),
 //			//layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 //			//	gtx.Constraints.Min = gtx.Constraints.Max
 //			//	return p.layoutSentenceStructurePanel(gtx, true)

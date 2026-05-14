@@ -3,14 +3,21 @@ package pages
 import (
 	"fmt"
 	"image/color"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
+	"github.com/DarlingGoose/vntext/pkg/gameConfig"
+	"github.com/DarlingGoose/ymn/pkg/util"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/dropdowns"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/input"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/row"
@@ -26,6 +33,7 @@ type SettingsUI struct {
 	ModeToggle    *toggles.ThemeModeToggle
 	ThemeDropdown *dropdowns.ThemeDropdown
 	settingsList  widget.List
+	invalidate    func()
 
 	transcriptSettings     *TranscriptSettings
 	targetLanguageDropdown *dropdowns.Dropdown
@@ -53,6 +61,24 @@ type SettingsUI struct {
 
 	theme    *theme.Client
 	rowCache map[string]*row.Row
+
+	storageSizes   map[string]storageSizeState
+	storageResults chan storageSizeResult
+}
+
+type storageSizeState struct {
+	size       int64
+	err        error
+	exists     bool
+	pending    bool
+	measuredAt time.Time
+}
+
+type storageSizeResult struct {
+	path   string
+	size   int64
+	err    error
+	exists bool
 }
 
 type TranscriptSettings struct {
@@ -90,12 +116,14 @@ func NewSettingsUI(tc *theme.Client) *SettingsUI {
 	}
 
 	ui := &SettingsUI{
-		th:            material.NewTheme(),
-		theme:         tc,
-		rowCache:      make(map[string]*row.Row),
-		ModeToggle:    toggles.NewThemeModeToggle(tc),
-		ThemeDropdown: dropdowns.NewThemeDropdown(tc),
-		settingsList:  widget.List{List: layout.List{Axis: layout.Vertical}},
+		th:             material.NewTheme(),
+		theme:          tc,
+		rowCache:       make(map[string]*row.Row),
+		storageSizes:   make(map[string]storageSizeState),
+		storageResults: make(chan storageSizeResult, 16),
+		ModeToggle:     toggles.NewThemeModeToggle(tc),
+		ThemeDropdown:  dropdowns.NewThemeDropdown(tc),
+		settingsList:   widget.List{List: layout.List{Axis: layout.Vertical}},
 		ollamaModelInput: input.NewTextInput("Model", "translategemma:4b").
 			WithThemeClient(tc),
 		ollamaBaseURLInput: input.NewTextInput("Endpoint", "http://localhost:11434").
@@ -185,9 +213,21 @@ func (ui *SettingsUI) WithNotificationSettings(settings *NotificationSettings) *
 	return ui
 }
 
+func (ui *SettingsUI) WithInvalidate(invalidate func()) *SettingsUI {
+	if ui == nil {
+		return ui
+	}
+	ui.invalidate = invalidate
+	return ui
+}
+
 func (ui *SettingsUI) Layout(gtx layout.Context, layer *overlay.Overlay) layout.Dimensions {
 	if ui == nil {
 		return layout.Dimensions{}
+	}
+
+	if ui.drainStorageSizeResults() {
+		gtx.Execute(op.InvalidateCmd{})
 	}
 
 	if ui.ModeToggle.Update(gtx) {
@@ -206,6 +246,7 @@ func (ui *SettingsUI) Layout(gtx layout.Context, layer *overlay.Overlay) layout.
 		func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutNotificationSettings(gtx, layer)
 		},
+		ui.layoutStorageLocations,
 	}
 
 	return layout.Inset{Top: unit.Dp(16), Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -347,6 +388,240 @@ func (ui *SettingsUI) layoutNotificationSettings(gtx layout.Context, layer *over
 			return ui.layoutSaveNotificationSettings(gtx)
 		}),
 	)
+}
+
+func (ui *SettingsUI) layoutStorageLocations(gtx layout.Context) layout.Dimensions {
+	base := util.ConfigBaseDir()
+	locations := []struct {
+		label       string
+		description string
+		path        string
+	}{
+		{
+			label:       "Yomuna data",
+			description: "Base cache/data directory for Yomuna v2.",
+			path:        base,
+		},
+		{
+			label:       "App settings",
+			description: "Notification level and app-wide v2 preferences.",
+			path:        filepath.Join(base, "guiv2-app.json"),
+		},
+		{
+			label:       "Transcript settings",
+			description: "Transcript font sizes, target language, toggles, and selected game.",
+			path:        filepath.Join(base, "guiv2-transcript.json"),
+		},
+		{
+			label:       "Ollama settings",
+			description: "Translator model and endpoint settings.",
+			path:        filepath.Join(base, "guiv2-translator.json"),
+		},
+		{
+			label:       "Flashcards",
+			description: "Per-game flashcard JSON files.",
+			path:        filepath.Join(base, "flashcards"),
+		},
+		{
+			label:       "Anki exports",
+			description: "Generated TSV exports for Anki workflows.",
+			path:        filepath.Join(base, "exports"),
+		},
+		{
+			label:       "Translations",
+			description: "Cached sentence translations.",
+			path:        filepath.Join(base, "translations", "sentences.json"),
+		},
+		{
+			label:       "Dictionary",
+			description: "Downloaded jpndict/JiTenDex data.",
+			path:        filepath.Join(base, "jpndict"),
+		},
+		{
+			label:       "Voices",
+			description: "Voice/audio cache used by text-to-speech features.",
+			path:        filepath.Join(base, "voices"),
+		},
+		{
+			label:       "Game configs",
+			description: "Installed game configuration files.",
+			path:        filepath.Join(gameConfig.ConfigBaseDir(), "games"),
+		},
+		{
+			label:       "Legacy game configs",
+			description: "Older game config location still read for compatibility.",
+			path:        filepath.Join(base, "games"),
+		},
+	}
+
+	children := []layout.FlexChild{
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Storage")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+	}
+	for i, location := range locations {
+		location := location
+		if i > 0 {
+			children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout))
+		}
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.settingsRow(location.label, location.description).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutPathValue(gtx, location.path, ui.storageSizeLabel(location.path))
+			})
+		}))
+	}
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func (ui *SettingsUI) layoutPathValue(gtx layout.Context, path, sizeLabel string) layout.Dimensions {
+	tokens := ui.theme.GetCurrentColorToken()
+	return layout.Flex{Axis: layout.Vertical, Alignment: layout.End}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(ui.th, path)
+			theme.ApplyTypography(&lbl, ui.theme.GetCurrentTypography(), theme.TextRoleCode)
+			lbl.Color = tokens.TextSecondaryNRGBA()
+			lbl.Alignment = text.End
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(ui.th, sizeLabel)
+			theme.ApplyTypography(&lbl, ui.theme.GetCurrentTypography(), theme.TextRoleCaption)
+			lbl.Color = tokens.TextMutedNRGBA()
+			lbl.Alignment = text.End
+			return lbl.Layout(gtx)
+		}),
+	)
+}
+
+func (ui *SettingsUI) drainStorageSizeResults() bool {
+	if ui == nil || ui.storageResults == nil {
+		return false
+	}
+	changed := false
+	for {
+		select {
+		case result := <-ui.storageResults:
+			if ui.storageSizes == nil {
+				ui.storageSizes = make(map[string]storageSizeState)
+			}
+			ui.storageSizes[result.path] = storageSizeState{
+				size:       result.size,
+				err:        result.err,
+				exists:     result.exists,
+				measuredAt: time.Now(),
+			}
+			changed = true
+		default:
+			return changed
+		}
+	}
+}
+
+func (ui *SettingsUI) storageSizeLabel(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "Missing"
+	}
+	if ui.storageSizes == nil {
+		ui.storageSizes = make(map[string]storageSizeState)
+	}
+	state := ui.storageSizes[path]
+	if state.pending {
+		return "Calculating..."
+	}
+	if state.measuredAt.IsZero() || time.Since(state.measuredAt) > 30*time.Second {
+		ui.startStorageSizeScan(path)
+		return "Calculating..."
+	}
+	if state.err != nil {
+		return "Unavailable"
+	}
+	if !state.exists {
+		return "Missing"
+	}
+	return formatByteSize(state.size)
+}
+
+func (ui *SettingsUI) startStorageSizeScan(path string) {
+	if ui == nil || strings.TrimSpace(path) == "" {
+		return
+	}
+	if ui.storageSizes == nil {
+		ui.storageSizes = make(map[string]storageSizeState)
+	}
+	state := ui.storageSizes[path]
+	if state.pending {
+		return
+	}
+	state.pending = true
+	ui.storageSizes[path] = state
+
+	results := ui.storageResults
+	invalidate := ui.invalidate
+	if results == nil {
+		results = make(chan storageSizeResult, 16)
+		ui.storageResults = results
+	}
+	go func() {
+		size, exists, err := storagePathSize(path)
+		results <- storageSizeResult{path: path, size: size, exists: exists, err: err}
+		if invalidate != nil {
+			invalidate()
+		}
+	}()
+}
+
+func storagePathSize(path string) (int64, bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	if !info.IsDir() {
+		return info.Size(), true, nil
+	}
+
+	var total int64
+	err = filepath.WalkDir(path, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil
+		}
+		total += info.Size()
+		return nil
+	})
+	if err != nil {
+		return 0, true, err
+	}
+	return total, true, nil
+}
+
+func formatByteSize(size int64) string {
+	if size < 0 {
+		size = 0
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	value := float64(size)
+	unit := units[0]
+	for i := 1; i < len(units) && value >= 1024; i++ {
+		value /= 1024
+		unit = units[i]
+	}
+	if unit == "B" {
+		return fmt.Sprintf("%d B", size)
+	}
+	return fmt.Sprintf("%.1f %s", value, unit)
 }
 
 func (ui *SettingsUI) layoutSaveNotificationSettings(gtx layout.Context) layout.Dimensions {
