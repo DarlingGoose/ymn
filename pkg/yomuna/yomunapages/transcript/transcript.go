@@ -92,7 +92,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		gameStatus:          "No game selected",
 		transcriptFollower:  newTranscriptFollower(th, backend),
 		sentenceAnalysis:    NewSentenceAnalysis(th, backend),
-		autoTranslateToggle: toggles.NewToggle("Auto Translate", false),
+		autoTranslateToggle: toggles.NewToggle("Auto Translate", prefs.AutoTranslate),
 		languageOnlyToggle:  toggles.NewToggle("Language Only", prefs.ShowLanguageOnly),
 		preferences:         prefs,
 	}
@@ -100,6 +100,10 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 	ui.sentenceAnalysis.sentenceFontSize = unit.Sp(prefs.SentenceFontSizeSp)
 	ui.transcriptFollower.fontSize = unit.Sp(prefs.TranscriptFontSizeSp)
 	ui.transcriptFollower.SetMaxTranscriptRows(prefs.MaxTranscriptRows)
+	ui.transcriptFollower.WithAutoTranslate(prefs.AutoTranslate)
+	ui.transcriptFollower.WithTargetLanguage(prefs.TargetLanguage)
+	ui.sentenceAnalysis.WithAutoTranslate(prefs.AutoTranslate)
+	ui.sentenceAnalysis.WithTargetLanguage(prefs.TargetLanguage)
 
 	playIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:play")
 	stopIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:square")
@@ -192,12 +196,16 @@ func (ui *TranscriptUI) invalidateUI() {
 func (ui *TranscriptUI) update(gtx layout.Context) {
 	ui.transcriptFollower.HandeEvents(gtx)
 	ui.transcriptFollower.SetShowHookLabels(ui.hookDropdownOpen && strings.TrimSpace(ui.selectedHook) == "")
-	ui.autoTranslateToggle.Update(gtx)
+	if ui.autoTranslateToggle.Update(gtx) {
+		ui.preferences.AutoTranslate = ui.autoTranslateToggle.Checked
+		_ = saveTranscriptPreferences(ui.preferences)
+	}
 	if ui.languageOnlyToggle.Update(gtx) {
 		ui.preferences.ShowLanguageOnly = ui.languageOnlyToggle.Checked
 		_ = saveTranscriptPreferences(ui.preferences)
 	}
 	ui.transcriptFollower.WithAutoTranslate(ui.autoTranslateToggle.Checked)
+	ui.sentenceAnalysis.WithAutoTranslate(ui.autoTranslateToggle.Checked)
 	ui.sentenceAnalysis.HandeEvents(gtx)
 }
 
@@ -220,6 +228,12 @@ func (ui *TranscriptUI) WithThemeClient(tc *theme.Client) *TranscriptUI {
 	}
 	if ui.stopGameButton != nil {
 		ui.stopGameButton.WithThemeClient(tc)
+	}
+	if ui.autoTranslateToggle != nil {
+		ui.autoTranslateToggle.WithThemeClient(tc)
+	}
+	if ui.languageOnlyToggle != nil {
+		ui.languageOnlyToggle.WithThemeClient(tc)
 	}
 	ui.transcriptFollower.WithThemeClient(tc)
 	if ui.sentenceAnalysis != nil {
@@ -309,7 +323,9 @@ func (ui *TranscriptUI) SavePreferences() error {
 		SentenceFontSizeSp:   spToFloat(ui.sentenceAnalysis.sentenceFontSize),
 		TranscriptFontSizeSp: spToFloat(ui.transcriptFollower.fontSize),
 		MaxTranscriptRows:    ui.transcriptFollower.MaxTranscriptRows(),
+		AutoTranslate:        ui.preferences.AutoTranslate,
 		ShowLanguageOnly:     ui.preferences.ShowLanguageOnly,
+		TargetLanguage:       ui.TargetLanguage(),
 	}
 	if err := saveTranscriptPreferences(prefs); err != nil {
 		return err
@@ -323,6 +339,73 @@ func (ui *TranscriptUI) SelectedGameName() string {
 		return ""
 	}
 	return strings.TrimSpace(ui.selectedGameName)
+}
+
+func (ui *TranscriptUI) AutoTranslate() bool {
+	if ui == nil || ui.autoTranslateToggle == nil {
+		return false
+	}
+	return ui.autoTranslateToggle.Checked
+}
+
+func (ui *TranscriptUI) SetAutoTranslate(enabled bool) {
+	if ui == nil {
+		return
+	}
+	if ui.autoTranslateToggle != nil {
+		ui.autoTranslateToggle.Checked = enabled
+	}
+	ui.preferences.AutoTranslate = enabled
+	ui.transcriptFollower.WithAutoTranslate(enabled)
+	if ui.sentenceAnalysis != nil {
+		ui.sentenceAnalysis.WithAutoTranslate(enabled)
+	}
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) LanguageOnly() bool {
+	if ui == nil || ui.languageOnlyToggle == nil {
+		return false
+	}
+	return ui.languageOnlyToggle.Checked
+}
+
+func (ui *TranscriptUI) SetLanguageOnly(enabled bool) {
+	if ui == nil {
+		return
+	}
+	if ui.languageOnlyToggle != nil {
+		ui.languageOnlyToggle.Checked = enabled
+	}
+	ui.preferences.ShowLanguageOnly = enabled
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) TargetLanguage() string {
+	if ui == nil {
+		return "english"
+	}
+	language := strings.TrimSpace(ui.preferences.TargetLanguage)
+	if language == "" {
+		return "english"
+	}
+	return language
+}
+
+func (ui *TranscriptUI) SetTargetLanguage(language string) {
+	if ui == nil {
+		return
+	}
+	language = strings.ToLower(strings.TrimSpace(language))
+	if language == "" {
+		language = "english"
+	}
+	ui.preferences.TargetLanguage = language
+	ui.transcriptFollower.WithTargetLanguage(language)
+	if ui.sentenceAnalysis != nil {
+		ui.sentenceAnalysis.WithTargetLanguage(language)
+	}
+	ui.invalidateUI()
 }
 
 func (ui *TranscriptUI) TranscriptFontSize() unit.Sp {

@@ -125,6 +125,18 @@ func (t *SentenceAnalysis) WithAutoTranslate(at bool) *SentenceAnalysis {
 	return t
 }
 
+func (t *SentenceAnalysis) WithTargetLanguage(targetLanguage string) *SentenceAnalysis {
+	if t == nil {
+		return t
+	}
+	targetLanguage = strings.ToLower(strings.TrimSpace(targetLanguage))
+	if targetLanguage == "" {
+		targetLanguage = "english"
+	}
+	t.selectedTargetLanguage = targetLanguage
+	return t
+}
+
 func (t *SentenceAnalysis) WithThemeClient(tc *theme.Client) *SentenceAnalysis {
 	if t == nil {
 		return t

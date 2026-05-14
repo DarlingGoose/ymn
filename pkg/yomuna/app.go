@@ -83,6 +83,7 @@ func New(initialSource string) *App {
 	}
 	ui.Settings.WithTranscriptSettings(&pages.TranscriptSettings{
 		SelectedGameName:     ui.Transcript.SelectedGameName,
+		TargetLanguage:       ui.Transcript.TargetLanguage,
 		TranscriptFont:       ui.Transcript.TranscriptFontSize,
 		SentenceFont:         ui.Transcript.SentenceFontSize,
 		LookupFont:           ui.Transcript.LookupFontSize,
@@ -91,6 +92,7 @@ func New(initialSource string) *App {
 		SetSentenceFont:      ui.Transcript.SetSentenceFontSize,
 		SetLookupFont:        ui.Transcript.SetLookupFontSize,
 		SetMaxTranscriptRows: ui.Transcript.SetMaxTranscriptRows,
+		SetTargetLanguage:    ui.Transcript.SetTargetLanguage,
 		Save:                 ui.Transcript.SavePreferences,
 	})
 	translatorCfg := b.TranslatorConfig()

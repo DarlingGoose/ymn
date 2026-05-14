@@ -27,19 +27,20 @@ type SettingsUI struct {
 	ThemeDropdown *dropdowns.ThemeDropdown
 	settingsList  widget.List
 
-	transcriptSettings *TranscriptSettings
-	transcriptDown     widget.Clickable
-	transcriptUp       widget.Clickable
-	sentenceDown       widget.Clickable
-	sentenceUp         widget.Clickable
-	lookupDown         widget.Clickable
-	lookupUp           widget.Clickable
-	maxLinesDown       widget.Clickable
-	maxLinesUp         widget.Clickable
-	saveTranscript     widget.Clickable
-	saveTranslator     widget.Clickable
-	status             string
-	translatorStatus   string
+	transcriptSettings     *TranscriptSettings
+	targetLanguageDropdown *dropdowns.Dropdown
+	transcriptDown         widget.Clickable
+	transcriptUp           widget.Clickable
+	sentenceDown           widget.Clickable
+	sentenceUp             widget.Clickable
+	lookupDown             widget.Clickable
+	lookupUp               widget.Clickable
+	maxLinesDown           widget.Clickable
+	maxLinesUp             widget.Clickable
+	saveTranscript         widget.Clickable
+	saveTranslator         widget.Clickable
+	status                 string
+	translatorStatus       string
 
 	translatorSettings *TranslatorSettings
 	ollamaModelInput   *input.TextInput
@@ -56,6 +57,7 @@ type SettingsUI struct {
 
 type TranscriptSettings struct {
 	SelectedGameName     func() string
+	TargetLanguage       func() string
 	TranscriptFont       func() unit.Sp
 	SentenceFont         func() unit.Sp
 	LookupFont           func() unit.Sp
@@ -64,6 +66,7 @@ type TranscriptSettings struct {
 	SetSentenceFont      func(unit.Sp)
 	SetLookupFont        func(unit.Sp)
 	SetMaxTranscriptRows func(int)
+	SetTargetLanguage    func(string)
 	Save                 func() error
 }
 
@@ -101,6 +104,9 @@ func NewSettingsUI(tc *theme.Client) *SettingsUI {
 			WithThemeClient(tc).
 			WithRole(theme.TextRoleLabel).
 			WithMenuAbove(),
+		targetLanguageDropdown: dropdowns.NewDropdown(translationLanguageItems()).
+			WithThemeClient(tc).
+			WithRole(theme.TextRoleLabel),
 	}
 	ui.ollamaModelInput.LeadingIcon = "lucide:brain"
 	ui.ollamaBaseURLInput.LeadingIcon = "lucide:server"
@@ -115,6 +121,18 @@ func (ui *SettingsUI) WithTranscriptSettings(settings *TranscriptSettings) *Sett
 		return ui
 	}
 	ui.transcriptSettings = settings
+	ui.syncTargetLanguageSelection()
+	if ui.targetLanguageDropdown != nil {
+		ui.targetLanguageDropdown.SelectItemEvent(func(item dropdowns.DropdownItem, valid bool) {
+			if !valid {
+				return
+			}
+			if ui.transcriptSettings != nil && ui.transcriptSettings.SetTargetLanguage != nil {
+				ui.transcriptSettings.SetTargetLanguage(item.Value)
+			}
+			ui.status = "Unsaved transcript changes"
+		})
+	}
 	return ui
 }
 
@@ -181,7 +199,9 @@ func (ui *SettingsUI) Layout(gtx layout.Context, layer *overlay.Overlay) layout.
 		func(gtx layout.Context) layout.Dimensions {
 			return ui.ThemeDropdown.Layout(gtx, layer)
 		},
-		ui.layoutTranscriptSettings,
+		func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutTranscriptSettings(gtx, layer)
+		},
 		ui.layoutTranslatorSettings,
 		func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutNotificationSettings(gtx, layer)
@@ -238,7 +258,20 @@ func (ui *SettingsUI) syncNotificationSelection() {
 	ui.notificationDropdown.SelectItem(notifications.LevelValue(level))
 }
 
-func (ui *SettingsUI) layoutTranscriptSettings(gtx layout.Context) layout.Dimensions {
+func (ui *SettingsUI) syncTargetLanguageSelection() {
+	if ui == nil || ui.targetLanguageDropdown == nil {
+		return
+	}
+	language := "english"
+	if ui.transcriptSettings != nil && ui.transcriptSettings.TargetLanguage != nil {
+		if value := strings.TrimSpace(ui.transcriptSettings.TargetLanguage()); value != "" {
+			language = value
+		}
+	}
+	ui.targetLanguageDropdown.SelectItem(language)
+}
+
+func (ui *SettingsUI) layoutTranscriptSettings(gtx layout.Context, layer *overlay.Overlay) layout.Dimensions {
 	if ui.transcriptSettings == nil {
 		return layout.Dimensions{}
 	}
@@ -256,6 +289,16 @@ func (ui *SettingsUI) layoutTranscriptSettings(gtx layout.Context) layout.Dimens
 					}
 				}
 				return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleBodySmall, theme.ThemeColorTextSecondary, value)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.settingsRow("Translate to", "Target language used by transcript translations.").Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if ui.targetLanguageDropdown == nil {
+					return layout.Dimensions{}
+				}
+				ui.targetLanguageDropdown.Width = unit.Dp(240)
+				return ui.targetLanguageDropdown.Layout(gtx, layer)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
@@ -386,6 +429,35 @@ func notificationLevelItems() []dropdowns.DropdownItem {
 		})
 	}
 	return items
+}
+
+func translationLanguageItems() []dropdowns.DropdownItem {
+	languages := []string{
+		"english",
+		"spanish",
+		"french",
+		"german",
+		"italian",
+		"portuguese",
+		"korean",
+		"chinese",
+	}
+	items := make([]dropdowns.DropdownItem, 0, len(languages))
+	for _, language := range languages {
+		items = append(items, dropdowns.DropdownItem{
+			Label: titleText(language),
+			Value: language,
+		})
+	}
+	return items
+}
+
+func titleText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
 }
 
 func (ui *SettingsUI) layoutTranscriptLineLimitRow(gtx layout.Context) layout.Dimensions {
