@@ -144,9 +144,9 @@ func New(initialSource string) *App {
 		tabs.NewTabFunc("transcript", "Transcript", "lucide:file-text", func(gtx layout.Context) layout.Dimensions {
 			return ui.Transcript.Layout(gtx, ui.ctx)
 		}),
-		tabs.NewTabFunc("translation", "Translation", "lucide:languages", func(gtx layout.Context) layout.Dimensions {
-			return ui.Translation.Layout(gtx, ui.ctx)
-		}),
+		//tabs.NewTabFunc("translation", "Translation", "lucide:languages", func(gtx layout.Context) layout.Dimensions {
+		//	return ui.Translation.Layout(gtx, ui.ctx)
+		//}),
 		tabs.NewTabFunc("flashcards", "Flashcards", "lucide:library", func(gtx layout.Context) layout.Dimensions {
 			return ui.Flashcards.Layout(gtx, ui.Overlay)
 		}),

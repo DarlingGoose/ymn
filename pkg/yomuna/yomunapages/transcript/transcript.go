@@ -445,7 +445,7 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 		ui.th = material.NewTheme()
 	}
 
-	if ui.theme.ColorTweenRunning() || ui.following {
+	if ui.theme.ColorTweenRunning() {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 

@@ -4,17 +4,21 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+
 	"github.com/DarlingGoose/ymn/pkg/anki"
 	flashcards "github.com/DarlingGoose/ymn/pkg/flashcard"
 	"github.com/DarlingGoose/ymn/pkg/util"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/input"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/modal"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/notifications"
@@ -34,14 +38,25 @@ type FlashcardsUI struct {
 	cards  []flashcards.Flashcard
 	status string
 
+	searchInput *input.TextInput
+	searchQuery string
+	filtered    []flashcards.Flashcard
+	filterDirty bool
+	page        int
+	pageSize    int
+
+	loadedGame   string
+	lastReloadAt time.Time
+
 	newButton  *components.IconButton
 	syncButton *components.IconButton
+	prevButton *components.IconButton
+	nextButton *components.IconButton
 	saveButton *components.IconButton
 	deleteBtn  *components.IconButton
 	cancelBtn  *components.IconButton
 
-	editButtons   map[string]*components.IconButton
-	deleteButtons map[string]*components.IconButton
+	cardClicks map[string]*widget.Clickable
 
 	syncing    bool
 	syncGame   string
@@ -70,19 +85,20 @@ func NewFlashcardsUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 	}
 
 	g := grid.NewScrollGrid()
-	g.Grid.MinCellWidth = unit.Dp(260)
-	g.Grid.Gap = unit.Dp(12)
+	g.Grid.MinCellWidth = unit.Dp(340)
+	g.Grid.Gap = unit.Dp(14)
 	g.Grid.MinColumns = 1
 
 	ui := &FlashcardsUI{
-		th:            th,
-		theme:         tc,
-		backend:       backend,
-		grid:          g,
-		status:        "Select a game to review saved flashcards.",
-		editButtons:   make(map[string]*components.IconButton),
-		deleteButtons: make(map[string]*components.IconButton),
-		syncResult:    make(chan flashcardSyncResult, 1),
+		th:          th,
+		theme:       tc,
+		backend:     backend,
+		grid:        g,
+		status:      "Select a game to review saved flashcards.",
+		filterDirty: true,
+		pageSize:    24,
+		cardClicks:  make(map[string]*widget.Clickable),
+		syncResult:  make(chan flashcardSyncResult, 1),
 	}
 	ui.wordEditor.SingleLine = true
 	ui.readingEdit.SingleLine = true
@@ -91,18 +107,28 @@ func NewFlashcardsUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 
 	ui.newButton = components.NewIconButton("New", nil, mustFlashcardIcon("lucide:plus")).WithThemeClient(tc)
 	ui.syncButton = components.NewIconButton("Sync Anki", nil, mustFlashcardIcon("lucide:cloud-upload")).WithThemeClient(tc)
+	ui.prevButton = components.NewIconButton("Prev", nil, mustFlashcardIcon("lucide:chevron-left")).WithThemeClient(tc)
+	ui.nextButton = components.NewIconButton("Next", nil, mustFlashcardIcon("lucide:chevron-right")).WithThemeClient(tc)
 	ui.saveButton = components.NewIconButton("Save", nil, mustFlashcardIcon("lucide:save")).WithThemeClient(tc)
 	ui.deleteBtn = components.NewIconButton("Delete", nil, mustFlashcardIcon("lucide:trash-2")).WithThemeClient(tc)
 	ui.cancelBtn = components.NewIconButton("Cancel", nil, mustFlashcardIcon("lucide:x")).WithThemeClient(tc)
-	for _, btn := range []*components.IconButton{ui.newButton, ui.syncButton, ui.saveButton, ui.deleteBtn, ui.cancelBtn} {
+	for _, btn := range []*components.IconButton{ui.newButton, ui.syncButton, ui.prevButton, ui.nextButton, ui.saveButton, ui.deleteBtn, ui.cancelBtn} {
 		btn.FillWidth = false
 		btn.MinWidth = unit.Dp(96)
 		btn.Height = unit.Dp(38)
 		btn.Radius = unit.Dp(10)
 	}
+	ui.prevButton.MinWidth = unit.Dp(82)
+	ui.nextButton.MinWidth = unit.Dp(82)
 	ui.deleteBtn.MinWidth = unit.Dp(104)
 	loaderIcon := mustFlashcardIcon("lucide:loader-circle")
 	ui.syncButton.LoadingIcon = loaderIcon
+	ui.searchInput = input.NewSearchInput("Search flashcards").WithMaterialTheme(th).WithThemeClient(tc)
+	ui.searchInput.OnChange = func(text string) {
+		ui.searchQuery = strings.TrimSpace(text)
+		ui.filterDirty = true
+		ui.page = 0
+	}
 
 	ui.editorModal = modal.New("flashcard-editor", "Flashcard", ui.layoutEditorModal).
 		WithMaterialTheme(th).
@@ -120,8 +146,11 @@ func (ui *FlashcardsUI) Layout(gtx layout.Context, layer *overlay.Overlay) layou
 
 	gameName := ui.activeGameName()
 	ui.drainSyncResults()
-	ui.reload(gameName)
-	ui.handleEvents(gtx, gameName)
+	ui.reloadIfStale(gameName)
+	visibleCards := ui.visiblePageCards()
+	if ui.handleEvents(gtx, gameName, visibleCards) {
+		visibleCards = ui.visiblePageCards()
+	}
 	if layer != nil && ui.editorModal != nil && ui.editorModal.Visible {
 		layer.Add(gtx, ui.editorModal)
 	}
@@ -132,14 +161,23 @@ func (ui *FlashcardsUI) Layout(gtx layout.Context, layer *overlay.Overlay) layou
 				return ui.layoutHeader(gtx, gameName)
 			}),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutFilterBar(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutCards(gtx, ui.cards)
+				return ui.layoutCards(gtx, visibleCards)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutPager(gtx)
 			}),
 		)
 	})
 }
 
-func (ui *FlashcardsUI) handleEvents(gtx layout.Context, gameName string) {
+func (ui *FlashcardsUI) handleEvents(gtx layout.Context, gameName string, visibleCards []flashcards.Flashcard) bool {
+	pageChanged := false
 	if ui.newButton.Clicked(gtx) {
 		ui.openNewModal()
 	}
@@ -158,16 +196,28 @@ func (ui *FlashcardsUI) handleEvents(gtx layout.Context, gameName string) {
 	if ui.cancelBtn.Clicked(gtx) && ui.editorModal != nil {
 		ui.editorModal.Dismiss()
 	}
-	for id, btn := range ui.editButtons {
-		if btn.Clicked(gtx) {
+	if ui.prevButton.Clicked(gtx) && ui.page > 0 {
+		ui.page--
+		pageChanged = true
+	}
+	if ui.nextButton.Clicked(gtx) {
+		_, _, pageCount := ui.pageBounds()
+		if ui.page < pageCount-1 {
+			ui.page++
+			pageChanged = true
+		}
+	}
+	for _, card := range visibleCards {
+		id := card.ID
+		click := ui.cardClickable(id)
+		if click.Clicked(gtx) {
 			ui.openEditModal(id)
 		}
 	}
-	for id, btn := range ui.deleteButtons {
-		if btn.Clicked(gtx) {
-			ui.deleteCard(gameName, id)
-		}
+	if pageChanged {
+		gtx.Execute(op.InvalidateCmd{})
 	}
+	return pageChanged
 }
 
 func (ui *FlashcardsUI) layoutHeader(gtx layout.Context, gameName string) layout.Dimensions {
@@ -201,78 +251,119 @@ func (ui *FlashcardsUI) layoutHeader(gtx layout.Context, gameName string) layout
 	)
 }
 
+func (ui *FlashcardsUI) layoutFilterBar(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if ui.searchInput == nil {
+				return layout.Dimensions{}
+			}
+			return ui.searchInput.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			total := len(ui.cards)
+			filtered := len(ui.filteredFlashcards())
+			label := fmt.Sprintf("%d cards", total)
+			if strings.TrimSpace(ui.searchQuery) != "" {
+				label = fmt.Sprintf("%d of %d", filtered, total)
+			}
+			return ui.layoutCJKLabel(gtx, label, theme.TextRoleBodySmall, theme.ThemeColorTextMuted)
+		}),
+	)
+}
+
+func (ui *FlashcardsUI) layoutPager(gtx layout.Context) layout.Dimensions {
+	filtered := ui.filteredFlashcards()
+	if len(filtered) <= ui.pageSize {
+		return layout.Dimensions{}
+	}
+	start, end, pageCount := ui.pageBounds()
+	ui.prevButton.Disabled = ui.page <= 0
+	ui.nextButton.Disabled = ui.page >= pageCount-1
+	label := fmt.Sprintf("Page %d of %d  |  %d-%d of %d", ui.page+1, pageCount, start+1, end, len(filtered))
+
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.prevButton.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutCJKLabel(gtx, label, theme.TextRoleBodySmall, theme.ThemeColorTextMuted)
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.nextButton.Layout(gtx)
+		}),
+	)
+}
+
 func (ui *FlashcardsUI) layoutCards(gtx layout.Context, cards []flashcards.Flashcard) layout.Dimensions {
 	if len(cards) == 0 {
+		message := "No flashcards saved for this game yet."
+		if strings.TrimSpace(ui.searchQuery) != "" && len(ui.cards) > 0 {
+			message = "No flashcards match this search."
+		}
 		return panel.NewBackgroundPanel(ui.theme).
 			WithRole(panel.BackgroundRoleSurface).
 			WithRadius(unit.Dp(8)).
 			WithInset(layout.UniformInset(unit.Dp(16))).
 			WithFillMax(false).
 			Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutCJKLabel(gtx, "No flashcards saved for this game yet.", theme.TextRoleBody, theme.ThemeColorTextMuted)
+				return ui.layoutCJKLabel(gtx, message, theme.TextRoleBody, theme.ThemeColorTextMuted)
 			})
 	}
 
+	ui.pruneCardClicksForCards(cards)
 	return grid.LayoutScrollSlice(gtx, ui.grid, cards, func(gtx layout.Context, card flashcards.Flashcard, index int) layout.Dimensions {
 		return ui.layoutCard(gtx, card)
 	})
 }
 
 func (ui *FlashcardsUI) layoutCard(gtx layout.Context, card flashcards.Flashcard) layout.Dimensions {
-	return panel.NewBackgroundPanel(ui.theme).
-		WithRole(panel.BackgroundRoleSurface).
-		WithRadius(unit.Dp(8)).
-		WithInset(layout.UniformInset(unit.Dp(14))).
-		WithFillMax(false).
-		Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			children := []layout.FlexChild{
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutCJKLabel(gtx, card.Text, theme.TextRoleH4, theme.ThemeColorTextPrimary)
-				}),
-			}
-			if reading := strings.TrimSpace(card.Reading); reading != "" && reading != strings.TrimSpace(card.Text) {
-				children = append(children,
-					layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+	click := ui.cardClickable(card.ID)
+	role := panel.BackgroundRoleSurface
+	if click.Hovered() || click.Pressed() {
+		role = panel.BackgroundRoleSurfaceAlt
+	}
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return panel.NewBackgroundPanel(ui.theme).
+			WithRole(role).
+			WithRadius(unit.Dp(8)).
+			WithInset(layout.UniformInset(unit.Dp(16))).
+			WithFillMax(false).
+			Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				children := []layout.FlexChild{
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutCJKLabel(gtx, reading, theme.TextRoleCaption, theme.ThemeColorPrimary)
+						return ui.layoutCJKLabel(gtx, card.Text, theme.TextRoleH4, theme.ThemeColorTextPrimary)
 					}),
-				)
-			}
-			if meaning := strings.TrimSpace(card.Meaning); meaning != "" {
-				children = append(children,
-					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutCJKLabel(gtx, meaning, theme.TextRoleBodySmall, theme.ThemeColorTextSecondary)
-					}),
-				)
-			}
-			if source := strings.TrimSpace(card.SourceLine); source != "" {
-				children = append(children,
-					layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutCJKLabel(gtx, source, theme.TextRoleCaption, theme.ThemeColorTextMuted)
-					}),
-				)
-			}
-			children = append(children,
-				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutCardActions(gtx, card)
-				}),
-			)
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
-		})
-}
-
-func (ui *FlashcardsUI) layoutCardActions(gtx layout.Context, card flashcards.Flashcard) layout.Dimensions {
-	edit := ui.editButton(card.ID)
-	del := ui.deleteButton(card.ID)
-
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		layout.Rigid(edit.Layout),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-		layout.Rigid(del.Layout),
-	)
+				}
+				if reading := strings.TrimSpace(card.Reading); reading != "" && reading != strings.TrimSpace(card.Text) {
+					children = append(children,
+						layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutCJKLabel(gtx, reading, theme.TextRoleCaption, theme.ThemeColorPrimary)
+						}),
+					)
+				}
+				if meaning := strings.TrimSpace(card.Meaning); meaning != "" {
+					children = append(children,
+						layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutCJKLabel(gtx, meaning, theme.TextRoleBodySmall, theme.ThemeColorTextSecondary)
+						}),
+					)
+				}
+				if source := strings.TrimSpace(card.SourceLine); source != "" {
+					children = append(children,
+						layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutCJKLabel(gtx, source, theme.TextRoleCaption, theme.ThemeColorTextMuted)
+						}),
+					)
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+			})
+	})
 }
 
 func (ui *FlashcardsUI) layoutEditorModal(gtx layout.Context) layout.Dimensions {
@@ -505,6 +596,10 @@ func (ui *FlashcardsUI) reload(gameName string) {
 		return
 	}
 	ui.cards = cards
+	ui.filterDirty = true
+	ui.clampPage()
+	ui.loadedGame = gameName
+	ui.lastReloadAt = time.Now()
 	ui.pruneClicks()
 	if gameName == "" {
 		ui.status = "Select a game to review saved flashcards."
@@ -515,45 +610,148 @@ func (ui *FlashcardsUI) reload(gameName string) {
 	}
 }
 
+func (ui *FlashcardsUI) reloadIfStale(gameName string) {
+	gameName = strings.TrimSpace(gameName)
+	if gameName != ui.loadedGame {
+		ui.reload(gameName)
+		return
+	}
+	if time.Since(ui.lastReloadAt) > 2*time.Second {
+		ui.reload(gameName)
+	}
+}
+
+func (ui *FlashcardsUI) filteredFlashcards() []flashcards.Flashcard {
+	if ui == nil {
+		return nil
+	}
+	query := strings.ToLower(strings.TrimSpace(ui.searchQuery))
+	if !ui.filterDirty {
+		return ui.filtered
+	}
+	ui.filterDirty = false
+	if query == "" {
+		ui.filtered = ui.cards
+		ui.clampPage()
+		return ui.filtered
+	}
+	filtered := make([]flashcards.Flashcard, 0, len(ui.cards))
+	for _, card := range ui.cards {
+		if flashcardMatches(card, query) {
+			filtered = append(filtered, card)
+		}
+	}
+	ui.filtered = filtered
+	ui.clampPage()
+	return ui.filtered
+}
+
+func (ui *FlashcardsUI) visiblePageCards() []flashcards.Flashcard {
+	cards := ui.filteredFlashcards()
+	start, end, _ := ui.pageBounds()
+	if start < 0 || start >= len(cards) || end < start {
+		return nil
+	}
+	return cards[start:end]
+}
+
+func (ui *FlashcardsUI) pageBounds() (start, end, pageCount int) {
+	count := len(ui.filteredFlashcards())
+	pageSize := ui.pageSize
+	if pageSize <= 0 {
+		pageSize = 24
+	}
+	if count == 0 {
+		return 0, 0, 1
+	}
+	pageCount = (count + pageSize - 1) / pageSize
+	if ui.page < 0 {
+		ui.page = 0
+	}
+	if ui.page >= pageCount {
+		ui.page = pageCount - 1
+	}
+	start = ui.page * pageSize
+	end = start + pageSize
+	if end > count {
+		end = count
+	}
+	return start, end, pageCount
+}
+
+func (ui *FlashcardsUI) clampPage() {
+	if ui == nil {
+		return
+	}
+	pageSize := ui.pageSize
+	if pageSize <= 0 {
+		pageSize = 24
+	}
+	count := len(ui.filtered)
+	pageCount := 1
+	if count > 0 {
+		pageCount = (count + pageSize - 1) / pageSize
+	}
+	if ui.page < 0 {
+		ui.page = 0
+	}
+	if ui.page >= pageCount {
+		ui.page = pageCount - 1
+	}
+}
+
+func flashcardMatches(card flashcards.Flashcard, query string) bool {
+	if query == "" {
+		return true
+	}
+	haystack := strings.ToLower(strings.Join([]string{
+		card.Text,
+		card.Reading,
+		card.PronunciationText,
+		card.Meaning,
+		card.SourceLine,
+		card.ID,
+		card.AnkiDeck,
+	}, "\n"))
+	return strings.Contains(haystack, query)
+}
+
 func (ui *FlashcardsUI) pruneClicks() {
 	valid := make(map[string]struct{}, len(ui.cards))
 	for _, card := range ui.cards {
 		valid[card.ID] = struct{}{}
 	}
-	for id := range ui.editButtons {
+	for id := range ui.cardClicks {
 		if _, ok := valid[id]; !ok {
-			delete(ui.editButtons, id)
-		}
-	}
-	for id := range ui.deleteButtons {
-		if _, ok := valid[id]; !ok {
-			delete(ui.deleteButtons, id)
+			delete(ui.cardClicks, id)
 		}
 	}
 }
 
-func (ui *FlashcardsUI) editButton(id string) *components.IconButton {
-	if ui.editButtons[id] == nil {
-		btn := components.NewIconButton("Edit", &widget.Clickable{}, mustFlashcardIcon("lucide:pencil")).WithThemeClient(ui.theme)
-		btn.FillWidth = false
-		btn.MinWidth = unit.Dp(86)
-		btn.Height = unit.Dp(34)
-		btn.Radius = unit.Dp(8)
-		ui.editButtons[id] = btn
+func (ui *FlashcardsUI) pruneCardClicksForCards(cards []flashcards.Flashcard) {
+	valid := make(map[string]struct{}, len(cards))
+	for _, card := range cards {
+		valid[card.ID] = struct{}{}
 	}
-	return ui.editButtons[id]
+	for id := range ui.cardClicks {
+		if _, ok := valid[id]; !ok {
+			delete(ui.cardClicks, id)
+		}
+	}
 }
 
-func (ui *FlashcardsUI) deleteButton(id string) *components.IconButton {
-	if ui.deleteButtons[id] == nil {
-		btn := components.NewIconButton("Delete", &widget.Clickable{}, mustFlashcardIcon("lucide:trash-2")).WithThemeClient(ui.theme)
-		btn.FillWidth = false
-		btn.MinWidth = unit.Dp(104)
-		btn.Height = unit.Dp(34)
-		btn.Radius = unit.Dp(8)
-		ui.deleteButtons[id] = btn
+func (ui *FlashcardsUI) cardClickable(id string) *widget.Clickable {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		id = "__empty__"
 	}
-	return ui.deleteButtons[id]
+	if ui.cardClicks == nil {
+		ui.cardClicks = make(map[string]*widget.Clickable)
+	}
+	if ui.cardClicks[id] == nil {
+		ui.cardClicks[id] = new(widget.Clickable)
+	}
+	return ui.cardClicks[id]
 }
 
 func (ui *FlashcardsUI) layoutCJKLabel(gtx layout.Context, value string, role theme.TextRole, colorRole theme.TextColorRole) layout.Dimensions {

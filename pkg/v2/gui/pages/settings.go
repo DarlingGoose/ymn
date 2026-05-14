@@ -22,6 +22,7 @@ import (
 )
 
 type SettingsUI struct {
+	th            *material.Theme
 	ModeToggle    *toggles.ThemeModeToggle
 	ThemeDropdown *dropdowns.ThemeDropdown
 	settingsList  widget.List
@@ -49,7 +50,8 @@ type SettingsUI struct {
 	saveNotifications    widget.Clickable
 	notificationStatus   string
 
-	theme *theme.Client
+	theme    *theme.Client
+	rowCache map[string]*row.Row
 }
 
 type TranscriptSettings struct {
@@ -85,7 +87,9 @@ func NewSettingsUI(tc *theme.Client) *SettingsUI {
 	}
 
 	ui := &SettingsUI{
+		th:            material.NewTheme(),
 		theme:         tc,
+		rowCache:      make(map[string]*row.Row),
 		ModeToggle:    toggles.NewThemeModeToggle(tc),
 		ThemeDropdown: dropdowns.NewThemeDropdown(tc),
 		settingsList:  widget.List{List: layout.List{Axis: layout.Vertical}},
@@ -185,7 +189,7 @@ func (ui *SettingsUI) Layout(gtx layout.Context, layer *overlay.Overlay) layout.
 	}
 
 	return layout.Inset{Top: unit.Dp(16), Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		list := material.List(material.NewTheme(), &ui.settingsList)
+		list := material.List(ui.th, &ui.settingsList)
 		return list.Layout(gtx, len(items), func(gtx layout.Context, index int) layout.Dimensions {
 			if index < 0 || index >= len(items) {
 				return layout.Dimensions{}
@@ -240,18 +244,18 @@ func (ui *SettingsUI) layoutTranscriptSettings(gtx layout.Context) layout.Dimens
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Transcript")
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Transcript")
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return row.New("Current game", "Saved with transcript preferences.").WithThemeClient(ui.theme).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return ui.settingsRow("Current game", "Saved with transcript preferences.").Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				value := "None"
 				if ui.transcriptSettings.SelectedGameName != nil {
 					if name := ui.transcriptSettings.SelectedGameName(); name != "" {
 						value = name
 					}
 				}
-				return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleBodySmall, theme.ThemeColorTextSecondary, value)
+				return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleBodySmall, theme.ThemeColorTextSecondary, value)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
@@ -281,14 +285,13 @@ func (ui *SettingsUI) layoutNotificationSettings(gtx layout.Context, layer *over
 	if ui.notificationSettings == nil {
 		return layout.Dimensions{}
 	}
-	ui.syncNotificationSelection()
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Notifications")
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Notifications")
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return row.New("Notification level", "Minimum notification type shown in the app.").WithThemeClient(ui.theme).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return ui.settingsRow("Notification level", "Minimum notification type shown in the app.").Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				if ui.notificationDropdown == nil {
 					return layout.Dimensions{}
 				}
@@ -325,13 +328,13 @@ func (ui *SettingsUI) layoutSaveNotificationSettings(gtx layout.Context) layout.
 			if ui.notificationStatus == "" {
 				return layout.Dimensions{}
 			}
-			return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, ui.notificationStatus)
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, ui.notificationStatus)
 		}),
 	)
 }
 
 func (ui *SettingsUI) layoutFontSizeRow(gtx layout.Context, label, description string, get func() unit.Sp, set func(unit.Sp), down, up *widget.Clickable) layout.Dimensions {
-	return row.New(label, description).WithThemeClient(ui.theme).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return ui.settingsRow(label, description).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		size := unit.Sp(0)
 		if get != nil {
 			size = get()
@@ -356,7 +359,7 @@ func (ui *SettingsUI) layoutFontSizeRow(gtx layout.Context, label, description s
 			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				text := fmt.Sprintf("%.0fsp", size)
-				return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleLabel, theme.ThemeColorTextPrimary, text)
+				return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleLabel, theme.ThemeColorTextPrimary, text)
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -386,7 +389,7 @@ func notificationLevelItems() []dropdowns.DropdownItem {
 }
 
 func (ui *SettingsUI) layoutTranscriptLineLimitRow(gtx layout.Context) layout.Dimensions {
-	return row.New("Max transcript lines", "Maximum live transcript rows kept in memory.").WithThemeClient(ui.theme).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return ui.settingsRow("Max transcript lines", "Maximum live transcript rows kept in memory.").Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		value := 200
 		if ui.transcriptSettings != nil && ui.transcriptSettings.MaxTranscriptRows != nil {
 			value = ui.transcriptSettings.MaxTranscriptRows()
@@ -410,7 +413,7 @@ func (ui *SettingsUI) layoutTranscriptLineLimitRow(gtx layout.Context) layout.Di
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleLabel, theme.ThemeColorTextPrimary, fmt.Sprintf("%d lines", value))
+				return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleLabel, theme.ThemeColorTextPrimary, fmt.Sprintf("%d lines", value))
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -441,7 +444,7 @@ func (ui *SettingsUI) layoutSaveTranscriptSettings(gtx layout.Context) layout.Di
 			if ui.status == "" {
 				return layout.Dimensions{}
 			}
-			return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, ui.status)
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, ui.status)
 		}),
 	)
 }
@@ -452,11 +455,11 @@ func (ui *SettingsUI) layoutTranslatorSettings(gtx layout.Context) layout.Dimens
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Ollama")
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Ollama")
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return row.New("Model", "Model name passed to Ollama for translations.").WithThemeClient(ui.theme).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return ui.settingsRow("Model", "Model name passed to Ollama for translations.").Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				if ui.ollamaModelInput == nil {
 					return layout.Dimensions{}
 				}
@@ -466,7 +469,7 @@ func (ui *SettingsUI) layoutTranslatorSettings(gtx layout.Context) layout.Dimens
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return row.New("Endpoint", "Base URL for the Ollama server.").WithThemeClient(ui.theme).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return ui.settingsRow("Endpoint", "Base URL for the Ollama server.").Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				if ui.ollamaBaseURLInput == nil {
 					return layout.Dimensions{}
 				}
@@ -509,7 +512,7 @@ func (ui *SettingsUI) layoutSaveTranslatorSettings(gtx layout.Context) layout.Di
 			if ui.translatorStatus == "" {
 				return layout.Dimensions{}
 			}
-			return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, ui.translatorStatus)
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, ui.translatorStatus)
 		}),
 	)
 }
@@ -523,7 +526,7 @@ func (ui *SettingsUI) layoutSmallButton(gtx layout.Context, click *widget.Clicka
 	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return utils.Surface(gtx, bg, unit.Dp(7), func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(5), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleLabel, theme.ThemeColorTextPrimary, label)
+				return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleLabel, theme.ThemeColorTextPrimary, label)
 			})
 		})
 	})
@@ -538,11 +541,27 @@ func (ui *SettingsUI) layoutPrimaryButton(gtx layout.Context, click *widget.Clic
 	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return utils.Surface(gtx, bg, unit.Dp(8), func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(9), Bottom: unit.Dp(9), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(material.NewTheme(), label)
+				lbl := material.Body2(ui.th, label)
 				theme.ApplyTypography(&lbl, ui.theme.GetCurrentTypography(), theme.TextRoleLabel)
 				lbl.Color = color.NRGBA(tokens.OnPrimaryNRGBA())
 				return lbl.Layout(gtx)
 			})
 		})
 	})
+}
+
+func (ui *SettingsUI) settingsRow(label, description string) *row.Row {
+	if ui == nil {
+		return row.New(label, description)
+	}
+	if ui.rowCache == nil {
+		ui.rowCache = make(map[string]*row.Row)
+	}
+	key := label + "\x00" + description
+	if ui.rowCache[key] == nil {
+		ui.rowCache[key] = row.New(label, description).
+			WithMaterialTheme(ui.th).
+			WithThemeClient(ui.theme)
+	}
+	return ui.rowCache[key]
 }
