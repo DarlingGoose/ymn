@@ -11,11 +11,11 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
 	"github.com/DarlingGoose/tr/pkg/textractor"
 	"github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/dropdowns"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/modal"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/toggles"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
@@ -42,6 +42,8 @@ type TranscriptUI struct {
 	languageOnlyToggle  *toggles.Toggle
 	runGameButton       *components.IconButton
 	stopGameButton      *components.IconButton
+	controlsButton      *components.IconButton
+	controlsModal       *modal.Modal
 
 	running  bool
 	starting bool
@@ -89,7 +91,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 		gameStatus:          "No game selected",
 		transcriptFollower:  newTranscriptFollower(th, backend),
 		sentenceAnalysis:    NewSentenceAnalysis(th, backend),
-		autoTranslateToggle: toggles.NewToggle("Auto Translate", false),
+		autoTranslateToggle: toggles.NewToggle("Auto Translate", prefs.AutoTranslate),
 		languageOnlyToggle:  toggles.NewToggle("Language Only", prefs.ShowLanguageOnly),
 		preferences:         prefs,
 	}
@@ -97,33 +99,58 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 	ui.sentenceAnalysis.sentenceFontSize = unit.Sp(prefs.SentenceFontSizeSp)
 	ui.transcriptFollower.fontSize = unit.Sp(prefs.TranscriptFontSizeSp)
 	ui.transcriptFollower.SetMaxTranscriptRows(prefs.MaxTranscriptRows)
+	ui.transcriptFollower.WithAutoTranslate(prefs.AutoTranslate)
+	ui.transcriptFollower.WithTargetLanguage(prefs.TargetLanguage)
+	ui.sentenceAnalysis.WithAutoTranslate(prefs.AutoTranslate)
+	ui.sentenceAnalysis.WithTargetLanguage(prefs.TargetLanguage)
 
 	playIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:play")
 	stopIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:square")
+	loaderIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:loader-circle")
+	slidersIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:sliders-horizontal")
 
 	ui.runGameButton = components.NewIconButton(
-		"Run",
+		"",
 		&widget.Clickable{},
 		playIcon,
 	).WithThemeClient(tc)
 
 	ui.runGameButton.FillWidth = false
 	ui.runGameButton.TextCollapseMode = components.TextCollapseNever
-	ui.runGameButton.MinWidth = unit.Dp(92)
+	ui.runGameButton.MinWidth = unit.Dp(28)
 	ui.runGameButton.Height = unit.Dp(38)
 	ui.runGameButton.Radius = unit.Dp(10)
+	ui.runGameButton.LoadingIcon = loaderIcon
 
 	ui.stopGameButton = components.NewIconButton(
-		"Stop",
+		"",
 		&widget.Clickable{},
 		stopIcon,
 	).WithThemeClient(tc)
 
 	ui.stopGameButton.FillWidth = false
 	ui.stopGameButton.TextCollapseMode = components.TextCollapseNever
-	ui.stopGameButton.MinWidth = unit.Dp(92)
+	ui.stopGameButton.MinWidth = unit.Dp(30)
 	ui.stopGameButton.Height = unit.Dp(38)
 	ui.stopGameButton.Radius = unit.Dp(10)
+	ui.stopGameButton.LoadingIcon = loaderIcon
+
+	ui.controlsButton = components.NewIconButton(
+		"",
+		&widget.Clickable{},
+		slidersIcon,
+	).WithThemeClient(tc)
+	ui.controlsButton.FillWidth = false
+	ui.controlsButton.TextCollapseMode = components.TextCollapseNever
+	ui.controlsButton.MinWidth = unit.Dp(38)
+	ui.controlsButton.Height = unit.Dp(38)
+	ui.controlsButton.Radius = unit.Dp(10)
+
+	ui.controlsModal = modal.New("transcript-controls", "Transcript Controls", ui.layoutControlsModal).
+		WithMaterialTheme(th).
+		WithThemeClient(tc).
+		WithSize(unit.Dp(360), unit.Dp(260)).
+		WithDescription("Display and automation options for the transcript.")
 
 	ui.gameDropdown.SelectItemEvent(func(item dropdowns.DropdownItem, valid bool) {
 		if !valid {
@@ -168,12 +195,16 @@ func (ui *TranscriptUI) invalidateUI() {
 func (ui *TranscriptUI) update(gtx layout.Context) {
 	ui.transcriptFollower.HandeEvents(gtx)
 	ui.transcriptFollower.SetShowHookLabels(ui.hookDropdownOpen && strings.TrimSpace(ui.selectedHook) == "")
-	ui.autoTranslateToggle.Update(gtx)
+	if ui.autoTranslateToggle.Update(gtx) {
+		ui.preferences.AutoTranslate = ui.autoTranslateToggle.Checked
+		_ = saveTranscriptPreferences(ui.preferences)
+	}
 	if ui.languageOnlyToggle.Update(gtx) {
 		ui.preferences.ShowLanguageOnly = ui.languageOnlyToggle.Checked
 		_ = saveTranscriptPreferences(ui.preferences)
 	}
 	ui.transcriptFollower.WithAutoTranslate(ui.autoTranslateToggle.Checked)
+	ui.sentenceAnalysis.WithAutoTranslate(ui.autoTranslateToggle.Checked)
 	ui.sentenceAnalysis.HandeEvents(gtx)
 }
 
@@ -196,6 +227,12 @@ func (ui *TranscriptUI) WithThemeClient(tc *theme.Client) *TranscriptUI {
 	}
 	if ui.stopGameButton != nil {
 		ui.stopGameButton.WithThemeClient(tc)
+	}
+	if ui.autoTranslateToggle != nil {
+		ui.autoTranslateToggle.WithThemeClient(tc)
+	}
+	if ui.languageOnlyToggle != nil {
+		ui.languageOnlyToggle.WithThemeClient(tc)
 	}
 	ui.transcriptFollower.WithThemeClient(tc)
 	if ui.sentenceAnalysis != nil {
@@ -285,7 +322,9 @@ func (ui *TranscriptUI) SavePreferences() error {
 		SentenceFontSizeSp:   spToFloat(ui.sentenceAnalysis.sentenceFontSize),
 		TranscriptFontSizeSp: spToFloat(ui.transcriptFollower.fontSize),
 		MaxTranscriptRows:    ui.transcriptFollower.MaxTranscriptRows(),
+		AutoTranslate:        ui.preferences.AutoTranslate,
 		ShowLanguageOnly:     ui.preferences.ShowLanguageOnly,
+		TargetLanguage:       ui.TargetLanguage(),
 	}
 	if err := saveTranscriptPreferences(prefs); err != nil {
 		return err
@@ -299,6 +338,73 @@ func (ui *TranscriptUI) SelectedGameName() string {
 		return ""
 	}
 	return strings.TrimSpace(ui.selectedGameName)
+}
+
+func (ui *TranscriptUI) AutoTranslate() bool {
+	if ui == nil || ui.autoTranslateToggle == nil {
+		return false
+	}
+	return ui.autoTranslateToggle.Checked
+}
+
+func (ui *TranscriptUI) SetAutoTranslate(enabled bool) {
+	if ui == nil {
+		return
+	}
+	if ui.autoTranslateToggle != nil {
+		ui.autoTranslateToggle.Checked = enabled
+	}
+	ui.preferences.AutoTranslate = enabled
+	ui.transcriptFollower.WithAutoTranslate(enabled)
+	if ui.sentenceAnalysis != nil {
+		ui.sentenceAnalysis.WithAutoTranslate(enabled)
+	}
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) LanguageOnly() bool {
+	if ui == nil || ui.languageOnlyToggle == nil {
+		return false
+	}
+	return ui.languageOnlyToggle.Checked
+}
+
+func (ui *TranscriptUI) SetLanguageOnly(enabled bool) {
+	if ui == nil {
+		return
+	}
+	if ui.languageOnlyToggle != nil {
+		ui.languageOnlyToggle.Checked = enabled
+	}
+	ui.preferences.ShowLanguageOnly = enabled
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) TargetLanguage() string {
+	if ui == nil {
+		return "english"
+	}
+	language := strings.TrimSpace(ui.preferences.TargetLanguage)
+	if language == "" {
+		return "english"
+	}
+	return language
+}
+
+func (ui *TranscriptUI) SetTargetLanguage(language string) {
+	if ui == nil {
+		return
+	}
+	language = strings.ToLower(strings.TrimSpace(language))
+	if language == "" {
+		language = "english"
+	}
+	ui.preferences.TargetLanguage = language
+	ui.transcriptFollower.WithTargetLanguage(language)
+	if ui.sentenceAnalysis != nil {
+		ui.sentenceAnalysis.WithTargetLanguage(language)
+	}
+	ui.invalidateUI()
 }
 
 func (ui *TranscriptUI) TranscriptFontSize() unit.Sp {
@@ -382,35 +488,38 @@ func (ui *TranscriptUI) Layout(gtx layout.Context, ctx context.Context) layout.D
 		ctx = context.Background()
 	}
 	ui.update(gtx)
-	return panel.NewBackgroundPanel(ui.theme).
-		WithFillMax(true).
-		Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(15)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return ui.Overlay.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		if ui.controlsModal != nil && ui.controlsModal.Visible {
+			ui.Overlay.Add(gtx, ui.controlsModal)
+		}
+		return panel.NewBackgroundPanel(ui.theme).
+			WithFillMax(true).
+			Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.UniformInset(unit.Dp(15)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 
-				return layout.Flex{
-					Axis: layout.Vertical,
-				}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.Overlay.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{
+						Axis: layout.Vertical,
+					}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return ui.layoutHeader(gtx)
-						})
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return ui.bodySplit.Layout(
-							gtx,
-							func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutTranscript(gtx)
-							},
-							func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutDetails(gtx)
-							},
-						)
-					}),
-				)
+						}),
+						layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							return ui.bodySplit.Layout(
+								gtx,
+								func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutTranscript(gtx)
+								},
+								func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutDetails(gtx)
+								},
+							)
+						}),
+					)
 
+				})
 			})
-		})
+	})
 }
 
 func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
@@ -418,17 +527,18 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 		ui.th = material.NewTheme()
 	}
 
-	if ui.theme.ColorTweenRunning() || ui.following {
+	if ui.theme.ColorTweenRunning() {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
 	ui.update(gtx)
 	ui.layoutHeaderResponsiveControls(gtx)
 
-	gap := unit.Dp(10)
 	if gtx.Constraints.Max.X > 0 && gtx.Constraints.Max.X < gtx.Dp(unit.Dp(760)) {
-		gap = unit.Dp(6)
+		return ui.layoutCompactHeader(gtx)
 	}
+
+	gap := unit.Dp(10)
 
 	return layout.Flex{
 		Axis:      layout.Horizontal,
@@ -442,25 +552,25 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 			return ui.gameDropdown.Layout(gtx, &ui.Overlay)
 		}),
 
-		layout.Rigid(bareutils.SpacerW(gap)),
+		//layout.Rigid(spacerW(gap)),
+		//
+		//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		//	status := strings.TrimSpace(ui.gameStatus)
+		//	if status == "" {
+		//		status = "Idle"
+		//	}
+		//
+		//	return theme.ThemedLabel(
+		//		gtx,
+		//		ui.th,
+		//		ui.theme,
+		//		theme.TextRoleBodySmall,
+		//		theme.ThemeColorTextMuted,
+		//		status,
+		//	)
+		//}),
 
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			status := strings.TrimSpace(ui.gameStatus)
-			if status == "" {
-				status = "Idle"
-			}
-
-			return theme.ThemedLabel(
-				gtx,
-				ui.th,
-				ui.theme,
-				theme.TextRoleBodySmall,
-				theme.ThemeColorTextMuted,
-				status,
-			)
-		}),
-
-		layout.Rigid(bareutils.SpacerW(gap)),
+		layout.Rigid(spacerW(gap)),
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutHookDropdown(gtx)
@@ -468,7 +578,7 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if ui.hookDropdownOpen {
-				return bareutils.SpacerW(gap)(gtx)
+				return spacerW(gap)(gtx)
 			}
 			return layout.Dimensions{}
 		}),
@@ -476,35 +586,148 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutGameActionButtons(gtx)
 		}),
-		layout.Rigid(bareutils.SpacerW(gap)),
+		layout.Rigid(spacerW(gap)),
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.autoTranslateToggle.Layout(gtx)
-		}),
-		layout.Rigid(bareutils.SpacerW(gap)),
-
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.languageOnlyToggle.Layout(gtx)
+			return ui.layoutControlsButton(gtx)
 		}),
 	)
+}
+
+func (ui *TranscriptUI) layoutCompactHeader(gtx layout.Context) layout.Dimensions {
+	gap := unit.Dp(8)
+	children := []layout.FlexChild{
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutHeaderGameRow(gtx, gap)
+		}),
+		layout.Rigid(layout.Spacer{Height: gap}.Layout),
+	}
+	if ui.hookDropdownOpen {
+		children = append(children,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layoutDropdownToMaxWidth(gtx, ui.hookDropdown, &ui.Overlay)
+			}),
+			layout.Rigid(layout.Spacer{Height: gap}.Layout),
+		)
+	}
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutHeaderControlsRow(gtx, gap)
+	}))
+
+	return layout.Flex{
+		Axis: layout.Vertical,
+	}.Layout(gtx, children...)
+}
+
+func (ui *TranscriptUI) layoutHeaderGameRow(gtx layout.Context, gap unit.Dp) layout.Dimensions {
+	return layout.Flex{
+		Axis:      layout.Horizontal,
+		Alignment: layout.Middle,
+	}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if ui.gameDropdown == nil {
+				return layout.Dimensions{}
+			}
+
+			return layoutDropdownToMaxWidth(gtx, ui.gameDropdown, &ui.Overlay)
+		}),
+		//layout.Rigid(spacerW(gap)),
+		//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		//	status := strings.TrimSpace(ui.gameStatus)
+		//	if status == "" {
+		//		status = "Idle"
+		//	}
+		//
+		//	return theme.ThemedLabel(
+		//		gtx,
+		//		ui.th,
+		//		ui.theme,
+		//		theme.TextRoleBodySmall,
+		//		theme.ThemeColorTextMuted,
+		//		status,
+		//	)
+		//}),
+	)
+}
+
+func (ui *TranscriptUI) layoutHeaderControlsRow(gtx layout.Context, gap unit.Dp) layout.Dimensions {
+	if gtx.Constraints.Max.X > 0 && gtx.Constraints.Max.X < gtx.Dp(unit.Dp(430)) {
+		return layout.Flex{
+			Axis: layout.Vertical,
+		}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutGameActionButtons(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: gap}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutControlsButton(gtx)
+			}),
+		)
+	}
+
+	return layout.Flex{
+		Axis:      layout.Horizontal,
+		Alignment: layout.Middle,
+	}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutGameActionButtons(gtx)
+		}),
+		layout.Rigid(spacerW(gap)),
+		layout.Flexed(1, layout.Spacer{}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutControlsButton(gtx)
+		}),
+	)
+}
+
+func layoutDropdownToMaxWidth(gtx layout.Context, d *dropdowns.Dropdown, layer *overlay.Overlay) layout.Dimensions {
+	if d == nil {
+		return layout.Dimensions{}
+	}
+
+	oldWidth := d.Width
+	if gtx.Constraints.Max.X > 0 {
+		d.Width = gtx.Metric.PxToDp(gtx.Constraints.Max.X)
+	}
+	dims := d.Layout(gtx, layer)
+	d.Width = oldWidth
+	return dims
 }
 
 func (ui *TranscriptUI) layoutHeaderResponsiveControls(gtx layout.Context) {
 	if ui == nil || ui.autoTranslateToggle == nil || ui.languageOnlyToggle == nil {
 		return
 	}
-	width := gtx.Constraints.Max.X
-	switch {
-	case width > 0 && width < gtx.Dp(unit.Dp(650)):
-		ui.autoTranslateToggle.WithLabel("")
-		ui.languageOnlyToggle.WithLabel("")
-	case width > 0 && width < gtx.Dp(unit.Dp(820)):
-		ui.autoTranslateToggle.WithLabel("Auto")
-		ui.languageOnlyToggle.WithLabel("Text")
-	default:
-		ui.autoTranslateToggle.WithLabel("Auto Translate")
-		ui.languageOnlyToggle.WithLabel("Language Only")
+	ui.autoTranslateToggle.WithLabel("Auto Translate")
+	ui.languageOnlyToggle.WithLabel("Language Only")
+}
+
+func (ui *TranscriptUI) layoutControlsButton(gtx layout.Context) layout.Dimensions {
+	if ui == nil || ui.controlsButton == nil {
+		return layout.Dimensions{}
 	}
+	if ui.controlsButton.Clicked(gtx) && ui.controlsModal != nil {
+		ui.layoutHeaderResponsiveControls(gtx)
+		ui.controlsModal.Open()
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	return ui.controlsButton.Layout(gtx)
+}
+
+func (ui *TranscriptUI) layoutControlsModal(gtx layout.Context) layout.Dimensions {
+	if ui == nil {
+		return layout.Dimensions{}
+	}
+	ui.layoutHeaderResponsiveControls(gtx)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.autoTranslateToggle.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.languageOnlyToggle.Layout(gtx)
+		}),
+	)
 }
 
 func (ui *TranscriptUI) layoutGameActionButtons(gtx layout.Context) layout.Dimensions {
@@ -841,7 +1064,7 @@ func (ui *TranscriptUI) layoutDetails(gtx layout.Context) layout.Dimensions {
 //			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //				return ui.layoutCardHeader(gtx, "Live Transcript", "Scanning mode: saved words are highlighted inline")
 //			}),
-//				layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+//				layout.Rigid(spacerH(unit.Dp(12))),
 //				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 //					if !ui.backend.IsGameRunning() { //should this be a bool var instead? sometimes it doesn't trigger on
 //						return ui.layoutTranscriptIdleState(gtx)
@@ -903,7 +1126,7 @@ func (ui *TranscriptUI) layoutTranscriptIdleState(gtx layout.Context) layout.Dim
 					"Transcript Hidden",
 				)
 			}),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+			layout.Rigid(spacerH(unit.Dp(8))),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return theme.ThemedLabel(
 					gtx,
@@ -914,7 +1137,7 @@ func (ui *TranscriptUI) layoutTranscriptIdleState(gtx layout.Context) layout.Dim
 					"Start the game to show live transcript text here.",
 				)
 			}),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+			layout.Rigid(spacerH(unit.Dp(6))),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return theme.ThemedLabel(
 					gtx,
@@ -1042,7 +1265,8 @@ func (ui *TranscriptUI) RunSelectedGame(ctx context.Context) {
 
 	ui.starting = true
 	ui.running = false
-	ui.gameStatus = "Starting..."
+	ui.gameStatus = "Launching..."
+	ui.invalidateUI()
 
 	ui.transcriptFollower.AddRows(transcriptRow{
 		Info: true,

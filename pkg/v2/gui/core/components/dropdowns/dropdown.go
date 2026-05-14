@@ -32,6 +32,13 @@ type DropdownItem struct {
 	Value string
 }
 
+type MenuDirection int
+
+const (
+	MenuBelow MenuDirection = iota
+	MenuAbove
+)
+
 type Dropdown struct {
 	id string
 
@@ -51,6 +58,7 @@ type Dropdown struct {
 	Width         unit.Dp
 	ItemHeight    unit.Dp
 	MaxMenuHeight unit.Dp
+	MenuDirection MenuDirection
 	Radius        unit.Dp
 	Inset         unit.Dp
 	Role          theme.TextRole
@@ -106,6 +114,7 @@ func NewDropdown(items []DropdownItem) *Dropdown {
 		Width:         unit.Dp(240),
 		ItemHeight:    unit.Dp(42),
 		MaxMenuHeight: unit.Dp(260),
+		MenuDirection: MenuBelow,
 		Radius:        unit.Dp(12),
 		Inset:         unit.Dp(12),
 	}
@@ -137,6 +146,23 @@ func (d *Dropdown) WithArrowIcon(name string) *Dropdown {
 
 	return d
 }
+
+func (d *Dropdown) WithMenuDirection(direction MenuDirection) *Dropdown {
+	if d == nil {
+		return d
+	}
+	d.MenuDirection = direction
+	return d
+}
+
+func (d *Dropdown) WithMenuAbove() *Dropdown {
+	return d.WithMenuDirection(MenuAbove)
+}
+
+func (d *Dropdown) WithMenuBelow() *Dropdown {
+	return d.WithMenuDirection(MenuBelow)
+}
+
 func (d *Dropdown) ID() string {
 	if d == nil {
 		return ""
@@ -378,6 +404,7 @@ func (d *Dropdown) Layout(gtx layout.Context, layer *overlay.Overlay) layout.Dim
 			buttonHeight: buttonHeight,
 			menuHeight:   menuHeight,
 			gap:          gap,
+			direction:    d.MenuDirection,
 		}
 
 		if layer != nil {

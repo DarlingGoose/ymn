@@ -1,35 +1,40 @@
 package transcript
 
 import (
+	"image"
 	"image/color"
 	"strconv"
 	"strings"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
 	"github.com/DarlingGoose/jpndict"
 	"github.com/DarlingGoose/ymn/pkg/japanese"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/animations/tween"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
 )
 
 func (t *SentenceAnalysis) Layout(gtx layout.Context) layout.Dimensions {
+	t.ensureFlashcardsCurrent()
 	return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return t.layoutHeader(gtx)
 			}),
-			//layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+			//layout.Rigid(spacerH(unit.Dp(14))),
 			//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			//	return t.layoutFocusedSentenceText(gtx)
 			//}),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(14))),
+			layout.Rigid(spacerH(unit.Dp(14))),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				return t.layoutSentenceStructure(gtx)
 			}),
@@ -57,11 +62,11 @@ func (t *SentenceAnalysis) layoutHeader(gtx layout.Context) layout.Dimensions {
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Sentence Analysis")
 		}),
-		layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
+		layout.Rigid(spacerW(unit.Dp(12))),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return t.layoutHeaderTokenSummary(gtx)
 		}),
-		layout.Rigid(bareutils.SpacerW(unit.Dp(12))),
+		layout.Rigid(spacerW(unit.Dp(12))),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleCaption, theme.ThemeColorTextMuted, meta)
 		}),
@@ -122,7 +127,7 @@ func (t *SentenceAnalysis) layoutSentenceStructure(gtx layout.Context) layout.Di
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return t.layoutTokenSectionHeader(gtx)
 		}),
-		layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+		layout.Rigid(spacerH(unit.Dp(8))),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return t.layoutTokenLines(gtx, analysis, analysis.Tokens)
 		}),
@@ -147,7 +152,7 @@ func (t *SentenceAnalysis) layoutTokenSummary(gtx layout.Context, analysis japan
 	for i, item := range items {
 		item := item
 		if i > 0 {
-			children = append(children, layout.Rigid(bareutils.SpacerW(unit.Dp(8))))
+			children = append(children, layout.Rigid(spacerW(unit.Dp(8))))
 		}
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return t.layoutSummaryPill(gtx, item.label, item.value)
@@ -172,7 +177,7 @@ func (t *SentenceAnalysis) layoutFuriganaControls(gtx layout.Context) layout.Dim
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return t.layoutFuriganaModeButton(gtx, &t.furiganaHiddenClick, "Hidden", t.focusedFuriganaMode == focusedFuriganaHidden)
 		}),
-		layout.Rigid(bareutils.SpacerW(unit.Dp(6))),
+		layout.Rigid(spacerW(unit.Dp(6))),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return t.layoutFuriganaModeButton(gtx, &t.furiganaAboveClick, "Above", t.focusedFuriganaMode == focusedFuriganaAbove)
 		}),
@@ -210,7 +215,7 @@ func (t *SentenceAnalysis) layoutSummaryPill(gtx layout.Context, label string, v
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleLabelSmall, theme.ThemeColorPrimary, label)
 				}),
-				layout.Rigid(bareutils.SpacerW(unit.Dp(6))),
+				layout.Rigid(spacerW(unit.Dp(6))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleLabelSmall, theme.ThemeColorTextPrimary, strconv.Itoa(value))
 				}),
@@ -268,9 +273,12 @@ func (t *SentenceAnalysis) layoutFocusedFuriganaToken(gtx layout.Context, token 
 	if surface == "" {
 		return layout.Dimensions{}
 	}
-	var inFlashcards, dictionaryReady bool
-	//_, inFlashcards := p.structureTokenFlashcard(token)
-	//dictionaryReady := focusedTokenDictionaryReady(token)
+	_, inFlashcards := t.structureTokenFlashcard(token)
+	dictionaryReady := false
+	if t.selectedFocusedTokenKey == key {
+		_, _, errText, pending, results := t.lookupSnapshot()
+		dictionaryReady = errText == "" && !pending && len(results) > 0
+	}
 	bg := focusedTokenColor(t.tc.GetCurrentColorToken(), token, t.selectedFocusedTokenKey == key, inFlashcards, dictionaryReady)
 	children := make([]layout.FlexChild, 0, 4)
 	if t.focusedFuriganaMode == focusedFuriganaAbove {
@@ -278,7 +286,7 @@ func (t *SentenceAnalysis) layoutFocusedFuriganaToken(gtx layout.Context, token 
 			return t.layoutFocusedTokenSlot(gtx, t.focusedTokenReadingSlotHeight(), func(gtx layout.Context) layout.Dimensions {
 				return t.layoutFocusedTokenReading(gtx, reading)
 			})
-		}), layout.Rigid(bareutils.SpacerH(unit.Dp(1))))
+		}), layout.Rigid(spacerH(unit.Dp(1))))
 	}
 	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 		return t.layoutFocusedTokenSlot(gtx, t.focusedTokenSurfaceSlotHeight(gtx), func(gtx layout.Context) layout.Dimensions {
@@ -290,14 +298,14 @@ func (t *SentenceAnalysis) layoutFocusedFuriganaToken(gtx layout.Context, token 
 		})
 	}))
 	if t.focusedFuriganaMode == focusedFuriganaBelow {
-		children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(2))), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		children = append(children, layout.Rigid(spacerH(unit.Dp(2))), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return t.layoutFocusedTokenSlot(gtx, t.focusedTokenReadingSlotHeight(), func(gtx layout.Context) layout.Dimensions {
 				return t.layoutFocusedTokenReading(gtx, reading)
 			})
 		}))
 	}
 	if t.focusedFuriganaMode == focusedFuriganaAbove {
-		children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(3))), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		children = append(children, layout.Rigid(spacerH(unit.Dp(3))), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return t.layoutFocusedTokenSlot(gtx, unit.Dp(14), func(gtx layout.Context) layout.Dimensions {
 				return t.layoutFocusedTokenMarker(gtx, inFlashcards, dictionaryReady)
 			})
@@ -332,27 +340,77 @@ func (t *SentenceAnalysis) layoutFocusedTokenReading(gtx layout.Context, reading
 }
 
 func (t *SentenceAnalysis) layoutFocusedTokenMarker(gtx layout.Context, inFlashcards, dictionaryReady bool) layout.Dimensions {
-	text := " "
 	fg := t.tc.GetCurrentColorToken().TextMutedNRGBA()
 	if inFlashcards {
-		text = "✓"
 		fg = t.tc.GetCurrentColorToken().PrimaryNRGBA()
-	} else if dictionaryReady {
-		text = "·"
-		fg = t.tc.GetCurrentColorToken().SecondaryNRGBA()
+		return iconify.DefaultIconify.Layout(gtx, "lucide:check", unit.Dp(12), fg)
 	}
-	lbl := material.Body2(t.th, text)
-	theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleLabelSmall)
-	lbl.Color = fg
-	return lbl.Layout(gtx)
+	if dictionaryReady {
+		fg := t.tc.GetCurrentColorToken().SecondaryNRGBA()
+		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			size := gtx.Dp(unit.Dp(4))
+			if size < 2 {
+				size = 2
+			}
+			return utils.RoundedSurface(gtx, unit.Dp(2), fg, func(gtx layout.Context) layout.Dimensions {
+				return layout.Dimensions{Size: image.Pt(size, size)}
+			})
+		})
+	}
+	return layout.Dimensions{Size: image.Pt(gtx.Dp(unit.Dp(12)), gtx.Dp(unit.Dp(12)))}
 }
 
 func (t *SentenceAnalysis) layoutSelectedTokenLookup(gtx layout.Context) layout.Dimensions {
 	query, _, errText, pending, results := t.lookupSnapshot()
+	visible := strings.TrimSpace(query) != ""
+	if visible {
+		t.lastLookupQuery = query
+		t.lastLookupErr = errText
+		t.lastLookupPending = pending
+		t.lastLookupResults = append([]*jpndict.Response(nil), results...)
+		if t.lookupBarFlip != nil && !t.lookupBarFlip.Expanded() {
+			t.lookupBarFlip.Expand()
+		}
+	} else if t.lookupBarFlip != nil && t.lookupBarFlip.Expanded() {
+		t.lookupBarFlip.Collapse()
+	}
+
+	progress := 1.0
+	running := false
+	if t.lookupBarFlip != nil {
+		progress, running = t.lookupBarFlip.Value(time.Now())
+	}
+	if running {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	if progress <= 0 {
+		return layout.Dimensions{}
+	}
+	if !visible {
+		query = t.lastLookupQuery
+		errText = t.lastLookupErr
+		pending = t.lastLookupPending
+		results = append([]*jpndict.Response(nil), t.lastLookupResults...)
+	}
 	if strings.TrimSpace(query) == "" {
 		return layout.Dimensions{}
 	}
 
+	macro := op.Record(gtx.Ops)
+	dims := t.layoutSelectedTokenLookupContent(gtx, query, errText, pending, results)
+	call := macro.Stop()
+
+	height := tween.MapInt(progress, 0, dims.Size.Y)
+	if height <= 0 {
+		return layout.Dimensions{}
+	}
+	clipStack := clip.Rect{Max: image.Pt(dims.Size.X, height)}.Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	clipStack.Pop()
+	return layout.Dimensions{Size: image.Pt(dims.Size.X, height)}
+}
+
+func (t *SentenceAnalysis) layoutSelectedTokenLookupContent(gtx layout.Context, query, errText string, pending bool, results []*jpndict.Response) layout.Dimensions {
 	ct := t.tc.GetCurrentColorToken()
 	return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return utils.Surface(gtx, ct.BackgroundNRGBA(), unit.Dp(8), func(gtx layout.Context) layout.Dimensions {
@@ -365,16 +423,32 @@ func (t *SentenceAnalysis) layoutSelectedTokenLookup(gtx layout.Context) layout.
 
 				if errText != "" {
 					children = append(children,
-						layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+						layout.Rigid(spacerH(unit.Dp(6))),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleBodySmall, theme.ThemeColorWarning, errText)
 						}),
 					)
 				} else if len(results) > 0 {
 					children = append(children,
-						layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+						layout.Rigid(spacerH(unit.Dp(8))),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return t.layoutLookupResults(gtx, results)
+						}),
+					)
+				}
+				if status := strings.TrimSpace(t.flashcardStatus); status != "" {
+					children = append(children,
+						layout.Rigid(spacerH(unit.Dp(6))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleCaption, theme.ThemeColorTextMuted, status)
+						}),
+					)
+				}
+				if errText := strings.TrimSpace(t.flashcardLoadErr); errText != "" {
+					children = append(children,
+						layout.Rigid(spacerH(unit.Dp(6))),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleCaption, theme.ThemeColorWarning, errText)
 						}),
 					)
 				}
@@ -404,11 +478,48 @@ func (t *SentenceAnalysis) layoutLookupHeader(gtx layout.Context, query string, 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return t.layoutLookupFontControls(gtx)
 		}),
-		layout.Rigid(bareutils.SpacerW(unit.Dp(10))),
+		layout.Rigid(spacerW(unit.Dp(10))),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return t.layoutAddFlashcardButton(gtx, pending)
+		}),
+		layout.Rigid(spacerW(unit.Dp(10))),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return theme.ThemedLabel(gtx, t.th, t.tc, theme.TextRoleCaption, theme.ThemeColorTextMuted, status)
 		}),
 	)
+}
+
+func (t *SentenceAnalysis) layoutAddFlashcardButton(gtx layout.Context, pending bool) layout.Dimensions {
+	ct := t.tc.GetCurrentColorToken()
+	fg := ct.PrimaryNRGBA()
+	bg := color.NRGBA{A: 0}
+	if pending {
+		fg = ct.TextMutedNRGBA()
+	} else if t.addFlashcardClick.Hovered() {
+		bg = ct.SurfaceNRGBA()
+	}
+
+	return utils.ClickableSurface(gtx, &t.addFlashcardClick, bg, unit.Dp(7), func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(5), Left: unit.Dp(7), Right: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return iconify.DefaultIconify.Layout(gtx, "lucide:plus", unit.Dp(15), fg)
+				}),
+				layout.Rigid(spacerW(unit.Dp(5))),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					label := "Add"
+					if pending {
+						label = "Wait"
+					}
+					lbl := material.Body2(t.th, label)
+					theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleCaption)
+					lbl.Color = fg
+					return lbl.Layout(gtx)
+				}),
+			)
+		})
+	})
 }
 
 func (t *SentenceAnalysis) layoutLookupFontControls(gtx layout.Context) layout.Dimensions {
@@ -416,7 +527,7 @@ func (t *SentenceAnalysis) layoutLookupFontControls(gtx layout.Context) layout.D
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return t.layoutLookupFontButton(gtx, &t.lookupFontDownClick, "A-")
 		}),
-		layout.Rigid(bareutils.SpacerW(unit.Dp(4))),
+		layout.Rigid(spacerW(unit.Dp(4))),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return t.layoutLookupFontButton(gtx, &t.lookupFontUpClick, "A+")
 		}),
@@ -449,7 +560,7 @@ func (t *SentenceAnalysis) layoutLookupResults(gtx layout.Context, results []*jp
 	for i := 0; i < limit; i++ {
 		resp := results[i]
 		if i > 0 {
-			children = append(children, layout.Rigid(bareutils.SpacerH(unit.Dp(6))))
+			children = append(children, layout.Rigid(spacerH(unit.Dp(6))))
 		}
 		index := i
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -483,7 +594,7 @@ func (t *SentenceAnalysis) layoutLookupResult(gtx layout.Context, resp *jpndict.
 							lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
 							return lbl.Layout(gtx)
 						}),
-						layout.Rigid(bareutils.SpacerW(unit.Dp(8))),
+						layout.Rigid(spacerW(unit.Dp(8))),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							if strings.TrimSpace(reading) == "" || reading == headword {
 								return layout.Dimensions{}
@@ -542,7 +653,7 @@ func (t *SentenceAnalysis) layoutLookupAudioButton(gtx layout.Context, key strin
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return iconify.DefaultIconify.Layout(gtx, "lucide:volume-2", unit.Dp(15), fg)
 				}),
-				layout.Rigid(bareutils.SpacerW(unit.Dp(5))),
+				layout.Rigid(spacerW(unit.Dp(5))),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					label := "Audio"
 					if pending {

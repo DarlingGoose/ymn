@@ -294,7 +294,13 @@ func (t *transcriptFollower) SetCompactTimestamp(compact bool) {
 }
 
 func (t *transcriptFollower) WithTargetLanguage(targetLanguage string) {
-
+	targetLanguage = strings.ToLower(strings.TrimSpace(targetLanguage))
+	if targetLanguage == "" {
+		targetLanguage = "english"
+	}
+	t.rowMutex.Lock()
+	t.selectedTargetLanguage = targetLanguage
+	t.rowMutex.Unlock()
 }
 
 func (t *transcriptFollower) SetShowHookLabels(show bool) {

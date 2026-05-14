@@ -17,7 +17,9 @@ type transcriptPreferences struct {
 	SentenceFontSizeSp   float32 `json:"sentence_font_size_sp,omitempty"`
 	TranscriptFontSizeSp float32 `json:"transcript_font_size_sp,omitempty"`
 	MaxTranscriptRows    int     `json:"max_transcript_rows,omitempty"`
+	AutoTranslate        bool    `json:"auto_translate,omitempty"`
 	ShowLanguageOnly     bool    `json:"show_language_only,omitempty"`
+	TargetLanguage       string  `json:"target_language,omitempty"`
 }
 
 func defaultTranscriptPreferences() transcriptPreferences {
@@ -26,6 +28,7 @@ func defaultTranscriptPreferences() transcriptPreferences {
 		SentenceFontSizeSp:   24,
 		TranscriptFontSizeSp: 22,
 		MaxTranscriptRows:    200,
+		TargetLanguage:       "english",
 	}
 }
 
@@ -63,6 +66,10 @@ func transcriptPreferencesPath() string {
 
 func (p *transcriptPreferences) normalize() {
 	p.SelectedGameName = strings.TrimSpace(p.SelectedGameName)
+	p.TargetLanguage = strings.ToLower(strings.TrimSpace(p.TargetLanguage))
+	if p.TargetLanguage == "" {
+		p.TargetLanguage = "english"
+	}
 	if p.LookupFontSizeSp < 11 || p.LookupFontSizeSp > 24 {
 		p.LookupFontSizeSp = 14
 	}

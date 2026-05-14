@@ -5,15 +5,19 @@ import (
 	"image/color"
 	"strings"
 	"sync"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"github.com/DarlingGoose/jpndict"
+	flashcards "github.com/DarlingGoose/ymn/pkg/flashcard"
 	"github.com/DarlingGoose/ymn/pkg/japanese"
 	"github.com/DarlingGoose/ymn/pkg/translation"
 	"github.com/DarlingGoose/ymn/pkg/util"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/animations/tween"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/notifications"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
 	"github.com/DarlingGoose/ymn/pkg/yomuna/backend"
@@ -37,6 +41,7 @@ type SentenceAnalysis struct {
 	furiganaAboveClick  widget.Clickable
 	lookupFontDownClick widget.Clickable
 	lookupFontUpClick   widget.Clickable
+	addFlashcardClick   widget.Clickable
 	lookupAudioClicks   map[string]*widget.Clickable
 
 	autoTranslate bool
@@ -60,6 +65,16 @@ type SentenceAnalysis struct {
 	lookupFontSize   unit.Sp
 	lookupAudio      map[string]*lookupAudioState
 	invalidate       func()
+	lookupBarFlip    *tween.Flip
+
+	flashcards        []flashcards.Flashcard
+	flashcardGame     string
+	flashcardStatus   string
+	flashcardLoadErr  string
+	lastLookupQuery   string
+	lastLookupErr     string
+	lastLookupPending bool
+	lastLookupResults []*jpndict.Response
 
 	sentenceFontSize  unit.Sp
 	furigiganFontSize unit.Sp
@@ -88,6 +103,7 @@ func NewSentenceAnalysis(th *material.Theme, backend backend.Backend) *SentenceA
 		focusedTokenClicks:     make(map[string]*widget.Clickable),
 		lookupAudioClicks:      make(map[string]*widget.Clickable),
 		lookupAudio:            make(map[string]*lookupAudioState),
+		lookupBarFlip:          tween.NewFlip(180*time.Millisecond, tween.EaseOutCubic),
 	}
 }
 
@@ -106,6 +122,18 @@ func (t *SentenceAnalysis) WithTranslatorConfig(cfg translation.Config) *Sentenc
 
 func (t *SentenceAnalysis) WithAutoTranslate(at bool) *SentenceAnalysis {
 	t.autoTranslate = at
+	return t
+}
+
+func (t *SentenceAnalysis) WithTargetLanguage(targetLanguage string) *SentenceAnalysis {
+	if t == nil {
+		return t
+	}
+	targetLanguage = strings.ToLower(strings.TrimSpace(targetLanguage))
+	if targetLanguage == "" {
+		targetLanguage = "english"
+	}
+	t.selectedTargetLanguage = targetLanguage
 	return t
 }
 
@@ -132,6 +160,7 @@ func (t *SentenceAnalysis) SetSentence(line *transcriptRow) {
 	if t == nil {
 		return
 	}
+	t.ensureFlashcardsCurrent()
 	if line == nil || line.Info || strings.TrimSpace(line.Text) == "" {
 		t.Reset()
 		return
@@ -163,6 +192,9 @@ func (t *SentenceAnalysis) HandeEvents(gtx layout.Context) {
 	for t.lookupFontUpClick.Clicked(gtx) {
 		t.adjustLookupFontSize(1)
 	}
+	for t.addFlashcardClick.Clicked(gtx) {
+		t.addSelectedTokenFlashcard()
+	}
 	for key, click := range t.focusedTokenClicks {
 		for click.Clicked(gtx) {
 			t.selectFocusedToken(key)
@@ -192,6 +224,215 @@ func structureFlashcardWord(token japanese.Token) string {
 	default:
 		return strings.TrimSpace(token.Surface)
 	}
+}
+
+func canCreateStructureFlashcard(token japanese.Token) bool {
+	switch token.POSMajor() {
+	case "名詞", "動詞", "形容詞", "副詞":
+		return structureFlashcardWord(token) != ""
+	default:
+		return false
+	}
+}
+
+func structureTokenFlashcardCandidates(token japanese.Token) []string {
+	raw := []string{
+		token.Surface,
+		token.BaseForm,
+		token.Reading,
+		token.Pronunciation,
+		structureFlashcardWord(token),
+	}
+	seen := make(map[string]struct{}, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, value := range raw {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func (t *SentenceAnalysis) structureTokenFlashcard(token japanese.Token) (flashcards.Flashcard, bool) {
+	t.ensureFlashcardsCurrent()
+	candidates := structureTokenFlashcardCandidates(token)
+	if len(candidates) == 0 {
+		return flashcards.Flashcard{}, false
+	}
+	for _, card := range t.flashcards {
+		cardWords := []string{card.Text, card.Reading, card.PronunciationText}
+		for _, cardWord := range cardWords {
+			cardWord = strings.TrimSpace(cardWord)
+			if cardWord == "" {
+				continue
+			}
+			for _, candidate := range candidates {
+				if cardWord == candidate {
+					return card, true
+				}
+			}
+		}
+	}
+	return flashcards.Flashcard{}, false
+}
+
+func (t *SentenceAnalysis) addSelectedTokenFlashcard() {
+	if t == nil {
+		return
+	}
+
+	gameName := t.activeGameName()
+	if gameName == "" {
+		t.flashcardStatus = "Select a game before creating flashcards."
+		notifications.Warning(t.flashcardStatus)
+		t.invalidateUI()
+		return
+	}
+
+	token, ok := t.selectedToken()
+	if !ok {
+		t.flashcardStatus = "Select a token first."
+		notifications.Warning(t.flashcardStatus)
+		t.invalidateUI()
+		return
+	}
+	if !canCreateStructureFlashcard(token) {
+		t.flashcardStatus = "This token is not a vocabulary flashcard candidate."
+		notifications.Warning(t.flashcardStatus)
+		t.invalidateUI()
+		return
+	}
+	if _, exists := t.structureTokenFlashcard(token); exists {
+		t.flashcardStatus = structureFlashcardWord(token) + " is already saved."
+		notifications.Info(t.flashcardStatus)
+		t.invalidateUI()
+		return
+	}
+	_, _, _, pending, results := t.lookupSnapshot()
+	if pending {
+		t.flashcardStatus = "Wait for dictionary lookup before creating a flashcard."
+		notifications.Info(t.flashcardStatus)
+		t.invalidateUI()
+		return
+	}
+	if len(results) == 0 && strings.TrimSpace(t.selectedFocusedTokenNote) == "" {
+		t.flashcardStatus = "No dictionary result is available for this token."
+		notifications.Warning(t.flashcardStatus)
+		t.invalidateUI()
+		return
+	}
+
+	card := t.flashcardFromSelectedToken(token)
+	if err := card.Valid(); err != nil {
+		t.flashcardStatus = err.Error()
+		notifications.Error(t.flashcardStatus)
+		t.invalidateUI()
+		return
+	}
+	if err := flashcards.AddFlashcard(card); err != nil {
+		t.flashcardStatus = err.Error()
+		notifications.Error(t.flashcardStatus)
+		t.invalidateUI()
+		return
+	}
+
+	t.reloadFlashcards(gameName)
+	t.flashcardStatus = card.Text + " added to flashcards."
+	notifications.Success(t.flashcardStatus)
+	t.invalidateUI()
+}
+
+func (t *SentenceAnalysis) flashcardFromSelectedToken(token japanese.Token) flashcards.Flashcard {
+	word := structureFlashcardWord(token)
+	if word == "" {
+		word = strings.TrimSpace(token.Surface)
+	}
+
+	_, _, _, pending, results := t.lookupSnapshot()
+	meaning := strings.TrimSpace(t.selectedFocusedTokenNote)
+	reading := strings.TrimSpace(token.Reading)
+	if len(results) > 0 && !pending {
+		headword, lookupReading, lookupMeaning := lookupResponseText(results[0])
+		if text := strings.TrimSpace(headword); text != "" {
+			word = text
+		}
+		if text := strings.TrimSpace(lookupReading); text != "" {
+			reading = text
+		}
+		meaning = strings.TrimSpace(lookupMeaning)
+	}
+	if meaning == "" {
+		meaning = strings.TrimSpace(token.POSLabel())
+	}
+
+	return flashcards.Flashcard{
+		GameName:          t.activeGameName(),
+		Text:              word,
+		Meaning:           meaning,
+		Reading:           reading,
+		PronunciationText: strings.TrimSpace(token.Pronunciation),
+		SourceLine:        t.structureSourceText(),
+	}
+}
+
+func (t *SentenceAnalysis) selectedToken() (japanese.Token, bool) {
+	key := strings.TrimSpace(t.selectedFocusedTokenKey)
+	if key == "" {
+		return japanese.Token{}, false
+	}
+	analysis, err := japanese.AnalyzeSentence(t.structureSourceText())
+	if err != nil {
+		return japanese.Token{}, false
+	}
+	for _, token := range analysis.Tokens {
+		if structureTokenKey(token) == key {
+			return token, true
+		}
+	}
+	return japanese.Token{}, false
+}
+
+func (t *SentenceAnalysis) activeGameName() string {
+	if t == nil || t.backend == nil {
+		return ""
+	}
+	g := t.backend.CurrentGame()
+	if g == nil {
+		return ""
+	}
+	return strings.TrimSpace(g.Name)
+}
+
+func (t *SentenceAnalysis) ensureFlashcardsCurrent() {
+	if t == nil {
+		return
+	}
+	gameName := t.activeGameName()
+	if gameName == t.flashcardGame {
+		return
+	}
+	t.reloadFlashcards(gameName)
+}
+
+func (t *SentenceAnalysis) reloadFlashcards(gameName string) {
+	t.flashcardGame = strings.TrimSpace(gameName)
+	t.flashcards = nil
+	t.flashcardLoadErr = ""
+	if t.flashcardGame == "" {
+		return
+	}
+	cards, err := flashcards.LoadFlashcards(t.flashcardGame)
+	if err != nil {
+		t.flashcardLoadErr = err.Error()
+		return
+	}
+	t.flashcards = cards
 }
 func (t *SentenceAnalysis) selectFocusedToken(key string) {
 	if key != "" && t.selectedFocusedTokenKey == key {
@@ -608,15 +849,15 @@ func katakanaToHiragana(text string) string {
 //			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //				return p.layoutCardHeader(gtx, "Focused Sentence", "Select text, click a saved word, or use the latest transcript line")
 //			}),
-//			layout.Rigid(bareutils.SpacerH(unit.Dp(12))),
+//			layout.Rigid(spacerH(unit.Dp(12))),
 //			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //				return p.layoutFocusedSentenceText(gtx)
 //			}),
-//			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+//			layout.Rigid(spacerH(unit.Dp(10))),
 //			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //				return p.layoutFocusedFuriganaControls(gtx)
 //			}),
-//			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+//			layout.Rigid(spacerH(unit.Dp(8))),
 //			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //				return p.layoutFocusedTokenActions(gtx)
 //			}),
@@ -629,15 +870,15 @@ func katakanaToHiragana(text string) string {
 //			//		return p.layoutFocusedSentenceChips(gtx, analysis, errText)
 //			//	})
 //			//}),
-//			//layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+//			//layout.Rigid(spacerH(unit.Dp(10))),
 //			//layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //			//	return p.layoutFocusedLookupBar(gtx)
 //			//}),
-//			layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+//			layout.Rigid(spacerH(unit.Dp(10))),
 //			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 //				return p.layoutFocusedTranslationSection(gtx)
 //			}),
-//			//layout.Rigid(bareutils.SpacerH(unit.Dp(10))),
+//			//layout.Rigid(spacerH(unit.Dp(10))),
 //			//layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 //			//	gtx.Constraints.Min = gtx.Constraints.Max
 //			//	return p.layoutSentenceStructurePanel(gtx, true)

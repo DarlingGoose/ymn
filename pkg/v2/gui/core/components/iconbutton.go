@@ -262,7 +262,16 @@ func (b *IconButton) Layout(gtx layout.Context) layout.Dimensions {
 			b.BG.JumpTo(bg)
 		}
 
-		return b.layoutSurface(gtx, style, bg, false, 0)
+		angle := 0.0
+		spinRunning := false
+		if b.Loading && b.Spinner != nil {
+			angle, spinRunning = b.Spinner.Value(time.Now())
+		}
+		if spinRunning {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+
+		return b.layoutSurface(gtx, style, bg, false, angle)
 	}
 
 	return b.Clickable.Layout(gtx, func(gtx layout.Context) layout.Dimensions {

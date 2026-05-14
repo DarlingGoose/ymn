@@ -9,7 +9,6 @@ import (
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
-	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
@@ -46,13 +45,13 @@ func (t *transcriptFollower) layoutTranscriptIdleState(gtx layout.Context) layou
 				lbl.Color = t.tc.GetCurrentColorToken().TextPrimaryNRGBA()
 				return lbl.Layout(gtx)
 			}),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(8))),
+			layout.Rigid(spacerH(unit.Dp(8))),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body1(t.th, "Start the game to show live transcript text here.")
 				lbl.Color = t.tc.GetCurrentColorToken().TextMutedNRGBA()
 				return lbl.Layout(gtx)
 			}),
-			layout.Rigid(bareutils.SpacerH(unit.Dp(6))),
+			layout.Rigid(spacerH(unit.Dp(6))),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body1(t.th, "The flashcard composer stays on this page next to the transcript.")
 				lbl.Color = t.tc.GetCurrentColorToken().TextMutedNRGBA()

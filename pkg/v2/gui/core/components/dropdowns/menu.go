@@ -17,6 +17,7 @@ type dropdownMenuComponent struct {
 	buttonHeight int
 	menuHeight   int
 	gap          int
+	direction    MenuDirection
 }
 
 func (m dropdownMenuComponent) OverlayLayout(gtx layout.Context) {
@@ -24,7 +25,12 @@ func (m dropdownMenuComponent) OverlayLayout(gtx layout.Context) {
 		return
 	}
 
-	stack := op.Offset(image.Pt(0, m.buttonHeight+m.gap)).Push(gtx.Ops)
+	y := m.buttonHeight + m.gap
+	if m.direction == MenuAbove {
+		y = -m.menuHeight - m.gap
+	}
+
+	stack := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 	defer stack.Pop()
 
 	menuGtx := gtx
