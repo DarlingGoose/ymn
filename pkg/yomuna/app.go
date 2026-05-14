@@ -38,6 +38,7 @@ type App struct {
 	Overlay      *overlay.Overlay
 
 	Translation *yomunapages.TranslationUI
+	Flashcards  *yomunapages.FlashcardsUI
 	Transcript  *transcript.TranscriptUI
 	Game        *gamepage.GameUI
 	AddGame     *gamepage.AddGameUI
@@ -66,6 +67,7 @@ func New(initialSource string) *App {
 		Overlay:        &overlay.Overlay{},
 		Transcript:     transcript.NewTranscriptUI(th, tc, b),
 		Translation:    yomunapages.NewTranslationUI(th, tc).WithSource(initialSource),
+		Flashcards:     yomunapages.NewFlashcardsUI(th, tc, b),
 		Game:           gamepage.NewGameUI(th, tc, b),
 		AddGame:        gamepage.NewAddGameUI(th, tc, b),
 		Settings:       pages.NewSettingsUI(tc),
@@ -120,6 +122,9 @@ func New(initialSource string) *App {
 		}),
 		tabs.NewTabFunc("translation", "Translation", "lucide:languages", func(gtx layout.Context) layout.Dimensions {
 			return ui.Translation.Layout(gtx, ui.ctx)
+		}),
+		tabs.NewTabFunc("flashcards", "Flashcards", "lucide:library", func(gtx layout.Context) layout.Dimensions {
+			return ui.Flashcards.Layout(gtx, ui.Overlay)
 		}),
 		tabs.NewTabFunc("game", "Game", "lucide:gamepad-2", func(gtx layout.Context) layout.Dimensions {
 			return ui.Game.Layout(gtx, ui.Overlay)

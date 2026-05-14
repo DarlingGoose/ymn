@@ -100,6 +100,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 
 	playIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:play")
 	stopIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:square")
+	loaderIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:loader-circle")
 
 	ui.runGameButton = components.NewIconButton(
 		"Run",
@@ -112,6 +113,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 	ui.runGameButton.MinWidth = unit.Dp(92)
 	ui.runGameButton.Height = unit.Dp(38)
 	ui.runGameButton.Radius = unit.Dp(10)
+	ui.runGameButton.LoadingIcon = loaderIcon
 
 	ui.stopGameButton = components.NewIconButton(
 		"Stop",
@@ -124,6 +126,7 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 	ui.stopGameButton.MinWidth = unit.Dp(92)
 	ui.stopGameButton.Height = unit.Dp(38)
 	ui.stopGameButton.Radius = unit.Dp(10)
+	ui.stopGameButton.LoadingIcon = loaderIcon
 
 	ui.gameDropdown.SelectItemEvent(func(item dropdowns.DropdownItem, valid bool) {
 		if !valid {
@@ -425,10 +428,11 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 	ui.update(gtx)
 	ui.layoutHeaderResponsiveControls(gtx)
 
-	gap := unit.Dp(10)
 	if gtx.Constraints.Max.X > 0 && gtx.Constraints.Max.X < gtx.Dp(unit.Dp(760)) {
-		gap = unit.Dp(6)
+		return ui.layoutCompactHeader(gtx)
 	}
+
+	gap := unit.Dp(10)
 
 	return layout.Flex{
 		Axis:      layout.Horizontal,
@@ -487,6 +491,121 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 			return ui.languageOnlyToggle.Layout(gtx)
 		}),
 	)
+}
+
+func (ui *TranscriptUI) layoutCompactHeader(gtx layout.Context) layout.Dimensions {
+	gap := unit.Dp(8)
+	children := []layout.FlexChild{
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutHeaderGameRow(gtx, gap)
+		}),
+		layout.Rigid(layout.Spacer{Height: gap}.Layout),
+	}
+	if ui.hookDropdownOpen {
+		children = append(children,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layoutDropdownToMaxWidth(gtx, ui.hookDropdown, &ui.Overlay)
+			}),
+			layout.Rigid(layout.Spacer{Height: gap}.Layout),
+		)
+	}
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutHeaderControlsRow(gtx, gap)
+	}))
+
+	return layout.Flex{
+		Axis: layout.Vertical,
+	}.Layout(gtx, children...)
+}
+
+func (ui *TranscriptUI) layoutHeaderGameRow(gtx layout.Context, gap unit.Dp) layout.Dimensions {
+	return layout.Flex{
+		Axis:      layout.Horizontal,
+		Alignment: layout.Middle,
+	}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if ui.gameDropdown == nil {
+				return layout.Dimensions{}
+			}
+
+			return layoutDropdownToMaxWidth(gtx, ui.gameDropdown, &ui.Overlay)
+		}),
+		layout.Rigid(bareutils.SpacerW(gap)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			status := strings.TrimSpace(ui.gameStatus)
+			if status == "" {
+				status = "Idle"
+			}
+
+			return theme.ThemedLabel(
+				gtx,
+				ui.th,
+				ui.theme,
+				theme.TextRoleBodySmall,
+				theme.ThemeColorTextMuted,
+				status,
+			)
+		}),
+	)
+}
+
+func (ui *TranscriptUI) layoutHeaderControlsRow(gtx layout.Context, gap unit.Dp) layout.Dimensions {
+	if gtx.Constraints.Max.X > 0 && gtx.Constraints.Max.X < gtx.Dp(unit.Dp(430)) {
+		return layout.Flex{
+			Axis: layout.Vertical,
+		}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutGameActionButtons(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: gap}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{
+					Axis:      layout.Horizontal,
+					Alignment: layout.Middle,
+				}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.autoTranslateToggle.Layout(gtx)
+					}),
+					layout.Rigid(bareutils.SpacerW(gap)),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.languageOnlyToggle.Layout(gtx)
+					}),
+				)
+			}),
+		)
+	}
+
+	return layout.Flex{
+		Axis:      layout.Horizontal,
+		Alignment: layout.Middle,
+	}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutGameActionButtons(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerW(gap)),
+		layout.Flexed(1, layout.Spacer{}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.autoTranslateToggle.Layout(gtx)
+		}),
+		layout.Rigid(bareutils.SpacerW(gap)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.languageOnlyToggle.Layout(gtx)
+		}),
+	)
+}
+
+func layoutDropdownToMaxWidth(gtx layout.Context, d *dropdowns.Dropdown, layer *overlay.Overlay) layout.Dimensions {
+	if d == nil {
+		return layout.Dimensions{}
+	}
+
+	oldWidth := d.Width
+	if gtx.Constraints.Max.X > 0 {
+		d.Width = gtx.Metric.PxToDp(gtx.Constraints.Max.X)
+	}
+	dims := d.Layout(gtx, layer)
+	d.Width = oldWidth
+	return dims
 }
 
 func (ui *TranscriptUI) layoutHeaderResponsiveControls(gtx layout.Context) {
@@ -1042,7 +1161,8 @@ func (ui *TranscriptUI) RunSelectedGame(ctx context.Context) {
 
 	ui.starting = true
 	ui.running = false
-	ui.gameStatus = "Starting..."
+	ui.gameStatus = "Launching..."
+	ui.invalidateUI()
 
 	ui.transcriptFollower.AddRows(transcriptRow{
 		Info: true,
