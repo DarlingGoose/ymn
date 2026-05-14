@@ -1,97 +1,116 @@
-# Yomuna (YMN)
+# Yomuna
 
-Yomuna is a visual novel game launcher and transcript/flashcard tool.
+Yomuna (`ymn`) is a visual novel launcher, transcript reader, translation helper, and flashcard tool for Japanese reading workflows on Linux.
 
-## Required Packages
+It is mainly useful when you want one place to launch a game, capture text from a running visual novel, inspect vocabulary, translate lines, and turn selected words or tokens into review cards.
 
-Install these before running the GUI:
+## Features
 
-- `go` and `git` to build from source
-- `wine` to install and launch Windows visual novels
-- GStreamer runtime/plugins for dictionary audio playback through `jpndict`
-- `mpv` for media preview/playback in the Bare file manager
-- `ffmpeg` for thumbnails and media preview support
+- Launch visual novels with Wine, Proton-style runners, or Gamescope-backed Wine configs.
+- Install and manage game configs from the GUI.
+- Follow live extracted text from supported games and hooks.
+- Filter transcript text by hook when multiple text streams are available.
+- Analyze selected transcript sentences with token/vocabulary lookup.
+- Translate transcript lines with an Ollama-backed local translation setup.
+- Create, edit, search, delete, and page through flashcards by game.
+- Mark sentence-analysis tokens that already exist in your flashcard deck.
+- Sync flashcards to Anki through AnkiConnect.
+- View and adjust app, transcript, translation, notification, theme, and storage settings.
 
-On Arch Linux, a practical baseline is:
+## Install
+
+On Arch Linux, install the AUR package:
 
 ```sh
-sudo pacman -S go git wine gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly mpv ffmpeg
+yay -S ymn-git
 ```
 
-## Optional Packages
-
-- `steam` if you want Steam/Proton launch flows
-- Proton installed through Steam if using Proton runner configs
-- `tesseract`, `grim`, `slurp`, and `hyprctl` for the older OCR workflow code paths
-- `ollama` for translating
-
-## Build
+Then launch the GUI from your app launcher or run:
 
 ```sh
-go build ./...
-```
-
-## Launcher install
-
-Install the `ymn` binary, the `ymn-guiv2` launcher wrapper, and the desktop entry used by Wofi and other app launchers:
-
-```sh
-sudo make install PREFIX=/usr
-```
-
-After installing, launch the v2 GUI with either:
-
-```sh
-ymn guiv2
 ymn-guiv2
 ```
 
-For package validation:
+You can also launch it through the main binary:
 
 ```sh
-makepkg -si
-makepkg --printsrcinfo > .SRCINFO
-namcap PKGBUILD
-namcap *.pkg.tar.zst
+ymn guiv2
 ```
 
-## AUR publish
+## Required Packages
 
-The AUR package is a separate Git repository. The Makefile keeps that checkout under `.aur/ymn-git`, copies `PKGBUILD` and `.SRCINFO` into it, commits, and pushes:
+The Arch package declares these runtime dependencies:
 
-```sh
-make aur-push
+- `ffmpeg`
+- `glibc`
+- `gst-plugins-base-libs`
+- `gstreamer`
+- `libx11`
+- `libxkbcommon`
+- `mesa`
+- `mpv`
+- `wayland`
+- `wine`
+
+For manual source builds, you also need:
+
+- `go`
+- `git`
+- `pkgconf`
+
+## Optional Packages
+
+Install these only for the workflows you use:
+
+- `ollama`: local translation backend.
+- `steam`: Steam/Proton launch flows.
+- `gamescope`: Gamescope runner configs.
+- `winetricks`: automatic or configured Wine dependency installs.
+- `tesseract`: legacy OCR workflow.
+- `grim`: Wayland screenshot capture for legacy OCR.
+- `slurp`: Wayland region selection for legacy OCR.
+- Anki with AnkiConnect: flashcard sync from Yomuna to Anki.
+
+## How To Use
+
+1. Open `ymn-guiv2`.
+2. Go to **Add Game** and install or create a game config. Enable text hook installation when the game supports it.
+3. Use **Game** to review and adjust Wine, Gamescope, runner, and winetricks settings for that game.
+4. Use **Transcript** to select the game, launch it, choose the active hook if needed, and read captured text.
+5. Select transcript text or sentence tokens to inspect vocabulary and create flashcards.
+6. Use **Flashcards** to search, edit, delete, page through, and sync saved cards to Anki.
+7. Use **Settings** to configure translation language, Ollama settings, notification level, theme, font sizes, and storage locations.
+
+## Translation
+
+Yomuna currently defaults to an Ollama translation backend. The default endpoint is:
+
+```text
+http://localhost:11434
 ```
 
-To build the package first and then push the AUR metadata:
+The default model is:
 
-```sh
-make aur-release
+```text
+translategemma:4b
 ```
 
-Override the AUR remote if needed:
+You can change the model and endpoint from **Settings**. Make sure Ollama is running and the selected model is installed before using auto-translate.
 
-```sh
-make aur-push AUR_REMOTE=ssh://aur@aur.archlinux.org/ymn-git.git
+## Anki Sync
+
+Flashcards can be synced to Anki through AnkiConnect at:
+
+```text
+http://127.0.0.1:8765
 ```
 
+Start Anki, enable the AnkiConnect add-on, select a game in Yomuna, then press **Sync Anki** from the Flashcards page.
 
-## TODO
-* add more to v2 gui pkg
-  * modal - center,left,right - size
-  * toast notifcations, center,left right,bottom,top, 
-  * topbar with animations, build on tabs
-  * tabs with animations
-  * sidebar with tabs/animations
-  * 
+## Storage
 
-* implement key press + keybinding
-* add more to panel
-* create a backroundapi interface that all gui pkgs hit so i can easly mock it
-* add a scrollbar
-* add exit button on sidebar
-* add a copy/highlight text component
+Yomuna stores app settings, transcript settings, translator settings, flashcards, exports, translations, dictionary data, voices, and game configs under your user config/data directories. The **Settings** page shows the exact paths and current size of each storage item.
 
+## Development
 
-## future features
-- multi language
+Development, source-build, packaging, and AUR maintenance notes live in [DEVELOPMENT.md](./DEVELOPMENT.md).
