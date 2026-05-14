@@ -15,6 +15,7 @@ import (
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/input"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/row"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/toggles"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/notifications"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
@@ -43,6 +44,11 @@ type SettingsUI struct {
 	ollamaModelInput   *input.TextInput
 	ollamaBaseURLInput *input.TextInput
 
+	notificationSettings *NotificationSettings
+	notificationDropdown *dropdowns.Dropdown
+	saveNotifications    widget.Clickable
+	notificationStatus   string
+
 	theme *theme.Client
 }
 
@@ -67,6 +73,12 @@ type TranslatorSettings struct {
 	Save             func() error
 }
 
+type NotificationSettings struct {
+	Level    func() notifications.NotificationType
+	SetLevel func(notifications.NotificationType)
+	Save     func() error
+}
+
 func NewSettingsUI(tc *theme.Client) *SettingsUI {
 	if tc == nil {
 		tc = theme.DefaultThemeClient
@@ -81,6 +93,10 @@ func NewSettingsUI(tc *theme.Client) *SettingsUI {
 			WithThemeClient(tc),
 		ollamaBaseURLInput: input.NewTextInput("Endpoint", "http://localhost:11434").
 			WithThemeClient(tc),
+		notificationDropdown: dropdowns.NewDropdown(notificationLevelItems()).
+			WithThemeClient(tc).
+			WithRole(theme.TextRoleLabel).
+			WithMenuAbove(),
 	}
 	ui.ollamaModelInput.LeadingIcon = "lucide:brain"
 	ui.ollamaBaseURLInput.LeadingIcon = "lucide:server"
@@ -123,6 +139,30 @@ func (ui *SettingsUI) WithTranslatorSettings(settings *TranslatorSettings) *Sett
 	return ui
 }
 
+func (ui *SettingsUI) WithNotificationSettings(settings *NotificationSettings) *SettingsUI {
+	if ui == nil {
+		return ui
+	}
+	ui.notificationSettings = settings
+	ui.syncNotificationSelection()
+	if ui.notificationDropdown != nil {
+		ui.notificationDropdown.SelectItemEvent(func(item dropdowns.DropdownItem, valid bool) {
+			if !valid {
+				return
+			}
+			level, ok := notifications.ParseLevel(item.Value)
+			if !ok {
+				return
+			}
+			if ui.notificationSettings != nil && ui.notificationSettings.SetLevel != nil {
+				ui.notificationSettings.SetLevel(level)
+			}
+			ui.notificationStatus = "Unsaved notification changes"
+		})
+	}
+	return ui
+}
+
 func (ui *SettingsUI) Layout(gtx layout.Context, layer *overlay.Overlay) layout.Dimensions {
 	if ui == nil {
 		return layout.Dimensions{}
@@ -139,6 +179,9 @@ func (ui *SettingsUI) Layout(gtx layout.Context, layer *overlay.Overlay) layout.
 		},
 		ui.layoutTranscriptSettings,
 		ui.layoutTranslatorSettings,
+		func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutNotificationSettings(gtx, layer)
+		},
 	}
 
 	return layout.Inset{Top: unit.Dp(16), Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -178,6 +221,17 @@ func (ui *SettingsUI) syncTranslatorInputs() {
 	if ui.ollamaBaseURLInput != nil && ui.translatorSettings.OllamaBaseURL != nil {
 		ui.ollamaBaseURLInput.SetText(ui.translatorSettings.OllamaBaseURL())
 	}
+}
+
+func (ui *SettingsUI) syncNotificationSelection() {
+	if ui == nil || ui.notificationDropdown == nil {
+		return
+	}
+	level := notifications.NotificationTypeInfo
+	if ui.notificationSettings != nil && ui.notificationSettings.Level != nil {
+		level = ui.notificationSettings.Level()
+	}
+	ui.notificationDropdown.SelectItem(notifications.LevelValue(level))
 }
 
 func (ui *SettingsUI) layoutTranscriptSettings(gtx layout.Context) layout.Dimensions {
@@ -223,6 +277,59 @@ func (ui *SettingsUI) layoutTranscriptSettings(gtx layout.Context) layout.Dimens
 	)
 }
 
+func (ui *SettingsUI) layoutNotificationSettings(gtx layout.Context, layer *overlay.Overlay) layout.Dimensions {
+	if ui.notificationSettings == nil {
+		return layout.Dimensions{}
+	}
+	ui.syncNotificationSelection()
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Notifications")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return row.New("Notification level", "Minimum notification type shown in the app.").WithThemeClient(ui.theme).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if ui.notificationDropdown == nil {
+					return layout.Dimensions{}
+				}
+				ui.notificationDropdown.Width = unit.Dp(240)
+				return ui.notificationDropdown.Layout(gtx, layer)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSaveNotificationSettings(gtx)
+		}),
+	)
+}
+
+func (ui *SettingsUI) layoutSaveNotificationSettings(gtx layout.Context) layout.Dimensions {
+	if ui.notificationSettings == nil || ui.notificationSettings.Save == nil {
+		return layout.Dimensions{}
+	}
+	for ui.saveNotifications.Clicked(gtx) {
+		if err := ui.notificationSettings.Save(); err != nil {
+			ui.notificationStatus = "Save failed"
+		} else {
+			ui.notificationStatus = "Notification settings saved"
+			notifications.Success(ui.notificationStatus)
+		}
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutPrimaryButton(gtx, &ui.saveNotifications, "Save Notification Settings")
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if ui.notificationStatus == "" {
+				return layout.Dimensions{}
+			}
+			return theme.ThemedLabel(gtx, material.NewTheme(), ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, ui.notificationStatus)
+		}),
+	)
+}
+
 func (ui *SettingsUI) layoutFontSizeRow(gtx layout.Context, label, description string, get func() unit.Sp, set func(unit.Sp), down, up *widget.Clickable) layout.Dimensions {
 	return row.New(label, description).WithThemeClient(ui.theme).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		size := unit.Sp(0)
@@ -257,6 +364,25 @@ func (ui *SettingsUI) layoutFontSizeRow(gtx layout.Context, label, description s
 			}),
 		)
 	})
+}
+
+func notificationLevelItems() []dropdowns.DropdownItem {
+	levels := []notifications.NotificationType{
+		notifications.NotificationTypeDebug,
+		notifications.NotificationTypeInfo,
+		notifications.NotificationTypeSuccess,
+		notifications.NotificationTypeWarning,
+		notifications.NotificationTypeError,
+		notifications.NotificationTypeOff,
+	}
+	items := make([]dropdowns.DropdownItem, 0, len(levels))
+	for _, level := range levels {
+		items = append(items, dropdowns.DropdownItem{
+			Label: notifications.LevelLabel(level),
+			Value: notifications.LevelValue(level),
+		})
+	}
+	return items
 }
 
 func (ui *SettingsUI) layoutTranscriptLineLimitRow(gtx layout.Context) layout.Dimensions {

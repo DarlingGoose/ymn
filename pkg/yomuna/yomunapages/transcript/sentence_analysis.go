@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"strings"
 	"sync"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/unit"
@@ -15,6 +16,8 @@ import (
 	"github.com/DarlingGoose/ymn/pkg/japanese"
 	"github.com/DarlingGoose/ymn/pkg/translation"
 	"github.com/DarlingGoose/ymn/pkg/util"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/animations/tween"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/notifications"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
 	"github.com/DarlingGoose/ymn/pkg/yomuna/backend"
@@ -62,11 +65,16 @@ type SentenceAnalysis struct {
 	lookupFontSize   unit.Sp
 	lookupAudio      map[string]*lookupAudioState
 	invalidate       func()
+	lookupBarFlip    *tween.Flip
 
-	flashcards       []flashcards.Flashcard
-	flashcardGame    string
-	flashcardStatus  string
-	flashcardLoadErr string
+	flashcards        []flashcards.Flashcard
+	flashcardGame     string
+	flashcardStatus   string
+	flashcardLoadErr  string
+	lastLookupQuery   string
+	lastLookupErr     string
+	lastLookupPending bool
+	lastLookupResults []*jpndict.Response
 
 	sentenceFontSize  unit.Sp
 	furigiganFontSize unit.Sp
@@ -95,6 +103,7 @@ func NewSentenceAnalysis(th *material.Theme, backend backend.Backend) *SentenceA
 		focusedTokenClicks:     make(map[string]*widget.Clickable),
 		lookupAudioClicks:      make(map[string]*widget.Clickable),
 		lookupAudio:            make(map[string]*lookupAudioState),
+		lookupBarFlip:          tween.NewFlip(180*time.Millisecond, tween.EaseOutCubic),
 	}
 }
 
@@ -269,6 +278,7 @@ func (t *SentenceAnalysis) addSelectedTokenFlashcard() {
 	gameName := t.activeGameName()
 	if gameName == "" {
 		t.flashcardStatus = "Select a game before creating flashcards."
+		notifications.Warning(t.flashcardStatus)
 		t.invalidateUI()
 		return
 	}
@@ -276,27 +286,32 @@ func (t *SentenceAnalysis) addSelectedTokenFlashcard() {
 	token, ok := t.selectedToken()
 	if !ok {
 		t.flashcardStatus = "Select a token first."
+		notifications.Warning(t.flashcardStatus)
 		t.invalidateUI()
 		return
 	}
 	if !canCreateStructureFlashcard(token) {
 		t.flashcardStatus = "This token is not a vocabulary flashcard candidate."
+		notifications.Warning(t.flashcardStatus)
 		t.invalidateUI()
 		return
 	}
 	if _, exists := t.structureTokenFlashcard(token); exists {
 		t.flashcardStatus = structureFlashcardWord(token) + " is already saved."
+		notifications.Info(t.flashcardStatus)
 		t.invalidateUI()
 		return
 	}
 	_, _, _, pending, results := t.lookupSnapshot()
 	if pending {
 		t.flashcardStatus = "Wait for dictionary lookup before creating a flashcard."
+		notifications.Info(t.flashcardStatus)
 		t.invalidateUI()
 		return
 	}
 	if len(results) == 0 && strings.TrimSpace(t.selectedFocusedTokenNote) == "" {
 		t.flashcardStatus = "No dictionary result is available for this token."
+		notifications.Warning(t.flashcardStatus)
 		t.invalidateUI()
 		return
 	}
@@ -304,17 +319,20 @@ func (t *SentenceAnalysis) addSelectedTokenFlashcard() {
 	card := t.flashcardFromSelectedToken(token)
 	if err := card.Valid(); err != nil {
 		t.flashcardStatus = err.Error()
+		notifications.Error(t.flashcardStatus)
 		t.invalidateUI()
 		return
 	}
 	if err := flashcards.AddFlashcard(card); err != nil {
 		t.flashcardStatus = err.Error()
+		notifications.Error(t.flashcardStatus)
 		t.invalidateUI()
 		return
 	}
 
 	t.reloadFlashcards(gameName)
 	t.flashcardStatus = card.Text + " added to flashcards."
+	notifications.Success(t.flashcardStatus)
 	t.invalidateUI()
 }
 

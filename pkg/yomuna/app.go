@@ -16,6 +16,7 @@ import (
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/tabs"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/notifications"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/panel"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
@@ -33,9 +34,10 @@ type App struct {
 	ctx   context.Context
 	win   *gioapp.Window
 
-	Sidebar      *sidebar.CollapsibleSidebar
-	ToggleButton *components.IconButton
-	Overlay      *overlay.Overlay
+	Sidebar       *sidebar.CollapsibleSidebar
+	ToggleButton  *components.IconButton
+	Overlay       *overlay.Overlay
+	Notifications *notifications.Client
 
 	Translation *yomunapages.TranslationUI
 	Flashcards  *yomunapages.FlashcardsUI
@@ -60,11 +62,15 @@ func New(initialSource string) *App {
 	legacyIconify := bareicons.NewIconify()
 
 	b := backend.NewLive()
+	appPrefs := loadAppPreferences()
+	notificationClient := notifications.DefaultNotificationClient.WithThemeClient(tc).WithMaterialTheme(th)
+	notificationClient.NotificationLevel = appPrefs.notificationLevel()
 	ui := &App{
 		th:             th,
 		theme:          tc,
 		ctx:            context.Background(),
 		Overlay:        &overlay.Overlay{},
+		Notifications:  notificationClient,
 		Transcript:     transcript.NewTranscriptUI(th, tc, b),
 		Translation:    yomunapages.NewTranslationUI(th, tc).WithSource(initialSource),
 		Flashcards:     yomunapages.NewFlashcardsUI(th, tc, b),
@@ -106,6 +112,24 @@ func New(initialSource string) *App {
 				return err
 			}
 			translatorCfg = b.TranslatorConfig()
+			return nil
+		},
+	})
+	ui.Settings.WithNotificationSettings(&pages.NotificationSettings{
+		Level: func() notifications.NotificationType {
+			return notificationClient.NotificationLevel
+		},
+		SetLevel: func(level notifications.NotificationType) {
+			notificationClient.NotificationLevel = level
+			appPrefs.NotificationLevel = notifications.LevelValue(level)
+		},
+		Save: func() error {
+			appPrefs.NotificationLevel = notifications.LevelValue(notificationClient.NotificationLevel)
+			if err := saveAppPreferences(appPrefs); err != nil {
+				return err
+			}
+			appPrefs = loadAppPreferences()
+			notificationClient.NotificationLevel = appPrefs.notificationLevel()
 			return nil
 		},
 	})
@@ -203,10 +227,13 @@ func (ui *App) Layout(gtx layout.Context, ctx context.Context, window *gioapp.Wi
 	if ui.Transcript != nil && window != nil {
 		ui.Transcript.WithInvalidate(window.Invalidate)
 	}
+	if ui.Notifications != nil && window != nil {
+		ui.Notifications.WithInvalidate(window.Invalidate)
+	}
 	ui.syncLegacyTranscript(gtx, ctx, window)
 
 	return ui.Overlay.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return ui.Sidebar.Layout(
+		dims := ui.Sidebar.Layout(
 			gtx,
 			ui.layoutSidebar,
 			func(gtx layout.Context) layout.Dimensions {
@@ -218,6 +245,10 @@ func (ui *App) Layout(gtx layout.Context, ctx context.Context, window *gioapp.Wi
 				})
 			},
 		)
+		if ui.Notifications != nil {
+			ui.Overlay.Add(gtx, ui.Notifications)
+		}
+		return dims
 	})
 }
 

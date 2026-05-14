@@ -1,19 +1,24 @@
 package transcript
 
 import (
+	"image"
 	"image/color"
 	"strconv"
 	"strings"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	bareutils "github.com/DarlingGoose/bare/pkg/ui/utils"
 	"github.com/DarlingGoose/jpndict"
 	"github.com/DarlingGoose/ymn/pkg/japanese"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/animations/tween"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/utils"
@@ -336,27 +341,77 @@ func (t *SentenceAnalysis) layoutFocusedTokenReading(gtx layout.Context, reading
 }
 
 func (t *SentenceAnalysis) layoutFocusedTokenMarker(gtx layout.Context, inFlashcards, dictionaryReady bool) layout.Dimensions {
-	text := " "
 	fg := t.tc.GetCurrentColorToken().TextMutedNRGBA()
 	if inFlashcards {
-		text = "✓"
 		fg = t.tc.GetCurrentColorToken().PrimaryNRGBA()
-	} else if dictionaryReady {
-		text = "·"
-		fg = t.tc.GetCurrentColorToken().SecondaryNRGBA()
+		return iconify.DefaultIconify.Layout(gtx, "lucide:check", unit.Dp(12), fg)
 	}
-	lbl := material.Body2(t.th, text)
-	theme.ApplyTypography(&lbl, t.tc.GetCurrentTypography(), theme.TextRoleLabelSmall)
-	lbl.Color = fg
-	return lbl.Layout(gtx)
+	if dictionaryReady {
+		fg := t.tc.GetCurrentColorToken().SecondaryNRGBA()
+		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			size := gtx.Dp(unit.Dp(4))
+			if size < 2 {
+				size = 2
+			}
+			return utils.RoundedSurface(gtx, unit.Dp(2), fg, func(gtx layout.Context) layout.Dimensions {
+				return layout.Dimensions{Size: image.Pt(size, size)}
+			})
+		})
+	}
+	return layout.Dimensions{Size: image.Pt(gtx.Dp(unit.Dp(12)), gtx.Dp(unit.Dp(12)))}
 }
 
 func (t *SentenceAnalysis) layoutSelectedTokenLookup(gtx layout.Context) layout.Dimensions {
 	query, _, errText, pending, results := t.lookupSnapshot()
+	visible := strings.TrimSpace(query) != ""
+	if visible {
+		t.lastLookupQuery = query
+		t.lastLookupErr = errText
+		t.lastLookupPending = pending
+		t.lastLookupResults = append([]*jpndict.Response(nil), results...)
+		if t.lookupBarFlip != nil && !t.lookupBarFlip.Expanded() {
+			t.lookupBarFlip.Expand()
+		}
+	} else if t.lookupBarFlip != nil && t.lookupBarFlip.Expanded() {
+		t.lookupBarFlip.Collapse()
+	}
+
+	progress := 1.0
+	running := false
+	if t.lookupBarFlip != nil {
+		progress, running = t.lookupBarFlip.Value(time.Now())
+	}
+	if running {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	if progress <= 0 {
+		return layout.Dimensions{}
+	}
+	if !visible {
+		query = t.lastLookupQuery
+		errText = t.lastLookupErr
+		pending = t.lastLookupPending
+		results = append([]*jpndict.Response(nil), t.lastLookupResults...)
+	}
 	if strings.TrimSpace(query) == "" {
 		return layout.Dimensions{}
 	}
 
+	macro := op.Record(gtx.Ops)
+	dims := t.layoutSelectedTokenLookupContent(gtx, query, errText, pending, results)
+	call := macro.Stop()
+
+	height := tween.MapInt(progress, 0, dims.Size.Y)
+	if height <= 0 {
+		return layout.Dimensions{}
+	}
+	clipStack := clip.Rect{Max: image.Pt(dims.Size.X, height)}.Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	clipStack.Pop()
+	return layout.Dimensions{Size: image.Pt(dims.Size.X, height)}
+}
+
+func (t *SentenceAnalysis) layoutSelectedTokenLookupContent(gtx layout.Context, query, errText string, pending bool, results []*jpndict.Response) layout.Dimensions {
 	ct := t.tc.GetCurrentColorToken()
 	return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return utils.Surface(gtx, ct.BackgroundNRGBA(), unit.Dp(8), func(gtx layout.Context) layout.Dimensions {

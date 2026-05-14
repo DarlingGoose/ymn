@@ -17,6 +17,7 @@ import (
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/modal"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/notifications"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/panel"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
@@ -370,6 +371,7 @@ func (ui *FlashcardsUI) saveModal(gameName string) {
 	gameName = strings.TrimSpace(gameName)
 	if gameName == "" {
 		ui.status = "Select a game before saving flashcards."
+		notifications.Warning(ui.status)
 		return
 	}
 
@@ -387,9 +389,11 @@ func (ui *FlashcardsUI) saveModal(gameName string) {
 	if strings.TrimSpace(ui.editingID) == "" {
 		if err := flashcards.AddFlashcard(card); err != nil {
 			ui.status = err.Error()
+			notifications.Error(ui.status)
 			return
 		}
 		ui.status = card.Text + " added."
+		notifications.Success(ui.status)
 	} else {
 		for _, existing := range ui.cards {
 			if existing.ID == ui.editingID {
@@ -400,9 +404,11 @@ func (ui *FlashcardsUI) saveModal(gameName string) {
 		}
 		if err := flashcards.UpdateFlashcard(card); err != nil {
 			ui.status = err.Error()
+			notifications.Error(ui.status)
 			return
 		}
 		ui.status = card.Text + " saved."
+		notifications.Success(ui.status)
 	}
 	ui.reload(gameName)
 	if ui.editorModal != nil {
@@ -425,18 +431,22 @@ func (ui *FlashcardsUI) deleteCard(gameName, id string) {
 	}
 	if target.ID == "" {
 		ui.status = "Flashcard not found."
+		notifications.Warning(ui.status)
 		return
 	}
 	client := anki.New(anki.DefaultAnkiConnectURL)
 	if err := client.DeleteFlashcardFromAnki(target, anki.DefaultAnkiConnectURL, false); err != nil {
 		ui.status = err.Error()
+		notifications.Error(ui.status)
 		return
 	}
 	if err := flashcards.DeleteFlashcard(gameName, id); err != nil {
 		ui.status = err.Error()
+		notifications.Error(ui.status)
 		return
 	}
 	ui.status = target.Text + " deleted."
+	notifications.Success(ui.status)
 	ui.reload(gameName)
 }
 
@@ -444,6 +454,7 @@ func (ui *FlashcardsUI) startSyncAnki(gameName string) {
 	gameName = strings.TrimSpace(gameName)
 	if gameName == "" {
 		ui.status = "Select a game before syncing Anki."
+		notifications.Warning(ui.status)
 		return
 	}
 	if ui.syncing {
@@ -452,9 +463,15 @@ func (ui *FlashcardsUI) startSyncAnki(gameName string) {
 	ui.syncing = true
 	ui.syncGame = gameName
 	ui.status = "Syncing Anki..."
+	notifications.Info("Syncing Anki...")
 
 	go func() {
 		result, err := anki.New(anki.DefaultAnkiConnectURL).SyncFlashcardsToAnki(gameName, anki.DefaultAnkiConnectURL, true)
+		if err != nil {
+			notifications.Error(err.Error())
+		} else {
+			notifications.Success(fmt.Sprintf("Synced %s: %d created, %d updated.", result.DeckName, result.Created, result.Updated))
+		}
 		ui.syncResult <- flashcardSyncResult{gameName: gameName, result: result, err: err}
 	}()
 }
