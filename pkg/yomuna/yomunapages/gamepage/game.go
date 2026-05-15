@@ -168,7 +168,7 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 		imageBrowse:              components.NewIconButton("Browse", nil, folderIcon).WithThemeClient(tc),
 		runnerBrowse:             components.NewIconButton("Browse", nil, folderIcon).WithThemeClient(tc),
 		prefixBrowse:             components.NewIconButton("Browse", nil, folderIcon).WithThemeClient(tc),
-		coverPreview:             media.NewView(media.DefaultRegistry),
+		coverPreview:             media.NewView(media.DefaultRegistry).WithImageFit(widget.Contain),
 		winetrickCommonClicks:    map[string]*widget.Clickable{},
 		winetrickRemoveClicks:    map[string]*widget.Clickable{},
 
@@ -580,10 +580,18 @@ func (ui *GameUI) layoutDivider(gtx layout.Context) layout.Dimensions {
 
 func (ui *GameUI) layoutHeaderPreview(gtx layout.Context) layout.Dimensions {
 	ct := ui.theme.GetCurrentColorToken()
+	hasCover := ui.coverPreview != nil && strings.TrimSpace(ui.coverPreviewPath) != ""
 	width := gtx.Dp(unit.Dp(184))
 	height := gtx.Dp(unit.Dp(132))
+	if hasCover {
+		width = gtx.Dp(unit.Dp(260))
+		height = gtx.Dp(unit.Dp(178))
+	}
 	if gtx.Constraints.Max.X < gtx.Dp(unit.Dp(520)) {
 		width = gtx.Constraints.Max.X
+		if hasCover {
+			height = gtx.Dp(unit.Dp(210))
+		}
 	}
 	gtx.Constraints.Min.X = width
 	gtx.Constraints.Max.X = width
@@ -591,7 +599,7 @@ func (ui *GameUI) layoutHeaderPreview(gtx layout.Context) layout.Dimensions {
 	gtx.Constraints.Max.Y = height
 
 	return utils.SurfaceOutlined(gtx, ct.SurfaceNRGBA(), unit.Dp(8), utils.SurfaceBorder{Color: ct.BorderNRGBA(), Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
-		if ui.coverPreview != nil && strings.TrimSpace(ui.coverPreviewPath) != "" {
+		if hasCover {
 			return layout.Center.Layout(gtx, ui.coverPreview.Layout)
 		}
 		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -716,8 +724,8 @@ func (ui *GameUI) layoutGameFields(gtx layout.Context) layout.Dimensions {
 		layout.Flexed(1, fields),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(14)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.X = gtx.Dp(unit.Dp(220))
-			gtx.Constraints.Max.X = gtx.Dp(unit.Dp(220))
+			gtx.Constraints.Min.X = gtx.Dp(unit.Dp(300))
+			gtx.Constraints.Max.X = gtx.Dp(unit.Dp(300))
 			return ui.layoutCoverPreview(gtx)
 		}),
 	)
@@ -727,7 +735,10 @@ func (ui *GameUI) layoutCoverPreview(gtx layout.Context) layout.Dimensions {
 	ct := ui.theme.GetCurrentColorToken()
 	return ui.layoutField(gtx, "Cover preview", "Rendered from the selected cover image path.", func(gtx layout.Context) layout.Dimensions {
 		return utils.SurfaceOutlined(gtx, ct.SurfaceAltNRGBA(), unit.Dp(8), utils.SurfaceBorder{Color: ct.BorderNRGBA(), Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
-			height := gtx.Dp(unit.Dp(150))
+			height := gtx.Dp(unit.Dp(240))
+			if gtx.Constraints.Max.X < gtx.Dp(unit.Dp(720)) {
+				height = gtx.Dp(unit.Dp(220))
+			}
 			gtx.Constraints.Min.Y = height
 			gtx.Constraints.Max.Y = height
 			if ui.coverPreview == nil || strings.TrimSpace(ui.coverPreviewPath) == "" {

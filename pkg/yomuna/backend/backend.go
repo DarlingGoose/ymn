@@ -27,6 +27,7 @@ type GameLogic interface {
 	ReloadGames() error
 	GetGames() []*game.Game
 	InstallGameConfig(ctx context.Context, inputPath string, installHook bool) (*game.Game, error)
+	InstallGameWithInstaller(ctx context.Context, installerPath, gamePath string, installHook bool) (*game.Game, error)
 	RunGame(ctx context.Context, g *game.Game) (*gr.Process, error)
 	MissingWinetrickDependencies(g *game.Game) ([]string, error)
 	FollowGameText(ctx context.Context, g *game.Game) (chan engine.Line, error)

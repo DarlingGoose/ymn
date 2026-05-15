@@ -26,7 +26,7 @@ make build
 
 Install the `ymn` binary, GUI launcher wrapper, desktop entry, and license file:
 
-```sh
+```sh![create-a-clean--modern-svg-app-icon-for--yomuna---.png](create-a-clean--modern-svg-app-icon-for--yomuna---.png)
 sudo make install PREFIX=/usr
 ```
 
