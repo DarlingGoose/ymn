@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"gioui.org/layout"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media/player"
 )
@@ -13,6 +14,7 @@ type View struct {
 
 	Source   player.Source
 	Renderer player.Renderer
+	ImageFit widget.Fit
 
 	LastError error
 }
@@ -25,6 +27,15 @@ func NewView(registry *Registry) *View {
 	return &View{
 		Registry: registry,
 	}
+}
+
+func (v *View) WithImageFit(fit widget.Fit) *View {
+	if v == nil {
+		return v
+	}
+	v.ImageFit = fit
+	v.applyImageFit()
+	return v
 }
 
 func (v *View) LoadPath(ctx context.Context, path string) error {
@@ -50,9 +61,19 @@ func (v *View) Load(ctx context.Context, src player.Source) error {
 
 	v.Source = src
 	v.Renderer = renderer
+	v.applyImageFit()
 	v.LastError = nil
 
 	return nil
+}
+
+func (v *View) applyImageFit() {
+	if v == nil || v.ImageFit == 0 {
+		return
+	}
+	if renderer, ok := v.Renderer.(*ImageRenderer); ok {
+		renderer.View.Fit = v.ImageFit
+	}
 }
 
 func (v *View) Close() error {

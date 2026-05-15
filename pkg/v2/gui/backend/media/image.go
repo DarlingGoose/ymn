@@ -18,15 +18,16 @@ import (
 
 type ImageView struct {
 	Path string
+	Fit  widget.Fit
 
 	mu sync.RWMutex
 
 	img image.Image
 	op  paint.ImageOp
 
-	loadedPath string
+	loadedPath  string
 	loadingPath string
-	err        error
+	err         error
 }
 
 func (v *ImageView) Load(path string) error {
@@ -95,10 +96,17 @@ func (v *ImageView) Draw(gtx layout.Context) layout.Dimensions {
 
 	return widget.Image{
 		Src:      imgOp,
-		Fit:      widget.ScaleDown,
+		Fit:      v.fit(),
 		Position: layout.Center,
 		Scale:    1.0 / gtx.Metric.PxPerDp,
 	}.Layout(gtx)
+}
+
+func (v *ImageView) fit() widget.Fit {
+	if v == nil || v.Fit == 0 {
+		return widget.ScaleDown
+	}
+	return v.Fit
 }
 
 func (v *ImageView) Loading() bool {

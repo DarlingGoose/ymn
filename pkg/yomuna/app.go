@@ -19,6 +19,7 @@ import (
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/layouts/sidebar"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/pages"
+	"github.com/DarlingGoose/ymn/pkg/yomuna/assets"
 	"github.com/DarlingGoose/ymn/pkg/yomuna/backend"
 	"github.com/DarlingGoose/ymn/pkg/yomuna/yomunapages"
 	"github.com/DarlingGoose/ymn/pkg/yomuna/yomunapages/gamepage"
@@ -150,7 +151,7 @@ func New(initialSource string) *App {
 	ui.Sidebar = sidebar.NewCollapsibleSidebar(appTabs).
 		WithThemeClient(tc).
 		WithTitle("Yomuna").
-		WithIcon("lucide:book-open").
+		WithImage(assets.YomunaLogo()).
 		WithExitButton(true)
 
 	return ui

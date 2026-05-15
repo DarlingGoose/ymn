@@ -12,7 +12,9 @@ import (
 	"sync"
 
 	"github.com/DarlingGoose/gr"
+	"github.com/DarlingGoose/gr/autorunner"
 	"github.com/DarlingGoose/gr/gamescope"
+	grinstaller "github.com/DarlingGoose/gr/installer"
 	"github.com/DarlingGoose/jpndict"
 	"github.com/DarlingGoose/jpndict/translate"
 	"github.com/DarlingGoose/tr/pkg/textractor"
@@ -150,6 +152,79 @@ func (b *LiveBackend) InstallGameConfig(ctx context.Context, inputPath string, i
 		return nil, err
 	}
 	b.SelectGameByName(g.Name)
+	return b.CurrentGame(), nil
+}
+
+func (b *LiveBackend) InstallGameWithInstaller(ctx context.Context, installerPath, gamePath string, installHook bool) (*game.Game, error) {
+	installerPath = strings.TrimSpace(installerPath)
+	gamePath = strings.TrimSpace(gamePath)
+	if installerPath == "" {
+		return nil, fmt.Errorf("installer path is required")
+	}
+	if gamePath == "" {
+		return nil, fmt.Errorf("game path is required")
+	}
+
+	g, err := b.InstallGameConfig(ctx, gamePath, installHook)
+	if err != nil {
+		return nil, err
+	}
+	if g == nil {
+		return nil, fmt.Errorf("game config was not created")
+	}
+
+	prefix := strings.TrimSpace(g.PrefixPath)
+	if prefix == "" {
+		return nil, fmt.Errorf("wine prefix is required to run installer")
+	}
+
+	r, err := autorunner.NewRunner(prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	useGamescope := false
+	if cfg, ok := autorunner.RunnerConfigFor(r); ok {
+		useGamescope = cfg.UseGamescope
+	}
+
+	plan, err := grinstaller.Plan(grinstaller.RunConfig{
+		InstallerPath: installerPath,
+		GamePath:      gamePath,
+		Auto: autorunner.DefaultOptionsConfig{
+			WinePrefix:   prefix,
+			UseGamescope: useGamescope,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if plan.InstallerOptions.ExePath != "" {
+		if _, err := r.Run(ctx, plan.InstallerOptions.ExePath, plan.InstallerOptions.Options...); err != nil {
+			return nil, fmt.Errorf("run installer: %w", err)
+		}
+	}
+
+	gameOpts := append([]gr.Option(nil), plan.GameOptions.Options...)
+	gameOpts = append(gameOpts, gr.WithBackground(true))
+	proc, err := r.Run(ctx, plan.GameOptions.ExePath, gameOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("run game: %w", err)
+	}
+
+	if err := b.ReloadGames(); err != nil {
+		return nil, err
+	}
+	b.gameMu.Lock()
+	b.current = findGameByName(b.games, g.Name)
+	if b.current == nil {
+		b.current = g
+	}
+	b.currentRun = proc
+	b.config.SelectGameName = g.Name
+	b.gameMu.Unlock()
+
 	return b.CurrentGame(), nil
 }
 

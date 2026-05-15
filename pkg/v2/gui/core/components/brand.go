@@ -11,6 +11,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
@@ -231,12 +232,12 @@ func (b *Brand) layoutImage(gtx layout.Context, sizePx int) layout.Dimensions {
 	clipStack := clip.UniformRRect(rect, gtx.Dp(b.Radius)).Push(gtx.Ops)
 	defer clipStack.Pop()
 
-	op := paint.NewImageOp(b.Image)
-	op.Add(gtx.Ops)
-
-	paint.PaintOp{}.Add(gtx.Ops)
-
-	return layout.Dimensions{Size: rect.Size()}
+	return widget.Image{
+		Src:      paint.NewImageOp(b.Image),
+		Fit:      widget.Cover,
+		Position: layout.Center,
+		Scale:    1.0 / gtx.Metric.PxPerDp,
+	}.Layout(gtx)
 }
 
 func (b *Brand) layoutFallbackAcronym(gtx layout.Context, sizePx int) layout.Dimensions {
