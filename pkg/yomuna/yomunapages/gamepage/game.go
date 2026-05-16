@@ -139,7 +139,7 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 		tabList:                 layout.List{Axis: layout.Horizontal},
 		winetrickConfiguredList: layout.List{Axis: layout.Horizontal},
 		winetrickCommonList:     layout.List{Axis: layout.Horizontal},
-		winetrickInstalledList:  layout.List{Axis: layout.Horizontal},
+		winetrickInstalledList:  layout.List{Axis: layout.Vertical},
 
 		gameDropdown: dropdowns.NewDropdown(nil).
 			WithThemeClient(tc).
@@ -950,8 +950,15 @@ func (ui *GameUI) layoutInstalledWinetricks(gtx layout.Context) layout.Dimension
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 	}
 	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		if len(installed) > 6 {
+			maxHeight := gtx.Dp(unit.Dp(180))
+			if gtx.Constraints.Max.Y <= 0 || gtx.Constraints.Max.Y > maxHeight {
+				gtx.Constraints.Max.Y = maxHeight
+			}
+			gtx.Constraints.Min.Y = 0
+		}
 		return ui.winetrickInstalledList.Layout(gtx, len(installed), func(gtx layout.Context, index int) layout.Dimensions {
-			return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutWinetrickChip(gtx, nil, installed[index], false)
 			})
 		})

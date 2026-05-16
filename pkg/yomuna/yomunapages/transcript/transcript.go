@@ -25,6 +25,8 @@ import (
 	"github.com/DarlingGoose/ymn/pkg/yomuna/backend"
 )
 
+const bestDialogueHookFilter = "@ymn:best-dialogue"
+
 type TranscriptUI struct {
 	th         *material.Theme
 	theme      *theme.Client
@@ -37,6 +39,7 @@ type TranscriptUI struct {
 	transcriptList widget.List
 	gameDropdown   *dropdowns.Dropdown
 	hookDropdown   *dropdowns.Dropdown
+	gamesKey       string
 
 	autoTranslateToggle *toggles.Toggle
 	languageOnlyToggle  *toggles.Toggle
@@ -243,25 +246,67 @@ func (ui *TranscriptUI) WithThemeClient(tc *theme.Client) *TranscriptUI {
 }
 
 func (ui *TranscriptUI) ReloadGames() {
+	if ui == nil || ui.backend == nil {
+		return
+	}
+
+	previousSelection := strings.TrimSpace(ui.selectedGameName)
+	if previousSelection == "" && ui.gameDropdown != nil {
+		if item, ok := ui.gameDropdown.SelectedItem(); ok {
+			previousSelection = strings.TrimSpace(item.Value)
+		}
+	}
+
 	ui.gameByName = make(map[string]*game.Game)
 
 	var items []dropdowns.DropdownItem
+	var itemKeys []string
 	for _, g := range ui.backend.GetGames() {
-		if g == nil {
+		if g == nil || strings.TrimSpace(g.Name) == "" {
 			continue
 		}
 
-		ui.gameByName[g.Name] = g
+		name := strings.TrimSpace(g.Name)
+		ui.gameByName[name] = g
 
 		items = append(items, dropdowns.DropdownItem{
-			Label: g.Name,
-			Value: g.Name,
+			Label: name,
+			Value: name,
 		})
+		itemKeys = append(itemKeys, name)
 	}
 
-	ui.gameDropdown.SetItems(items)
+	gamesKey := strings.Join(itemKeys, "\x00")
+	if gamesKey != ui.gamesKey {
+		ui.gameDropdown.SetItems(items)
+		ui.gamesKey = gamesKey
+	}
+
+	if previousSelection != "" {
+		ui.gameDropdown.SelectItem(previousSelection)
+	}
 	if ui.selectedGameName == "" && ui.preferences.SelectedGameName != "" {
 		ui.applyGameSelection(ui.preferences.SelectedGameName, false, false)
+		return
+	}
+	if ui.selectedGameName == "" {
+		if current := ui.backend.CurrentGame(); current != nil && strings.TrimSpace(current.Name) != "" {
+			ui.applyGameSelection(current.Name, false, false)
+		}
+	}
+}
+
+func (ui *TranscriptUI) syncGames() {
+	if ui == nil || ui.backend == nil {
+		return
+	}
+	current := ui.backend.CurrentGame()
+	if current == nil || strings.TrimSpace(current.Name) == "" {
+		return
+	}
+	name := strings.TrimSpace(current.Name)
+	if ui.gameByName == nil || ui.gameByName[name] == nil {
+		ui.ReloadGames()
 	}
 }
 
@@ -487,6 +532,7 @@ func (ui *TranscriptUI) Layout(gtx layout.Context, ctx context.Context) layout.D
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ui.syncGames()
 	ui.update(gtx)
 	return ui.Overlay.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		if ui.controlsModal != nil && ui.controlsModal.Visible {
@@ -839,7 +885,7 @@ func (ui *TranscriptUI) setHookDropdownItems(hooks []string, hasTextractor bool)
 	normalizedHooks := make([]string, 0, len(hooks))
 	for _, hook := range hooks {
 		hook = normalizeHookGroup(hook)
-		if hook == "" {
+		if hook == "" || hook == bestDialogueHookFilter {
 			continue
 		}
 		if _, ok := seen[hook]; ok {
@@ -857,7 +903,13 @@ func (ui *TranscriptUI) setHookDropdownItems(hooks []string, hasTextractor bool)
 	if len(normalizedHooks) > 0 {
 		allHooksLabel = "All Hooks (" + strconv.Itoa(len(normalizedHooks)) + ")"
 	}
-	items := []dropdowns.DropdownItem{{Label: allHooksLabel, Value: ""}}
+	items := []dropdowns.DropdownItem{
+		{Label: allHooksLabel, Value: ""},
+		{Label: hookDropdownLabel(bestDialogueHookFilter), Value: bestDialogueHookFilter},
+	}
+	if selected == bestDialogueHookFilter {
+		selectedPresent = true
+	}
 	for _, hook := range normalizedHooks {
 		items = append(items, dropdowns.DropdownItem{
 			Label: hookDropdownLabel(hook),
@@ -925,7 +977,33 @@ func (ui *TranscriptUI) setSelectedHookFilter(ctx context.Context, hook string) 
 	g.TextHookFilter = append([]string(nil), filters...)
 	ui.hookStatus = ""
 	ui.setHookDropdownItems(currentHookDropdownValues(ui.hookDropdown), ui.hookDropdownOpen)
+	ui.loadSelectedHookHistory(g, filters)
 	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) loadSelectedHookHistory(g *game.Game, filters []string) {
+	if ui == nil || ui.backend == nil || g == nil {
+		return
+	}
+	maxRows := ui.transcriptFollower.MaxTranscriptRows()
+	lines, err := ui.backend.ReadGameTextHookHistory(g, filters, maxRows)
+	if err != nil {
+		ui.hookStatus = err.Error()
+		return
+	}
+
+	ui.transcriptFollower.Reset(g.Name)
+	rows := make([]transcriptRow, 0, len(lines))
+	for _, line := range lines {
+		row := transcriptRowFromEngineLine(line)
+		if ui.languageOnlyToggle != nil && ui.languageOnlyToggle.Checked && !transcriptRowLooksLikeLanguage(row) {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) > 0 {
+		ui.transcriptFollower.AddRows(rows...)
+	}
 }
 
 func (ui *TranscriptUI) transcriptLinePassesHookFilter(hook string) bool {
@@ -933,7 +1011,7 @@ func (ui *TranscriptUI) transcriptLinePassesHookFilter(hook string) bool {
 		return true
 	}
 	selected := normalizeHookGroup(ui.selectedHook)
-	if selected == "" {
+	if selected == "" || selected == bestDialogueHookFilter {
 		return true
 	}
 	return hookMatchesFilter(selected, hook)
@@ -969,6 +1047,9 @@ func hookDropdownLabel(hook string) string {
 	hook = normalizeHookGroup(hook)
 	if hook == "" {
 		return "All Hooks"
+	}
+	if hook == bestDialogueHookFilter {
+		return "Best Dialogue"
 	}
 	return compactHookLabel(hook)
 }
@@ -1217,7 +1298,33 @@ func (ui *TranscriptUI) StartFollowingGame(ctx context.Context, g *game.Game) {
 	})
 	ui.refreshHookDropdown(followCtx, g)
 
+	bestDialogueIn := make(chan *textractor.Line, 128)
+	bestDialogueOut := textractor.BestDialogueLines(bestDialogueIn)
 	go func() {
+		for {
+			select {
+			case <-followCtx.Done():
+				for range bestDialogueOut {
+				}
+				return
+			case line, ok := <-bestDialogueOut:
+				if !ok {
+					return
+				}
+				if normalizeHookGroup(ui.selectedHook) != bestDialogueHookFilter {
+					continue
+				}
+				row := transcriptRowFromEngineLine(engineLineFromTextractorLine(line))
+				if ui.languageOnlyToggle != nil && ui.languageOnlyToggle.Checked && !transcriptRowLooksLikeLanguage(row) {
+					continue
+				}
+				ui.transcriptFollower.AddRows(row)
+			}
+		}
+	}()
+
+	go func() {
+		defer close(bestDialogueIn)
 		for {
 			select {
 			case <-followCtx.Done():
@@ -1235,6 +1342,14 @@ func (ui *TranscriptUI) StartFollowingGame(ctx context.Context, g *game.Game) {
 				}
 
 				ui.ensureHookDropdownOption(line.Hook)
+				select {
+				case bestDialogueIn <- textractorLineFromEngineLine(line):
+				case <-followCtx.Done():
+					return
+				}
+				if normalizeHookGroup(ui.selectedHook) == bestDialogueHookFilter {
+					continue
+				}
 				if !ui.transcriptLinePassesHookFilter(line.Hook) {
 					continue
 				}

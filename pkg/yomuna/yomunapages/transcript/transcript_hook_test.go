@@ -1,6 +1,10 @@
 package transcript
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/DarlingGoose/vntext/pkg/engine"
+)
 
 func TestNormalizeHookGroupKeepsUsefulPrefix(t *testing.T) {
 	hook := normalizeHookGroup(" Thread A@0 ")
@@ -38,6 +42,16 @@ func TestTranscriptDisplayAddsHookLabelOnlyWhenEnabled(t *testing.T) {
 	follower.SetShowHookLabels(true)
 	if got := follower.transcriptRowDisplayText(row); got != "[@0] こんにちは" {
 		t.Fatalf("expected hook-prefixed transcript text, got %q", got)
+	}
+}
+
+func TestTranscriptRowFromEngineLineFallsBackToRawText(t *testing.T) {
+	row := transcriptRowFromEngineLine(engine.Line{
+		Raw: "Textractor: inserting hook: TextOutA",
+	})
+
+	if row.Text != "Textractor: inserting hook: TextOutA" {
+		t.Fatalf("expected raw text fallback, got %q", row.Text)
 	}
 }
 

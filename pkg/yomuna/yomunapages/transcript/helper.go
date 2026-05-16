@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/DarlingGoose/tr/pkg/textractor"
 	"github.com/DarlingGoose/vntext/pkg/engine"
 	"github.com/google/uuid"
 )
@@ -73,10 +74,10 @@ var cleanRe = regexp.MustCompile(`^(\[[a-zA-Z_]*\s*])+`)
 
 func transcriptRowFromEngineLine(line engine.Line) transcriptRow {
 	text := strings.TrimSpace(line.Text)
-
 	if text == "" {
-		text = strings.TrimSpace(fmt.Sprint(line))
+		text = strings.TrimSpace(line.Raw)
 	}
+
 	var info bool
 	if strings.Contains(text, "[system]") {
 		text = cleanRe.ReplaceAllString(text, "")
@@ -91,6 +92,27 @@ func transcriptRowFromEngineLine(line engine.Line) transcriptRow {
 		Raw:     line.Raw,
 		Info:    info,
 		Time:    line.Time.Format("15:04:05"),
+	}
+}
+
+func textractorLineFromEngineLine(line engine.Line) *textractor.Line {
+	return &textractor.Line{
+		Raw:     line.Raw,
+		Hook:    line.Hook,
+		Text:    line.Text,
+		Speaker: line.Speaker,
+	}
+}
+
+func engineLineFromTextractorLine(line *textractor.Line) engine.Line {
+	if line == nil {
+		return engine.Line{}
+	}
+	return engine.Line{
+		Raw:     line.Raw,
+		Hook:    line.Hook,
+		Text:    line.Text,
+		Speaker: line.Speaker,
 	}
 }
 

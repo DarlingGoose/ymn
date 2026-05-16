@@ -45,7 +45,8 @@ type LiveBackend struct {
 	dictMu sync.Mutex
 	dict   jpndict.Dictonary
 
-	currentLines []engine.Line
+	hookHistoryMu sync.Mutex
+	currentLines  []engine.Line
 }
 
 func NewLive() *LiveBackend {
@@ -589,7 +590,11 @@ func (b *LiveBackend) FollowGameText(ctx context.Context, g *game.Game) (chan en
 	if err != nil {
 		return nil, err
 	}
-	return e.FollowGameText(ctx, g, engine.FollowGameOptions{History: true, MaxLines: 200})
+	ch, err := e.FollowGameText(ctx, g)
+	if err != nil {
+		return nil, err
+	}
+	return b.recordGameTextHookHistory(ctx, g, ch), nil
 }
 
 func (b *LiveBackend) GetGameTextHooks(ctx context.Context, g *game.Game) ([]string, bool, error) {
