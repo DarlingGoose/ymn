@@ -188,15 +188,13 @@ func (b *LiveBackend) InstallGameWithInstaller(ctx context.Context, installerPat
 	if cfg, ok := autorunner.RunnerConfigFor(r); ok {
 		useGamescope = cfg.UseGamescope
 	}
-
-	plan, err := grinstaller.Plan(grinstaller.RunConfig{
-		InstallerPath: installerPath,
-		GamePath:      gamePath,
-		Auto: autorunner.DefaultOptionsConfig{
-			WinePrefix:   prefix,
-			UseGamescope: useGamescope,
-		},
-	})
+	config := grinstaller.NewRunConfig(gamePath)
+	config.InstallerPath = installerPath
+	config.Auto = autorunner.DefaultOptionsConfig{
+		WinePrefix:   prefix,
+		UseGamescope: useGamescope,
+	}
+	plan, err := grinstaller.Plan(config)
 	if err != nil {
 		return nil, err
 	}

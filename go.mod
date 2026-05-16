@@ -4,10 +4,10 @@ go 1.26.2
 
 require (
 	gioui.org v0.9.0
-	github.com/DarlingGoose/gr v0.0.22
+	github.com/DarlingGoose/gr v0.0.23
 	github.com/DarlingGoose/jpndict v0.0.11
 	github.com/DarlingGoose/tr v0.0.3
-	github.com/DarlingGoose/vntext v0.0.21
+	github.com/DarlingGoose/vntext v0.0.24
 	github.com/faiface/beep v1.1.0
 	github.com/google/uuid v1.6.0
 	github.com/ikawaha/kagome-dict/ipa v1.2.6
