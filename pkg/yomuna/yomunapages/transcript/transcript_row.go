@@ -33,6 +33,8 @@ type rowTranslationResult struct {
 	Err    error
 }
 
+const transcriptTranslationContextLines = 4
+
 type transcriptFollower struct {
 	th                             *material.Theme
 	tc                             *theme.Client
@@ -433,6 +435,54 @@ func (t *transcriptFollower) rowTranslationCacheKey(row transcriptRow) string {
 	return activeGameName + "\x00" + source + "\x00" + strings.ToLower(targetLanguage)
 }
 
+func (t *transcriptFollower) translationContextForRow(rowKey string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+
+	t.rowMutex.RLock()
+	defer t.rowMutex.RUnlock()
+
+	rowIndex := -1
+	for i, row := range t.transcriptRows {
+		if row.Key == rowKey {
+			rowIndex = i
+			break
+		}
+	}
+	if rowIndex <= 0 {
+		return ""
+	}
+
+	lines := make([]string, 0, maxLines)
+	for i := rowIndex - 1; i >= 0 && len(lines) < maxLines; i-- {
+		row := t.transcriptRows[i]
+		if row.Info {
+			continue
+		}
+		text := utils.CleanInlineText(row.Text)
+		if text == "" {
+			continue
+		}
+		if speaker := strings.TrimSpace(row.Speaker); speaker != "" {
+			text = speaker + ": " + text
+		}
+		lines = append(lines, text)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+
+	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
+		lines[i], lines[j] = lines[j], lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (t *transcriptFollower) translationContextForTranscriptRow(row transcriptRow) string {
+	return t.translationContextForRow(row.Key, transcriptTranslationContextLines)
+}
+
 func (t *transcriptFollower) selectTranscriptRow(key string) {
 	for _, row := range t.GetRows() {
 		if row.Key != key {
@@ -534,6 +584,7 @@ func (t *transcriptFollower) generateTranscriptRowTranslation(ctx context.Contex
 	if source == "" {
 		return
 	}
+	surroundingContext := t.translationContextForTranscriptRow(row)
 	t.rowMutex.RLock()
 	gameName := t.activeGameName
 	targetLanguage := t.selectedTargetLanguage
@@ -544,7 +595,7 @@ func (t *transcriptFollower) generateTranscriptRowTranslation(ctx context.Contex
 		var entry translation.Entry
 		var err error
 		if forceGenerate {
-			entry, err = translation.Generate(ctx, cfg, gameName, source, targetLanguage)
+			entry, err = translation.GenerateWithContext(ctx, cfg, gameName, source, targetLanguage, surroundingContext)
 		} else {
 			var ok bool
 			entry, ok, err = translation.Load(gameName, source, targetLanguage)
@@ -552,7 +603,7 @@ func (t *transcriptFollower) generateTranscriptRowTranslation(ctx context.Contex
 				slog.Error("failed loading transcript row translation", "err", err)
 			}
 			if !ok && err == nil {
-				entry, err = translation.Generate(ctx, cfg, gameName, source, targetLanguage)
+				entry, err = translation.GenerateWithContext(ctx, cfg, gameName, source, targetLanguage, surroundingContext)
 			}
 		}
 		result := rowTranslationResult{Key: key, RowKey: row.Key, Entry: entry, Err: err}

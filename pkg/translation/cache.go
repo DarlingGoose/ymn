@@ -97,8 +97,13 @@ func GenerateWithOllama(ctx context.Context, gameName, sourceText, targetLanguag
 }
 
 func Generate(ctx context.Context, cfg Config, gameName, sourceText, targetLanguage string) (Entry, error) {
+	return GenerateWithContext(ctx, cfg, gameName, sourceText, targetLanguage, "")
+}
+
+func GenerateWithContext(ctx context.Context, cfg Config, gameName, sourceText, targetLanguage, surroundingContext string) (Entry, error) {
 	sourceText = cleanCacheText(sourceText)
 	targetLanguage = cleanCacheText(targetLanguage)
+	surroundingContext = cleanCacheText(surroundingContext)
 	if sourceText == "" {
 		return Entry{}, fmt.Errorf("source sentence cannot be empty")
 	}
@@ -119,7 +124,7 @@ func Generate(ctx context.Context, cfg Config, gameName, sourceText, targetLangu
 		ToLanguage:         toLanguage,
 		GameTitle:          strings.TrimSpace(gameName),
 		PreferLiteral:      false,
-		SurroundingContext: "",
+		SurroundingContext: surroundingContext,
 	})
 	if err != nil {
 		return Entry{}, err

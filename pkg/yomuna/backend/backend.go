@@ -31,6 +31,7 @@ type GameLogic interface {
 	RunGame(ctx context.Context, g *game.Game) (*gr.Process, error)
 	MissingWinetrickDependencies(g *game.Game) ([]string, error)
 	FollowGameText(ctx context.Context, g *game.Game) (chan engine.Line, error)
+	ReadGameTextHookHistory(g *game.Game, filters []string, maxLines int) ([]engine.Line, error)
 	//todo GetTesseract()
 	GetGameEngine(ctx context.Context, g *game.Game) (engine.EngineV2, error)
 	GetGameTextHooks(ctx context.Context, g *game.Game) ([]string, bool, error)
