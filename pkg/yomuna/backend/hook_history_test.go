@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -67,5 +68,73 @@ func TestTextHookHistoryMaxLinesKeepsNewestMatches(t *testing.T) {
 	}
 	if len(lines) != 2 || lines[0].Text != "two" || lines[1].Text != "three" {
 		t.Fatalf("expected newest two lines, got %+v", lines)
+	}
+}
+
+func TestRecordGameTextHookHistoryDedupesAdjacentExactTextMatches(t *testing.T) {
+	dir := t.TempDir()
+	g := &game.Game{WorkingDir: dir}
+	b := &LiveBackend{}
+	ctx := context.Background()
+	in := make(chan engine.Line)
+	out := b.recordGameTextHookHistory(ctx, g, in)
+
+	go func() {
+		defer close(in)
+		for _, line := range []engine.Line{
+			{Hook: "@0", Text: "same"},
+			{Hook: "@1", Text: "same"},
+			{Hook: "@1", Text: "different"},
+			{Hook: "@0", Text: "same"},
+		} {
+			in <- line
+		}
+	}()
+
+	var got []engine.Line
+	for line := range out {
+		got = append(got, line)
+	}
+
+	if len(got) != 3 {
+		t.Fatalf("deduped line count = %d, want 3: %+v", len(got), got)
+	}
+	want := []string{"same", "different", "same"}
+	for i := range want {
+		if got[i].Text != want[i] {
+			t.Fatalf("deduped lines = %+v, want texts %#v", got, want)
+		}
+	}
+
+	lines, err := b.ReadGameTextHookHistory(g, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 3 {
+		t.Fatalf("history line count = %d, want 3: %+v", len(lines), lines)
+	}
+}
+
+func TestRecordGameTextHookHistoryKeepsDifferentSpeakers(t *testing.T) {
+	dir := t.TempDir()
+	g := &game.Game{WorkingDir: dir}
+	b := &LiveBackend{}
+	ctx := context.Background()
+	in := make(chan engine.Line)
+	out := b.recordGameTextHookHistory(ctx, g, in)
+
+	go func() {
+		defer close(in)
+		in <- engine.Line{Speaker: "Alice", Text: "same"}
+		in <- engine.Line{Speaker: "Bob", Text: "same"}
+	}()
+
+	var got []engine.Line
+	for line := range out {
+		got = append(got, line)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("deduped line count = %d, want 2: %+v", len(got), got)
 	}
 }

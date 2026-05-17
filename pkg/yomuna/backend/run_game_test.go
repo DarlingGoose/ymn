@@ -1,6 +1,8 @@
 package backend
 
 import (
+	"archive/zip"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -103,6 +105,49 @@ func TestGamescopeWinetricksEnvSetsWinePrefix(t *testing.T) {
 	}
 }
 
+func TestPrepareInstallerPathsExtractsZipInstaller(t *testing.T) {
+	dir := t.TempDir()
+	archivePath := filepath.Join(dir, "game.zip")
+	writeZip(t, archivePath, map[string]string{
+		"Game.exe": "fake exe",
+	})
+
+	installerPath, gamePath, err := prepareInstallerPaths(context.Background(), archivePath, "Game.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if installerPath != "" {
+		t.Fatalf("installerPath = %q, want empty for archive installer", installerPath)
+	}
+	if !filepath.IsAbs(gamePath) {
+		t.Fatalf("gamePath = %q, want absolute extracted path", gamePath)
+	}
+	if _, err := os.Stat(gamePath); err != nil {
+		t.Fatalf("extracted game path was not created: %v", err)
+	}
+}
+
+func TestPrepareInstallerPathsLeavesNonArchiveInstaller(t *testing.T) {
+	dir := t.TempDir()
+	installerPath := filepath.Join(dir, "setup.exe")
+	if err := os.WriteFile(installerPath, []byte("MZ"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gotInstallerPath, gotGamePath, err := prepareInstallerPaths(context.Background(), installerPath, "Game.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotInstallerPath != installerPath {
+		t.Fatalf("installerPath = %q, want %q", gotInstallerPath, installerPath)
+	}
+	if gotGamePath != "Game.exe" {
+		t.Fatalf("gamePath = %q, want Game.exe", gotGamePath)
+	}
+}
+
 func envContains(env []string, want string) bool {
 	for _, item := range env {
 		if item == want {
@@ -136,5 +181,28 @@ func TestLatestGameForRunPrefersReloadedSavedConfig(t *testing.T) {
 	}
 	if got.GamescopeConfig == nil || got.GamescopeConfig.Width != 480 {
 		t.Fatalf("Width = %v, want 480", got.GamescopeConfig)
+	}
+}
+
+func writeZip(t *testing.T, path string, files map[string]string) {
+	t.Helper()
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	w := zip.NewWriter(f)
+	defer w.Close()
+
+	for name, contents := range files {
+		entry, err := w.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write([]byte(contents)); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

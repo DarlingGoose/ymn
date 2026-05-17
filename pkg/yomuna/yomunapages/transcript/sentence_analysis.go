@@ -108,11 +108,12 @@ func NewSentenceAnalysis(th *material.Theme, backend backend.Backend) *SentenceA
 }
 
 type lookupAudioState struct {
-	Query   string
-	Pending bool
-	Cached  bool
-	Error   string
-	Resp    *jpndict.Response
+	Query           string
+	ExpectedReading string
+	Pending         bool
+	Cached          bool
+	Error           string
+	Resp            *jpndict.Response
 }
 
 func (t *SentenceAnalysis) WithTranslatorConfig(cfg translation.Config) *SentenceAnalysis {
@@ -545,12 +546,13 @@ func (t *SentenceAnalysis) lookupAudioClickable(key string) *widget.Clickable {
 	return t.lookupAudioClicks[key]
 }
 
-func (t *SentenceAnalysis) registerLookupAudio(key, query string, resp *jpndict.Response) {
+func (t *SentenceAnalysis) registerLookupAudio(key, query, expectedReading string, resp *jpndict.Response) {
 	key = strings.TrimSpace(key)
 	query = strings.TrimSpace(query)
 	if key == "" || query == "" {
 		return
 	}
+	expectedReading = normalizeAudioReading(expectedReading)
 	t.lookupMu.Lock()
 	defer t.lookupMu.Unlock()
 	if t.lookupAudio == nil {
@@ -562,7 +564,10 @@ func (t *SentenceAnalysis) registerLookupAudio(key, query string, resp *jpndict.
 		t.lookupAudio[key] = state
 	}
 	state.Query = query
-	if resp != nil && resp.HasAudio() {
+	state.ExpectedReading = expectedReading
+	state.Cached = false
+	state.Resp = nil
+	if responseHasExistingAudio(resp, expectedReading) {
 		state.Cached = true
 		state.Resp = resp
 	}
@@ -594,7 +599,7 @@ func (t *SentenceAnalysis) playLookupAudio(key string) {
 		t.lookupMu.Unlock()
 		return
 	}
-	if state.Resp != nil && state.Resp.HasAudio() {
+	if responseHasExistingAudio(state.Resp, state.ExpectedReading) {
 		resp := state.Resp
 		state.Error = ""
 		t.lookupMu.Unlock()
@@ -607,6 +612,9 @@ func (t *SentenceAnalysis) playLookupAudio(key string) {
 	}
 
 	query := state.Query
+	expectedReading := state.ExpectedReading
+	state.Cached = false
+	state.Resp = nil
 	state.Pending = true
 	state.Error = ""
 	t.lookupMu.Unlock()
@@ -622,8 +630,11 @@ func (t *SentenceAnalysis) playLookupAudio(key string) {
 		} else {
 			resp, err = t.backend.SearchTerm(jpndict.Search{Text: query, WithAudio: true})
 		}
-		if err == nil && (resp == nil || !resp.HasAudio()) {
-			err = fmt.Errorf("no cached audio found for %s", query)
+		if err == nil && !responseHasExistingAudio(resp, expectedReading) {
+			err = fmt.Errorf("no audio found for %s", query)
+			if expectedReading != "" && responseHasExistingAudio(resp, "") {
+				err = fmt.Errorf("audio for %s did not match reading %s", query, expectedReading)
+			}
 		}
 		if err == nil {
 			_, err = resp.PlayAudio(false)
@@ -644,6 +655,46 @@ func (t *SentenceAnalysis) playLookupAudio(key string) {
 		t.lookupMu.Unlock()
 		t.invalidateUI()
 	}()
+}
+
+func responseHasExistingAudio(resp *jpndict.Response, expectedReading string) bool {
+	if resp == nil || !resp.HasAudio() || resp.Entry == nil || resp.Entry.Pronunciation == nil {
+		return false
+	}
+	if !util.IsExistingFile(resp.Entry.Pronunciation.Audio) {
+		return false
+	}
+	return responseMatchesExpectedReading(resp, expectedReading)
+}
+
+func responseMatchesExpectedReading(resp *jpndict.Response, expectedReading string) bool {
+	expectedReading = normalizeAudioReading(expectedReading)
+	if expectedReading == "" {
+		return true
+	}
+	if resp == nil || resp.Entry == nil {
+		return false
+	}
+	candidates := []string{
+		resp.Entry.Reading,
+	}
+	if resp.Entry.Pronunciation != nil {
+		candidates = append(candidates, resp.Entry.Pronunciation.Text)
+	}
+	for _, candidate := range candidates {
+		if normalizeAudioReading(candidate) == expectedReading {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeAudioReading(reading string) string {
+	reading = utils.CleanInlineText(reading)
+	if reading == "" {
+		return ""
+	}
+	return katakanaToHiragana(reading)
 }
 
 func (t *SentenceAnalysis) setLookupAudioError(key string, err error) {

@@ -57,6 +57,7 @@ type FileExplorer struct {
 	selectButton  widget.Clickable
 	pathGoButton  widget.Clickable
 	sortDirButton widget.Clickable
+	unzipButton   widget.Clickable
 
 	// OnSelect fires when a file row is clicked and previewed.
 	OnSelect func(path string)
@@ -103,7 +104,9 @@ func NewFileExplorer(startDir string, registry *media.Registry, tc *theme.Client
 		{Label: "Name", Value: "name"},
 		{Label: "Size", Value: "size"},
 		{Label: "Modified", Value: "modified"},
+		{Label: "Created", Value: "created"},
 		{Label: "Kind", Value: "kind"},
+		{Label: "Extension", Value: "extension"},
 	}).
 		WithThemeClient(tc).
 		WithCompact()
@@ -337,7 +340,8 @@ func (p *FileExplorer) layoutMetadataPreview(gtx layout.Context, path string) la
 		{Label: "Type", Value: detectFileCategory(path, info)},
 		{Label: "Path", Value: path},
 		{Label: "Size", Value: formatSize(info.Size())},
-		{Label: "Modified", Value: info.ModTime().Format("2006-01-02 15:04:05")},
+		{Label: "Modified", Value: formatTime(info.ModTime())},
+		{Label: "Created", Value: formatTime(createdTime(info))},
 		{Label: "Permissions", Value: info.Mode().String()},
 	}
 
@@ -347,6 +351,13 @@ func (p *FileExplorer) layoutMetadataPreview(gtx layout.Context, path string) la
 
 	if info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
 		rows = append(rows, metadataRow{Label: "Executable", Value: "Yes"})
+	}
+	if isArchive(path) {
+		value := "Supported"
+		if !isZipArchive(path) {
+			value = "Preview only"
+		}
+		rows = append(rows, metadataRow{Label: "Archive", Value: value})
 	}
 
 	children := make([]layout.FlexChild, 0, len(rows)*2+4)
@@ -376,12 +387,16 @@ func (p *FileExplorer) layoutMetadataPreview(gtx layout.Context, path string) la
 			return p.layoutMetadataRow(gtx, row.Label, row.Value)
 		}))
 	}
-	if isArchive(path) {
-		rows = append(rows, metadataRow{
-			Label: "Archive",
-			Value: "Preview not expanded yet",
-		})
+
+	if isZipArchive(path) {
+		children = append(children,
+			layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.iconTextButton(gtx, &p.unzipButton, "lucide:archive-restore", "Unzip")
+			}),
+		)
 	}
+
 	if isLikelyTextFile(path) {
 		children = append(children,
 			layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
@@ -695,6 +710,10 @@ func (p *FileExplorer) update(gtx layout.Context) {
 		p.Choose()
 	}
 
+	for p.unzipButton.Clicked(gtx) {
+		p.ExtractSelectedArchive()
+	}
+
 	for p.sortDirButton.Clicked(gtx) {
 		p.SortDesc = !p.SortDesc
 		p.reload()
@@ -706,6 +725,31 @@ func (p *FileExplorer) update(gtx layout.Context) {
 			p.Select(e.Path)
 		}
 	}
+}
+
+func (p *FileExplorer) ExtractSelectedArchive() {
+	if p == nil || p.Selected == "" {
+		return
+	}
+
+	destDir, err := extractZipArchive(p.Selected)
+	if err != nil {
+		p.err = err
+		return
+	}
+
+	p.err = nil
+	p.CurrentDir = destDir
+	p.Selected = ""
+
+	if p.PathInput != nil {
+		p.PathInput.SetText(destDir)
+	}
+	if p.Preview != nil {
+		_ = p.Preview.Close()
+	}
+
+	p.reload()
 }
 
 func (p *FileExplorer) layoutSidebarPanel(gtx layout.Context) layout.Dimensions {

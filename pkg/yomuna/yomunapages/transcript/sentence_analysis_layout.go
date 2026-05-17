@@ -17,6 +17,7 @@ import (
 	"gioui.org/widget/material"
 	"github.com/DarlingGoose/jpndict"
 	"github.com/DarlingGoose/ymn/pkg/japanese"
+	"github.com/DarlingGoose/ymn/pkg/util"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/animations/tween"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
@@ -579,8 +580,8 @@ func (t *SentenceAnalysis) layoutLookupResult(gtx layout.Context, resp *jpndict.
 		meaning = strings.TrimSpace(resp.Text)
 	}
 	audioKey := lookupResultKey(resp, index)
-	audioQuery := lookupAudioQuery(resp, headword)
-	t.registerLookupAudio(audioKey, audioQuery, resp)
+	audioQuery, expectedReading := t.lookupAudioContext(resp, headword)
+	t.registerLookupAudio(audioKey, audioQuery, expectedReading, resp)
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -709,7 +710,29 @@ func lookupResultKey(resp *jpndict.Response, index int) string {
 	return strings.Join(parts, "\x00")
 }
 
-func lookupAudioQuery(resp *jpndict.Response, headword string) string {
+func (t *SentenceAnalysis) lookupAudioContext(resp *jpndict.Response, headword string) (query, expectedReading string) {
+	if token, ok := t.selectedToken(); ok {
+		expectedReading = normalizeAudioReading(util.FirstNonEmpty(token.Pronunciation, token.Reading))
+		candidates := []string{
+			token.Surface,
+			structureFlashcardWord(token),
+			token.BaseForm,
+			headword,
+		}
+		if resp != nil {
+			if resp.Entry != nil {
+				candidates = append(candidates, resp.Entry.Headword, resp.Entry.Reading)
+			}
+			candidates = append(candidates, resp.Query, resp.Key)
+		}
+		for _, candidate := range candidates {
+			if text := strings.TrimSpace(candidate); text != "" {
+				return text, expectedReading
+			}
+		}
+		return "", expectedReading
+	}
+
 	candidates := []string{headword}
 	if resp != nil {
 		if resp.Entry != nil {
@@ -719,10 +742,10 @@ func lookupAudioQuery(resp *jpndict.Response, headword string) string {
 	}
 	for _, candidate := range candidates {
 		if text := strings.TrimSpace(candidate); text != "" {
-			return text
+			return text, ""
 		}
 	}
-	return ""
+	return "", ""
 }
 
 func lookupResponseText(resp *jpndict.Response) (headword, reading, meaning string) {

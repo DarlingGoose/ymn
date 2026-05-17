@@ -1,12 +1,16 @@
 package fileexplorer
 
 import (
+	"archive/zip"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media/player"
@@ -39,12 +43,13 @@ func readDir(dir, query string, showHidden bool, sortBy SortBy, desc bool) ([]en
 		}
 
 		out = append(out, entry{
-			Name:    name,
-			Path:    filepath.Join(dir, name),
-			IsDir:   item.IsDir(),
-			Size:    fileSize(info),
-			ModTime: info.ModTime(),
-			Mode:    info.Mode(),
+			Name:        name,
+			Path:        filepath.Join(dir, name),
+			IsDir:       item.IsDir(),
+			Size:        fileSize(info),
+			ModTime:     info.ModTime(),
+			CreatedTime: createdTime(info),
+			Mode:        info.Mode(),
 		})
 	}
 
@@ -73,6 +78,13 @@ func readDir(dir, query string, showHidden bool, sortBy SortBy, desc bool) ([]en
 				less = a.ModTime.Before(b.ModTime)
 			}
 
+		case SortByCreated:
+			if a.CreatedTime.Equal(b.CreatedTime) {
+				less = strings.ToLower(a.Name) < strings.ToLower(b.Name)
+			} else {
+				less = a.CreatedTime.Before(b.CreatedTime)
+			}
+
 		case SortByKind:
 			aKind := entryKind(a)
 			bKind := entryKind(b)
@@ -80,6 +92,15 @@ func readDir(dir, query string, showHidden bool, sortBy SortBy, desc bool) ([]en
 				less = strings.ToLower(a.Name) < strings.ToLower(b.Name)
 			} else {
 				less = aKind < bKind
+			}
+
+		case SortByExtension:
+			aExt := entryExtension(a)
+			bExt := entryExtension(b)
+			if aExt == bExt {
+				less = strings.ToLower(a.Name) < strings.ToLower(b.Name)
+			} else {
+				less = aExt < bExt
 			}
 
 		default:
@@ -94,6 +115,17 @@ func readDir(dir, query string, showHidden bool, sortBy SortBy, desc bool) ([]en
 	})
 
 	return out, nil
+}
+
+func entryExtension(e entry) string {
+	if e.IsDir {
+		return "000-dir"
+	}
+	ext := strings.ToLower(filepath.Ext(e.Name))
+	if ext == "" {
+		return "zzz"
+	}
+	return strings.TrimPrefix(ext, ".")
 }
 
 func entryKind(e entry) string {
@@ -251,6 +283,124 @@ func isArchive(path string) bool {
 	default:
 		return false
 	}
+}
+
+func isZipArchive(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".zip")
+}
+
+func extractZipArchive(srcPath string) (string, error) {
+	srcPath = strings.TrimSpace(srcPath)
+	if srcPath == "" {
+		return "", fmt.Errorf("archive path is required")
+	}
+	if !isZipArchive(srcPath) {
+		return "", fmt.Errorf("only zip archives can be extracted")
+	}
+
+	absSrc, err := filepath.Abs(srcPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve archive path: %w", err)
+	}
+
+	destDir, err := uniqueExtractDir(defaultZipExtractDir(absSrc))
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", fmt.Errorf("create extract dir: %w", err)
+	}
+
+	reader, err := zip.OpenReader(absSrc)
+	if err != nil {
+		return "", fmt.Errorf("open zip archive: %w", err)
+	}
+	defer reader.Close()
+
+	for _, file := range reader.File {
+		if err := extractZipEntry(file, destDir); err != nil {
+			return "", err
+		}
+	}
+
+	return destDir, nil
+}
+
+func defaultZipExtractDir(srcPath string) string {
+	base := filepath.Base(srcPath)
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	if base == "" || base == "." {
+		base = "archive"
+	}
+	return filepath.Join(filepath.Dir(srcPath), base)
+}
+
+func uniqueExtractDir(base string) (string, error) {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return "", fmt.Errorf("extract dir is required")
+	}
+
+	if _, err := os.Stat(base); os.IsNotExist(err) {
+		return base, nil
+	} else if err != nil {
+		return "", fmt.Errorf("check extract dir: %w", err)
+	}
+
+	for i := 2; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s %d", base, i)
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate, nil
+		} else if err != nil {
+			return "", fmt.Errorf("check extract dir: %w", err)
+		}
+	}
+
+	return "", fmt.Errorf("could not find available extract dir for %s", base)
+}
+
+func extractZipEntry(file *zip.File, destDir string) error {
+	cleanName := path.Clean(strings.ReplaceAll(file.Name, "\\", "/"))
+	if cleanName == "." || cleanName == ".." || path.IsAbs(cleanName) || strings.HasPrefix(cleanName, "../") {
+		return fmt.Errorf("zip entry escapes destination: %s", file.Name)
+	}
+
+	destPath := filepath.Join(append([]string{destDir}, strings.Split(cleanName, "/")...)...)
+	if file.FileInfo().IsDir() {
+		if err := os.MkdirAll(destPath, file.Mode()); err != nil {
+			return fmt.Errorf("create zip directory: %w", err)
+		}
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return fmt.Errorf("create zip parent directory: %w", err)
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		return fmt.Errorf("open zip entry: %w", err)
+	}
+	defer src.Close()
+
+	dst, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, file.Mode())
+	if err != nil {
+		return fmt.Errorf("create zip entry: %w", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("extract zip entry: %w", err)
+	}
+
+	return nil
+}
+
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return "Unknown"
+	}
+	return t.Format("2006-01-02 15:04:05")
 }
 func detectFileCategory(path string, info fs.FileInfo) string {
 	if info != nil && info.IsDir() {
