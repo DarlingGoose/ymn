@@ -7,12 +7,13 @@ import (
 )
 
 type entry struct {
-	Name    string
-	Path    string
-	IsDir   bool
-	Size    int64
-	ModTime time.Time
-	Mode    fs.FileMode
+	Name        string
+	Path        string
+	IsDir       bool
+	Size        int64
+	ModTime     time.Time
+	CreatedTime time.Time
+	Mode        fs.FileMode
 }
 
 type CommonPlace struct {
@@ -27,7 +28,9 @@ const (
 	SortByName SortBy = iota
 	SortBySize
 	SortByModified
+	SortByCreated
 	SortByKind
+	SortByExtension
 )
 
 func (s SortBy) String() string {
@@ -36,8 +39,12 @@ func (s SortBy) String() string {
 		return "Size"
 	case SortByModified:
 		return "Modified"
+	case SortByCreated:
+		return "Created"
 	case SortByKind:
 		return "Kind"
+	case SortByExtension:
+		return "Extension"
 	default:
 		return "Name"
 	}
@@ -49,8 +56,12 @@ func sortByFromValue(value string) SortBy {
 		return SortBySize
 	case "modified":
 		return SortByModified
+	case "created":
+		return SortByCreated
 	case "kind":
 		return SortByKind
+	case "extension":
+		return SortByExtension
 	default:
 		return SortByName
 	}

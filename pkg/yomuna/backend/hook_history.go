@@ -31,6 +31,8 @@ func (b *LiveBackend) recordGameTextHookHistory(ctx context.Context, g *game.Gam
 	out := make(chan engine.Line)
 	go func() {
 		defer close(out)
+		var lastKey string
+		haveLast := false
 		for {
 			select {
 			case <-ctx.Done():
@@ -39,6 +41,13 @@ func (b *LiveBackend) recordGameTextHookHistory(ctx context.Context, g *game.Gam
 				if !ok {
 					return
 				}
+				key := consecutiveHookLineDedupeKey(line)
+				if haveLast && key != "" && key == lastKey {
+					continue
+				}
+				lastKey = key
+				haveLast = true
+
 				_ = b.appendGameTextHookHistory(g, line)
 				select {
 				case <-ctx.Done():
@@ -49,6 +58,17 @@ func (b *LiveBackend) recordGameTextHookHistory(ctx context.Context, g *game.Gam
 		}
 	}()
 	return out
+}
+
+func consecutiveHookLineDedupeKey(line engine.Line) string {
+	text := line.Text
+	if text == "" {
+		text = line.Raw
+	}
+	if text == "" {
+		return ""
+	}
+	return strings.TrimSpace(line.Speaker) + "\x00" + text
 }
 
 func (b *LiveBackend) appendGameTextHookHistory(g *game.Game, line engine.Line) error {

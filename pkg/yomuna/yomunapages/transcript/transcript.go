@@ -41,12 +41,15 @@ type TranscriptUI struct {
 	hookDropdown   *dropdowns.Dropdown
 	gamesKey       string
 
-	autoTranslateToggle *toggles.Toggle
-	languageOnlyToggle  *toggles.Toggle
-	runGameButton       *components.IconButton
-	stopGameButton      *components.IconButton
-	controlsButton      *components.IconButton
-	controlsModal       *modal.Modal
+	autoTranslateToggle  *toggles.Toggle
+	languageOnlyToggle   *toggles.Toggle
+	runGameButton        *components.IconButton
+	stopGameButton       *components.IconButton
+	splitViewButton      *components.IconButton
+	transcriptOnlyButton *components.IconButton
+	sentenceOnlyButton   *components.IconButton
+	controlsButton       *components.IconButton
+	controlsModal        *modal.Modal
 
 	running  bool
 	starting bool
@@ -110,6 +113,9 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 	playIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:play")
 	stopIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:square")
 	loaderIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:loader-circle")
+	splitViewIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:rows-2")
+	transcriptOnlyIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:panel-top")
+	sentenceOnlyIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:panel-bottom")
 	slidersIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:sliders-horizontal")
 
 	ui.runGameButton = components.NewIconButton(
@@ -137,6 +143,10 @@ func NewTranscriptUI(th *material.Theme, tc *theme.Client, backend backend.Backe
 	ui.stopGameButton.Height = unit.Dp(38)
 	ui.stopGameButton.Radius = unit.Dp(10)
 	ui.stopGameButton.LoadingIcon = loaderIcon
+
+	ui.splitViewButton = newTranscriptHeaderIconButton(splitViewIcon, tc)
+	ui.transcriptOnlyButton = newTranscriptHeaderIconButton(transcriptOnlyIcon, tc)
+	ui.sentenceOnlyButton = newTranscriptHeaderIconButton(sentenceOnlyIcon, tc)
 
 	ui.controlsButton = components.NewIconButton(
 		"",
@@ -230,6 +240,15 @@ func (ui *TranscriptUI) WithThemeClient(tc *theme.Client) *TranscriptUI {
 	}
 	if ui.stopGameButton != nil {
 		ui.stopGameButton.WithThemeClient(tc)
+	}
+	if ui.splitViewButton != nil {
+		ui.splitViewButton.WithThemeClient(tc)
+	}
+	if ui.transcriptOnlyButton != nil {
+		ui.transcriptOnlyButton.WithThemeClient(tc)
+	}
+	if ui.sentenceOnlyButton != nil {
+		ui.sentenceOnlyButton.WithThemeClient(tc)
 	}
 	if ui.autoTranslateToggle != nil {
 		ui.autoTranslateToggle.WithThemeClient(tc)
@@ -512,6 +531,62 @@ func (ui *TranscriptUI) SetMaxTranscriptRows(maxRows int) {
 	ui.invalidateUI()
 }
 
+func (ui *TranscriptUI) ShowTopOnly() {
+	if ui == nil {
+		return
+	}
+	ui.bodySplit.ShowTopOnly()
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) ShowBottomOnly() {
+	if ui == nil {
+		return
+	}
+	ui.bodySplit.ShowBottomOnly()
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) ShowSplitView() {
+	if ui == nil {
+		return
+	}
+	ui.bodySplit.ShowBoth()
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) ToggleTop() {
+	if ui == nil {
+		return
+	}
+	ui.bodySplit.ToggleTop()
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) ToggleBottom() {
+	if ui == nil {
+		return
+	}
+	ui.bodySplit.ToggleBottom()
+	ui.invalidateUI()
+}
+
+func (ui *TranscriptUI) ShowTranscriptOnly() {
+	ui.ShowTopOnly()
+}
+
+func (ui *TranscriptUI) ShowSentenceStructureOnly() {
+	ui.ShowBottomOnly()
+}
+
+func (ui *TranscriptUI) ToggleTranscript() {
+	ui.ToggleTop()
+}
+
+func (ui *TranscriptUI) ToggleSentenceStructure() {
+	ui.ToggleBottom()
+}
+
 func clampFontSize(size, min, max, fallback unit.Sp) unit.Sp {
 	if size <= 0 {
 		return fallback
@@ -635,6 +710,11 @@ func (ui *TranscriptUI) layoutHeader(gtx layout.Context) layout.Dimensions {
 		layout.Rigid(spacerW(gap)),
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSplitVisibilityButtons(gtx, gap)
+		}),
+		layout.Rigid(spacerW(gap)),
+
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutControlsButton(gtx)
 		}),
 	)
@@ -706,6 +786,10 @@ func (ui *TranscriptUI) layoutHeaderControlsRow(gtx layout.Context, gap unit.Dp)
 			}),
 			layout.Rigid(layout.Spacer{Height: gap}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutSplitVisibilityButtons(gtx, gap)
+			}),
+			layout.Rigid(layout.Spacer{Height: gap}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutControlsButton(gtx)
 			}),
 		)
@@ -721,7 +805,53 @@ func (ui *TranscriptUI) layoutHeaderControlsRow(gtx layout.Context, gap unit.Dp)
 		layout.Rigid(spacerW(gap)),
 		layout.Flexed(1, layout.Spacer{}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSplitVisibilityButtons(gtx, gap)
+		}),
+		layout.Rigid(spacerW(gap)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutControlsButton(gtx)
+		}),
+	)
+}
+
+func newTranscriptHeaderIconButton(icon *iconify.SVGIcon, tc *theme.Client) *components.IconButton {
+	btn := components.NewIconButton("", &widget.Clickable{}, icon).WithThemeClient(tc)
+	btn.FillWidth = false
+	btn.TextCollapseMode = components.TextCollapseNever
+	btn.MinWidth = unit.Dp(38)
+	btn.Height = unit.Dp(38)
+	btn.Radius = unit.Dp(10)
+	return btn
+}
+
+func (ui *TranscriptUI) layoutSplitVisibilityButtons(gtx layout.Context, gap unit.Dp) layout.Dimensions {
+	if ui == nil || ui.splitViewButton == nil || ui.transcriptOnlyButton == nil || ui.sentenceOnlyButton == nil {
+		return layout.Dimensions{}
+	}
+
+	return layout.Flex{
+		Axis:      layout.Horizontal,
+		Alignment: layout.Middle,
+	}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if ui.splitViewButton.Clicked(gtx) {
+				ui.ShowSplitView()
+			}
+			return ui.splitViewButton.Layout(gtx)
+		}),
+		layout.Rigid(spacerW(gap)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if ui.transcriptOnlyButton.Clicked(gtx) {
+				ui.ShowTopOnly()
+			}
+			return ui.transcriptOnlyButton.Layout(gtx)
+		}),
+		layout.Rigid(spacerW(gap)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if ui.sentenceOnlyButton.Clicked(gtx) {
+				ui.ShowBottomOnly()
+			}
+			return ui.sentenceOnlyButton.Layout(gtx)
 		}),
 	)
 }

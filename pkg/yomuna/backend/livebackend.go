@@ -166,6 +166,13 @@ func (b *LiveBackend) InstallGameWithInstaller(ctx context.Context, installerPat
 		return nil, fmt.Errorf("game path is required")
 	}
 
+	preparedInstallerPath, preparedGamePath, err := prepareInstallerPaths(ctx, installerPath, gamePath)
+	if err != nil {
+		return nil, err
+	}
+	installerPath = preparedInstallerPath
+	gamePath = preparedGamePath
+
 	g, err := b.InstallGameConfig(ctx, gamePath, installHook)
 	if err != nil {
 		return nil, err
@@ -225,6 +232,30 @@ func (b *LiveBackend) InstallGameWithInstaller(ctx context.Context, installerPat
 	b.gameMu.Unlock()
 
 	return b.CurrentGame(), nil
+}
+
+func prepareInstallerPaths(ctx context.Context, installerPath, gamePath string) (string, string, error) {
+	detection, err := grinstaller.DetectArchive(installerPath)
+	if err != nil || detection.Kind == grinstaller.ArchiveUnknown {
+		return installerPath, gamePath, nil
+	}
+
+	extraction, err := grinstaller.ExtractArchive(ctx, installerPath, grinstaller.ExtractConfig{})
+	if err != nil {
+		return "", "", fmt.Errorf("extract installer archive: %w", err)
+	}
+
+	return "", resolveExtractedGamePath(extraction.DestDir, gamePath), nil
+}
+
+func resolveExtractedGamePath(destDir, gamePath string) string {
+	if gamePath == "" || filepath.IsAbs(gamePath) {
+		return gamePath
+	}
+	if _, err := os.Stat(gamePath); err == nil {
+		return gamePath
+	}
+	return filepath.Join(destDir, gamePath)
 }
 
 func (b *LiveBackend) RunGame(ctx context.Context, g *game.Game) (*gr.Process, error) {
@@ -588,7 +619,7 @@ func (b *LiveBackend) FollowGameText(ctx context.Context, g *game.Game) (chan en
 	if err != nil {
 		return nil, err
 	}
-	ch, err := e.FollowGameText(ctx, g)
+	ch, err := e.FollowGameText(ctx, g, engine.FollowGameOptions{History: true, MaxLines: 100})
 	if err != nil {
 		return nil, err
 	}
