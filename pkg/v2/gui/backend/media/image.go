@@ -1,18 +1,26 @@
 package media
 
 import (
+	"bytes"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
 	"gioui.org/widget"
+	_ "golang.org/x/image/bmp"
 	xdraw "golang.org/x/image/draw"
+	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 )
 
@@ -129,7 +137,13 @@ func (v *ImageView) decode(path string) {
 	}
 	defer f.Close()
 
-	img, _, err := image.Decode(f)
+	reader, err := imageDecodeReader(path, f)
+	if err != nil {
+		v.finishDecode(path, nil, err)
+		return
+	}
+
+	img, _, err := image.Decode(reader)
 	if err != nil {
 		v.finishDecode(path, nil, err)
 		return
@@ -137,6 +151,96 @@ func (v *ImageView) decode(path string) {
 
 	img = scaleDownImage(img, 2048)
 	v.finishDecode(path, img, nil)
+}
+
+func imageDecodeReader(path string, r io.Reader) (io.Reader, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	if !isRPGMakerMVEncryptedAsset(data) {
+		return bytes.NewReader(data), nil
+	}
+
+	key, err := findRPGMakerMVEncryptionKey(path)
+	if err != nil {
+		return nil, err
+	}
+	decrypted, err := decryptRPGMakerMVAsset(data, key)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(decrypted), nil
+}
+
+func isRPGMakerMVEncryptedAsset(data []byte) bool {
+	return len(data) >= 16 && bytes.Equal(data[:5], []byte("RPGMV"))
+}
+
+func decryptRPGMakerMVAsset(data []byte, key []byte) ([]byte, error) {
+	const headerSize = 16
+
+	if len(data) < headerSize {
+		return nil, fmt.Errorf("RPG Maker MV asset is missing its header")
+	}
+	if len(key) == 0 {
+		return nil, fmt.Errorf("RPG Maker MV encryption key is empty")
+	}
+
+	out := make([]byte, len(data)-headerSize)
+	copy(out, data[headerSize:])
+
+	n := min(len(key), len(out))
+	for i := 0; i < n; i++ {
+		out[i] ^= key[i]
+	}
+
+	return out, nil
+}
+
+func findRPGMakerMVEncryptionKey(assetPath string) ([]byte, error) {
+	dir := filepath.Dir(assetPath)
+	for {
+		systemPath := filepath.Join(dir, "data", "System.json")
+		key, err := readRPGMakerMVEncryptionKey(systemPath)
+		if err == nil {
+			return key, nil
+		}
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == "" || parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	return nil, fmt.Errorf("RPG Maker MV encryption key not found for %s", assetPath)
+}
+
+func readRPGMakerMVEncryptionKey(systemPath string) ([]byte, error) {
+	data, err := os.ReadFile(systemPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var system struct {
+		EncryptionKey string `json:"encryptionKey"`
+	}
+	if err := json.Unmarshal(data, &system); err != nil {
+		return nil, fmt.Errorf("read RPG Maker MV encryption key: %w", err)
+	}
+	if system.EncryptionKey == "" {
+		return nil, fmt.Errorf("RPG Maker MV encryption key is missing from %s", systemPath)
+	}
+
+	key, err := hex.DecodeString(system.EncryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("decode RPG Maker MV encryption key: %w", err)
+	}
+	return key, nil
 }
 
 func (v *ImageView) finishDecode(path string, img image.Image, err error) {

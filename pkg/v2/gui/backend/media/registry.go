@@ -113,6 +113,10 @@ func normalizeExt(ext string) string {
 	if !strings.HasPrefix(ext, ".") {
 		ext = "." + ext
 	}
+	ext = "." + strings.TrimRight(strings.TrimPrefix(ext, "."), "_")
+	if ext == "." {
+		return ""
+	}
 	return ext
 }
 
@@ -131,7 +135,7 @@ func RegisterDefaults(tc *theme.Client) {
 			return NewImageRenderer().
 				WithThemeClient(tc)
 		},
-		".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+		".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff",
 	)
 
 	DefaultRegistry.Register(

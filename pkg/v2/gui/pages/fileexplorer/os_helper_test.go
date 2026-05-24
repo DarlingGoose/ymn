@@ -86,6 +86,83 @@ func TestReadDirSortsByExtension(t *testing.T) {
 	}
 }
 
+func TestPathInputSearchTextUsesCurrentDirChild(t *testing.T) {
+	dir := t.TempDir()
+	p := &FileExplorer{CurrentDir: dir}
+
+	got := p.pathInputSearchTextFor(filepath.Join(dir, "searching_word"))
+	if got != "searching_word" {
+		t.Fatalf("pathInputSearchTextFor() = %q, want searching_word", got)
+	}
+}
+
+func TestPathInputSearchTextUsesFirstRelativeComponent(t *testing.T) {
+	dir := t.TempDir()
+	p := &FileExplorer{CurrentDir: dir}
+
+	got := p.pathInputSearchTextFor(filepath.Join("nested", "searching_word"))
+	if got != "nested" {
+		t.Fatalf("pathInputSearchTextFor() = %q, want nested", got)
+	}
+}
+
+func TestReloadUsesPathInputSearchText(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"searching_word.txt", "other.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p := NewFileExplorer(dir, nil, nil)
+	p.PathInput.SetText(filepath.Join(dir, "searching"))
+	p.pathInputSearchActive = true
+	p.reload()
+
+	if len(p.entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1: %#v", len(p.entries), p.entries)
+	}
+	if p.entries[0].Name != "searching_word.txt" {
+		t.Fatalf("entry = %q, want searching_word.txt", p.entries[0].Name)
+	}
+}
+
+func TestSelectDoesNotUseSelectedFilePathAsSearchText(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"searching_word.txt", "other.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p := NewFileExplorer(dir, nil, nil)
+	p.pathInputSearchActive = true
+	p.Select(filepath.Join(dir, "searching_word.txt"))
+	p.reload()
+
+	if len(p.entries) != 2 {
+		t.Fatalf("len(entries) = %d, want 2: %#v", len(p.entries), p.entries)
+	}
+}
+
+func TestProgrammaticPathInputChangeDoesNotActivateSearch(t *testing.T) {
+	dir := t.TempDir()
+	p := NewFileExplorer(dir, nil, nil)
+	selected := filepath.Join(dir, "searching_word.txt")
+
+	p.setPathInputText(selected)
+	p.pathInputSearchActive = true
+	if !p.consumeProgrammaticPathInputChange() {
+		t.Fatal("consumeProgrammaticPathInputChange() = false, want true")
+	}
+	if p.pathInputSearchActive {
+		t.Fatal("pathInputSearchActive = true, want false")
+	}
+	if got := p.pathInputSearchText(); got != "" {
+		t.Fatalf("pathInputSearchText() = %q, want empty", got)
+	}
+}
+
 func writeTestZip(t *testing.T, path string, files map[string]string) {
 	t.Helper()
 

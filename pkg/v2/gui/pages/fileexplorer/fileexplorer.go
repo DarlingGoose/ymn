@@ -47,6 +47,9 @@ type FileExplorer struct {
 	entries []entry
 	err     error
 
+	pathInputSearchActive     bool
+	pathInputProgrammaticText string
+
 	rowClicks   map[string]*widget.Clickable
 	placeClicks map[string]*widget.Clickable
 
@@ -162,7 +165,14 @@ func NewFileExplorer(startDir string, registry *media.Registry, tc *theme.Client
 		p.reload()
 	}
 
-	p.PathInput.SetText(startDir)
+	p.setPathInputText(startDir)
+	p.PathInput.OnChange = func(string) {
+		if p.consumeProgrammaticPathInputChange() {
+			return
+		}
+		p.pathInputSearchActive = true
+		p.reload()
+	}
 	p.PathInput.OnSubmit = func(path string) {
 		p.GoToPath(path)
 	}
@@ -271,9 +281,7 @@ func (p *FileExplorer) Select(path string) {
 		p.CurrentDir = path
 		p.Selected = ""
 
-		if p.PathInput != nil {
-			p.PathInput.SetText(path)
-		}
+		p.setPathInputText(path)
 
 		if p.Preview != nil {
 			_ = p.Preview.Close()
@@ -286,9 +294,7 @@ func (p *FileExplorer) Select(path string) {
 	p.Selected = path
 	p.err = nil
 
-	if p.PathInput != nil {
-		p.PathInput.SetText(path)
-	}
+	p.setPathInputText(path)
 
 	if p.Preview != nil && supportsMediaPreview(path) {
 		_ = p.Preview.LoadPath(context.Background(), path)
@@ -544,6 +550,11 @@ func (p *FileExplorer) GoToPath(path string) {
 
 	info, err := os.Stat(abs)
 	if err != nil {
+		if p.pathInputSearchTextFor(path) != "" {
+			p.err = nil
+			p.reload()
+			return
+		}
 		p.err = err
 		return
 	}
@@ -552,9 +563,7 @@ func (p *FileExplorer) GoToPath(path string) {
 		p.CurrentDir = path
 		p.Selected = ""
 
-		if p.PathInput != nil {
-			p.PathInput.SetText(path)
-		}
+		p.setPathInputText(path)
 
 		if p.Preview != nil {
 			_ = p.Preview.Close()
@@ -567,9 +576,7 @@ func (p *FileExplorer) GoToPath(path string) {
 	p.CurrentDir = filepath.Dir(abs)
 	p.err = nil
 
-	if p.PathInput != nil {
-		p.PathInput.SetText(abs)
-	}
+	p.setPathInputText(abs)
 
 	p.reload()
 	p.Select(abs)
@@ -668,9 +675,7 @@ func (p *FileExplorer) update(gtx layout.Context) {
 			p.CurrentDir = parent
 			p.Selected = ""
 
-			if p.PathInput != nil {
-				p.PathInput.SetText(parent)
-			}
+			p.setPathInputText(parent)
 
 			p.reload()
 		}
@@ -685,9 +690,7 @@ func (p *FileExplorer) update(gtx layout.Context) {
 			p.CurrentDir = p.Root
 			p.Selected = ""
 
-			if p.PathInput != nil {
-				p.PathInput.SetText(p.Root)
-			}
+			p.setPathInputText(p.Root)
 
 			p.reload()
 		}
@@ -742,9 +745,7 @@ func (p *FileExplorer) ExtractSelectedArchive() {
 	p.CurrentDir = destDir
 	p.Selected = ""
 
-	if p.PathInput != nil {
-		p.PathInput.SetText(destDir)
-	}
+	p.setPathInputText(destDir)
 	if p.Preview != nil {
 		_ = p.Preview.Close()
 	}
@@ -1299,7 +1300,7 @@ func (p *FileExplorer) reload() {
 		return
 	}
 
-	entries, err := readDir(p.CurrentDir, p.SearchText(), p.showHidden, p.SortBy, p.SortDesc)
+	entries, err := readDir(p.CurrentDir, p.effectiveSearchText(), p.showHidden, p.SortBy, p.SortDesc)
 	if err != nil {
 		p.err = err
 		p.entries = nil
@@ -1325,6 +1326,102 @@ func (p *FileExplorer) SearchText() string {
 		return ""
 	}
 	return strings.TrimSpace(p.Search.Text())
+}
+
+func (p *FileExplorer) effectiveSearchText() string {
+	if pathSearch := p.pathInputSearchText(); pathSearch != "" {
+		return pathSearch
+	}
+	return p.SearchText()
+}
+
+func (p *FileExplorer) pathInputSearchText() string {
+	if p == nil || p.PathInput == nil || !p.pathInputSearchActive {
+		return ""
+	}
+	return p.pathInputSearchTextFor(p.PathInput.Text())
+}
+
+func (p *FileExplorer) setPathInputText(text string) {
+	if p == nil {
+		return
+	}
+
+	p.pathInputSearchActive = false
+	p.pathInputProgrammaticText = text
+	if p.PathInput != nil {
+		p.PathInput.SetText(text)
+	}
+}
+
+func (p *FileExplorer) consumeProgrammaticPathInputChange() bool {
+	if p == nil || p.PathInput == nil || p.pathInputProgrammaticText == "" {
+		return false
+	}
+
+	if p.PathInput.Text() != p.pathInputProgrammaticText {
+		p.pathInputProgrammaticText = ""
+		return false
+	}
+
+	p.pathInputSearchActive = false
+	p.pathInputProgrammaticText = ""
+	return true
+}
+
+func (p *FileExplorer) pathInputSearchTextFor(inputPath string) string {
+	if p == nil {
+		return ""
+	}
+
+	inputPath = strings.TrimSpace(inputPath)
+	if inputPath == "" || p.CurrentDir == "" {
+		return ""
+	}
+
+	currentDir := expandHome(p.CurrentDir)
+	currentAbs, err := filepath.Abs(currentDir)
+	if err != nil {
+		currentAbs = currentDir
+	}
+	currentAbs = filepath.Clean(currentAbs)
+
+	expanded := expandHome(inputPath)
+	if filepath.IsAbs(expanded) {
+		inputAbs, err := filepath.Abs(expanded)
+		if err != nil {
+			return ""
+		}
+		inputAbs = filepath.Clean(inputAbs)
+		if inputAbs == currentAbs {
+			return ""
+		}
+
+		rel, err := filepath.Rel(currentAbs, inputAbs)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return ""
+		}
+		return firstPathComponent(rel)
+	}
+
+	clean := filepath.Clean(expanded)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return firstPathComponent(clean)
+}
+
+func firstPathComponent(path string) string {
+	path = strings.TrimSpace(filepath.Clean(path))
+	if path == "" || path == "." || path == string(filepath.Separator) {
+		return ""
+	}
+
+	parts := strings.Split(path, string(filepath.Separator))
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[0])
 }
 
 func (p *FileExplorer) clickFor(path string) *widget.Clickable {

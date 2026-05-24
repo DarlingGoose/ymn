@@ -2,7 +2,6 @@ package media
 
 import (
 	"path/filepath"
-	"strings"
 
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media/player"
 )
@@ -15,6 +14,8 @@ var DefaultKinds = map[string]player.Kind{
 	".gif":  player.KindImage,
 	".webp": player.KindImage,
 	".bmp":  player.KindImage,
+	".tif":  player.KindImage,
+	".tiff": player.KindImage,
 
 	// Audio
 	".mp3":  player.KindAudio,
@@ -47,7 +48,7 @@ var DefaultKinds = map[string]player.Kind{
 }
 
 func DetectKind(path string) player.Kind {
-	ext := strings.ToLower(filepath.Ext(path))
+	ext := normalizeExt(filepath.Ext(path))
 	if kind, ok := DefaultKinds[ext]; ok {
 		return kind
 	}
@@ -56,7 +57,7 @@ func DetectKind(path string) player.Kind {
 
 func WithDetectedKind(src player.Source) player.Source {
 	if src.Ext == "" {
-		src.Ext = strings.ToLower(filepath.Ext(src.Path))
+		src.Ext = normalizeExt(filepath.Ext(src.Path))
 	}
 	if src.Kind == "" || src.Kind == player.KindUnknown {
 		src.Kind = DetectKind(src.Path)

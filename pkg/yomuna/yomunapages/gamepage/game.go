@@ -17,6 +17,7 @@ import (
 	"github.com/DarlingGoose/gr"
 	"github.com/DarlingGoose/gr/gamescope"
 	"github.com/DarlingGoose/gr/wine"
+	"github.com/DarlingGoose/vntext/pkg/engine"
 	"github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
@@ -25,6 +26,7 @@ import (
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/modal"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/tabs"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
+	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/notifications"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/overlay"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/theme"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/pages/fileexplorer"
@@ -43,6 +45,7 @@ type GameUI struct {
 	winetrickConfiguredList layout.List
 	winetrickCommonList     layout.List
 	winetrickInstalledList  layout.List
+	pluginList              layout.List
 	configTab               *tabs.Layout
 
 	gameDropdown   *dropdowns.Dropdown
@@ -71,6 +74,9 @@ type GameUI struct {
 	addWinetrickClick        widget.Clickable
 	winetrickCommonClicks    map[string]*widget.Clickable
 	winetrickRemoveClicks    map[string]*widget.Clickable
+	pluginInstallClicks      map[string]*widget.Clickable
+	pluginRemoveClicks       map[string]*widget.Clickable
+	pluginInstalledOverride  map[string]bool
 
 	filePickerModal  *modal.Modal
 	filePicker       *fileexplorer.FileExplorer
@@ -140,6 +146,7 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 		winetrickConfiguredList: layout.List{Axis: layout.Horizontal},
 		winetrickCommonList:     layout.List{Axis: layout.Horizontal},
 		winetrickInstalledList:  layout.List{Axis: layout.Vertical},
+		pluginList:              layout.List{Axis: layout.Vertical},
 
 		gameDropdown: dropdowns.NewDropdown(nil).
 			WithThemeClient(tc).
@@ -171,6 +178,9 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 		coverPreview:             media.NewView(media.DefaultRegistry).WithImageFit(widget.Contain),
 		winetrickCommonClicks:    map[string]*widget.Clickable{},
 		winetrickRemoveClicks:    map[string]*widget.Clickable{},
+		pluginInstallClicks:      map[string]*widget.Clickable{},
+		pluginRemoveClicks:       map[string]*widget.Clickable{},
+		pluginInstalledOverride:  map[string]bool{},
 
 		basicSection:    newGameSection("General", "Name and artwork.", true),
 		runnerSection:   newGameSection("Runner", "Runner type and executable paths.", true),
@@ -208,6 +218,9 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 			return ui.layoutScrollableConfigPanel(gtx, func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutScalingOptions(gtx, ui.activeLayer)
 			})
+		}),
+		tabs.NewTabFunc(configPanelPlugins, "Plugins", "", func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutScrollableConfigPanel(gtx, ui.layoutPluginOptions)
 		}),
 		tabs.NewTabFunc(configPanelAdvanced, "Advanced", "", func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutScrollableConfigPanel(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -843,6 +856,117 @@ func (ui *GameUI) layoutWinetricksOptions(gtx layout.Context) layout.Dimensions 
 	})
 }
 
+func (ui *GameUI) layoutPluginOptions(gtx layout.Context) layout.Dimensions {
+	if ui == nil || ui.draft == nil {
+		return ui.layoutEmpty(gtx)
+	}
+	ct := ui.theme.GetCurrentColorToken()
+	return utils.SurfaceOutlined(gtx, ct.SurfaceNRGBA(), unit.Dp(8), utils.SurfaceBorder{Color: ct.BorderNRGBA(), Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(14)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleLabel, theme.ThemeColorTextPrimary, "Engine plugins")
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutMutedText(gtx, "Plugins are provided by the selected vntext engine for this game.")
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutAvailablePlugins(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (ui *GameUI) layoutAvailablePlugins(gtx layout.Context) layout.Dimensions {
+	plugins, err := ui.availablePlugins()
+	if err != nil {
+		return ui.layoutMutedText(gtx, "Could not load plugins: "+err.Error())
+	}
+	if len(plugins) == 0 {
+		return ui.layoutMutedText(gtx, "No plugins are available for this game engine.")
+	}
+	return ui.pluginList.Layout(gtx, len(plugins), func(gtx layout.Context, index int) layout.Dimensions {
+		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutPluginRow(gtx, plugins[index])
+		})
+	})
+}
+
+func (ui *GameUI) layoutPluginRow(gtx layout.Context, plugin *engine.Plugin) layout.Dimensions {
+	if plugin == nil {
+		return layout.Dimensions{}
+	}
+	name := strings.TrimSpace(plugin.Name)
+	installed := plugin.Installed
+	if override, ok := ui.pluginInstalledOverride[pluginKey(name)]; ok {
+		installed = override
+	}
+	ct := ui.theme.GetCurrentColorToken()
+	return utils.SurfaceOutlined(gtx, ct.SurfaceAltNRGBA(), unit.Dp(8), utils.SurfaceBorder{Color: ct.BorderNRGBA(), Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleLabel, theme.ThemeColorTextPrimary, name)
+						}),
+						layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutPluginStatus(gtx, installed)
+						}),
+					)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutPluginActions(gtx, name, installed)
+				}),
+			)
+		})
+	})
+}
+
+func (ui *GameUI) layoutPluginActions(gtx layout.Context, name string, installed bool) layout.Dimensions {
+	install := ui.pluginInstallClicks[name]
+	if install == nil {
+		install = &widget.Clickable{}
+		ui.pluginInstallClicks[name] = install
+	}
+	remove := ui.pluginRemoveClicks[name]
+	if remove == nil {
+		remove = &widget.Clickable{}
+		ui.pluginRemoveClicks[name] = remove
+	}
+	for install.Clicked(gtx) {
+		ui.installPlugin(gtx, name)
+	}
+	for remove.Clicked(gtx) {
+		ui.removePlugin(gtx, name)
+	}
+	if installed {
+		return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutTextButton(gtx, install, "Reinstall")
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutTextButton(gtx, remove, "Remove")
+			}),
+		)
+	}
+	return ui.layoutTextButton(gtx, install, "Install")
+}
+
+func (ui *GameUI) layoutPluginStatus(gtx layout.Context, installed bool) layout.Dimensions {
+	label := "Available"
+	if installed {
+		label = "Installed"
+	}
+	return ui.layoutWinetrickChip(gtx, nil, label, installed)
+}
+
 func (ui *GameUI) layoutWinetricksConfigured(gtx layout.Context) layout.Dimensions {
 	deps := ui.configuredWinetricks()
 	children := []layout.FlexChild{
@@ -1077,6 +1201,59 @@ func (ui *GameUI) installedWinetricks() ([]string, string) {
 		return nil, ""
 	}
 	return parseWinetricksLog(string(data)), "winetricks.log"
+}
+
+func (ui *GameUI) availablePlugins() ([]*engine.Plugin, error) {
+	if ui == nil || ui.backend == nil || ui.draft == nil {
+		return nil, nil
+	}
+	plugins, err := ui.backend.GetGamePlugins(context.Background(), ui.draft)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(plugins, func(i, j int) bool {
+		if plugins[i] == nil || plugins[j] == nil {
+			return plugins[j] != nil
+		}
+		return strings.ToLower(plugins[i].Name) < strings.ToLower(plugins[j].Name)
+	})
+	return plugins, nil
+}
+
+func (ui *GameUI) installPlugin(gtx layout.Context, name string) {
+	if ui == nil || ui.backend == nil || ui.draft == nil {
+		return
+	}
+	if err := ui.backend.InstallGamePlugin(context.Background(), ui.draft, name); err != nil {
+		ui.status = "Plugin install failed: " + err.Error()
+		gtx.Execute(op.InvalidateCmd{})
+		return
+	}
+	ui.pluginInstalledOverride[pluginKey(name)] = true
+	ui.status = "Installed plugin " + name
+	notifications.Success(ui.status)
+	gtx.Execute(op.InvalidateCmd{})
+}
+
+func (ui *GameUI) removePlugin(gtx layout.Context, name string) {
+	if ui == nil || ui.backend == nil || ui.draft == nil {
+		return
+	}
+	if err := ui.backend.UninstallGamePlugin(context.Background(), ui.draft, name); err != nil {
+		ui.status = "Plugin remove failed: " + err.Error()
+		gtx.Execute(op.InvalidateCmd{})
+		return
+	}
+	ui.pluginInstalledOverride[pluginKey(name)] = false
+	ui.status = "Removed plugin " + name
+	gtx.Execute(op.InvalidateCmd{})
+}
+
+func pluginKey(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	name = strings.ReplaceAll(name, "_", "-")
+	name = strings.ReplaceAll(name, " ", "-")
+	return name
 }
 
 func (ui *GameUI) effectiveWinePrefix() string {
@@ -1345,6 +1522,7 @@ const (
 	configPanelDisplay  = "display"
 	configPanelWindow   = "window"
 	configPanelScaling  = "scaling"
+	configPanelPlugins  = "plugins"
 	configPanelAdvanced = "advanced"
 )
 
