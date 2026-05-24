@@ -730,6 +730,70 @@ func (b *LiveBackend) GetGameEngine(ctx context.Context, g *game.Game) (engine.E
 	return nil, fmt.Errorf("could not select engine for %q", g.Name)
 }
 
+func (b *LiveBackend) GetGamePlugins(ctx context.Context, g *game.Game) ([]*engine.Plugin, error) {
+	e, err := b.GetGameEngine(ctx, g)
+	if err != nil {
+		return nil, err
+	}
+	plugins := e.GetPlugins()
+	out := make([]*engine.Plugin, 0, len(plugins))
+	for _, plugin := range plugins {
+		if plugin == nil {
+			continue
+		}
+		cp := *plugin
+		cp.Game = g
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+func (b *LiveBackend) InstallGamePlugin(ctx context.Context, g *game.Game, name string) error {
+	e, plugin, err := b.gamePlugin(ctx, g, name)
+	if err != nil {
+		return err
+	}
+	return e.InstallPlugin(plugin)
+}
+
+func (b *LiveBackend) UninstallGamePlugin(ctx context.Context, g *game.Game, name string) error {
+	e, plugin, err := b.gamePlugin(ctx, g, name)
+	if err != nil {
+		return err
+	}
+	return e.UnInstallPlugin(plugin)
+}
+
+func (b *LiveBackend) gamePlugin(ctx context.Context, g *game.Game, name string) (engine.EngineV2, *engine.Plugin, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, nil, fmt.Errorf("plugin name is required")
+	}
+	e, err := b.GetGameEngine(ctx, g)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, plugin := range e.GetPlugins() {
+		if plugin == nil || !samePluginName(plugin.Name, name) {
+			continue
+		}
+		cp := *plugin
+		cp.Game = g
+		return e, &cp, nil
+	}
+	return nil, nil, fmt.Errorf("%w: %s", engine.ErrUnsupportedPlugin, name)
+}
+
+func samePluginName(a, b string) bool {
+	normalize := func(v string) string {
+		v = strings.ToLower(strings.TrimSpace(v))
+		v = strings.ReplaceAll(v, "_", "-")
+		v = strings.ReplaceAll(v, " ", "-")
+		return v
+	}
+	return normalize(a) == normalize(b)
+}
+
 func (b *LiveBackend) ReloadGames() error {
 	games, err := gameConfig.LoadInstalledGames(
 		filepath.Join(gameConfig.ConfigBaseDir(), "games"),

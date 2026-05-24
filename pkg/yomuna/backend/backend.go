@@ -34,6 +34,9 @@ type GameLogic interface {
 	ReadGameTextHookHistory(g *game.Game, filters []string, maxLines int) ([]engine.Line, error)
 	//todo GetTesseract()
 	GetGameEngine(ctx context.Context, g *game.Game) (engine.EngineV2, error)
+	GetGamePlugins(ctx context.Context, g *game.Game) ([]*engine.Plugin, error)
+	InstallGamePlugin(ctx context.Context, g *game.Game, name string) error
+	UninstallGamePlugin(ctx context.Context, g *game.Game, name string) error
 	GetGameTextHooks(ctx context.Context, g *game.Game) ([]string, bool, error)
 	SetGameTextHookFilter(g *game.Game, filters []string) error
 	SelectGame(g *game.Game)
