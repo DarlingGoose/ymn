@@ -37,7 +37,7 @@ type GameSelectorUI struct {
 	backend backend.Backend
 
 	list         layout.List
-	grid         layoutgrid.Grid
+	grid         *layoutgrid.ScrollGrid
 	sortDropdown *dropdowns.Dropdown
 	refresh      *components.IconButton
 	addGame      *components.IconButton
@@ -55,6 +55,7 @@ type GameSelectorUI struct {
 	status         string
 	activeLayer    *overlay.Overlay
 	playAction     func(*game.Game)
+	sortChanged    func(string)
 }
 
 func NewGameSelectorUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameSelectorUI {
@@ -73,11 +74,7 @@ func NewGameSelectorUI(th *material.Theme, tc *theme.Client, b backend.Backend) 
 		theme:   tc,
 		backend: b,
 		list:    layout.List{Axis: layout.Vertical},
-		grid: layoutgrid.Grid{
-			MinCellWidth: unit.Dp(178),
-			Gap:          unit.Dp(12),
-			MaxColumns:   6,
-		},
+		grid:    layoutgrid.NewScrollGrid(),
 		sortDropdown: dropdowns.NewDropdown([]dropdowns.DropdownItem{
 			{Label: "Last played", Value: gameSortLastPlayed},
 			{Label: "Newest", Value: gameSortNewest},
@@ -93,6 +90,18 @@ func NewGameSelectorUI(th *material.Theme, tc *theme.Client, b backend.Backend) 
 		coverViews:     map[string]*media.View{},
 		status:         "Select a game to make it active.",
 	}
+	ui.grid.Grid.MinCellWidth = unit.Dp(178)
+	ui.grid.Grid.Gap = unit.Dp(12)
+	ui.grid.Grid.MaxColumns = 6
+	ui.grid.Grid.Inset = layout.UniformInset(unit.Dp(12))
+	ui.sortDropdown.SelectItemEvent(func(item dropdowns.DropdownItem, valid bool) {
+		if !valid {
+			return
+		}
+		if ui.sortChanged != nil {
+			ui.sortChanged(item.Value)
+		}
+	})
 	ui.refresh.FillWidth = false
 	ui.refresh.TextCollapseMode = components.TextCollapseNever
 	ui.refresh.CollapseTextBelow = unit.Dp(140)
@@ -105,6 +114,16 @@ func NewGameSelectorUI(th *material.Theme, tc *theme.Client, b backend.Backend) 
 	ui.addGame.MinWidth = unit.Dp(116)
 	ui.addGame.Height = unit.Dp(44)
 	ui.addGame.Radius = unit.Dp(10)
+	return ui
+}
+
+func (ui *GameSelectorUI) WithSortPreference(sortKey string, onChange func(string)) *GameSelectorUI {
+	if ui == nil {
+		return ui
+	}
+	sortKey = normalizeSelectorSort(sortKey)
+	ui.sortDropdown.SelectItem(sortKey)
+	ui.sortChanged = onChange
 	return ui
 }
 
@@ -143,20 +162,15 @@ func (ui *GameSelectorUI) Layout(gtx layout.Context, layer *overlay.Overlay) lay
 			if ui.backend != nil && ui.backend.IsGameRunning() {
 				gtx.Execute(op.InvalidateCmd{})
 			}
-			return ui.list.Layout(gtx, 4, func(gtx layout.Context, index int) layout.Dimensions {
-				switch index {
-				case 0:
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutToolbar(gtx, layer, len(games))
-				case 1:
-					return layout.Spacer{Height: unit.Dp(14)}.Layout(gtx)
-				case 2:
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutGames(gtx, games)
-				case 3:
-					return layout.Spacer{Height: unit.Dp(24)}.Layout(gtx)
-				default:
-					return layout.Dimensions{}
-				}
-			})
+				}),
+			)
 		})
 	})
 	ui.layoutSettingsOverlay(gtx, layer)
@@ -276,13 +290,17 @@ func (ui *GameSelectorUI) layoutRefresh(gtx layout.Context) layout.Dimensions {
 }
 
 func (ui *GameSelectorUI) layoutGames(gtx layout.Context, games []*game.Game) layout.Dimensions {
+	ct := ui.theme.GetCurrentColorToken()
+	return utils.SurfaceOutlined(gtx, ct.SurfaceAltNRGBA(), unit.Dp(8), utils.SurfaceBorder{Color: ct.BorderNRGBA(), Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutGamesGrid(gtx, games)
+	})
+}
+
+func (ui *GameSelectorUI) layoutGamesGrid(gtx layout.Context, games []*game.Game) layout.Dimensions {
 	if len(games) == 0 {
-		ct := ui.theme.GetCurrentColorToken()
-		return utils.SurfaceOutlined(gtx, ct.SurfaceNRGBA(), unit.Dp(8), utils.SurfaceBorder{Color: ct.BorderNRGBA(), Width: unit.Dp(1)}, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(180))
-			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleBodySmall, theme.ThemeColorTextMuted, "No games found")
-			})
+		gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleBodySmall, theme.ThemeColorTextMuted, "No games found")
 		})
 	}
 	return ui.grid.Layout(gtx, len(games), func(gtx layout.Context, index int) layout.Dimensions {
@@ -433,7 +451,7 @@ func (ui *GameSelectorUI) sortedGames() []*game.Game {
 	}
 	sortKey := gameSortLastPlayed
 	if item, ok := ui.sortDropdown.SelectedItem(); ok {
-		sortKey = item.Value
+		sortKey = normalizeSelectorSort(item.Value)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i], out[j]
@@ -441,7 +459,7 @@ func (ui *GameSelectorUI) sortedGames() []*game.Game {
 		case gameSortNewest:
 			return a.CreatedAt.After(b.CreatedAt)
 		case gameSortName:
-			return strings.ToLower(strings.TrimSpace(a.Name)) < strings.ToLower(strings.TrimSpace(b.Name))
+			return naturalLess(strings.TrimSpace(a.Name), strings.TrimSpace(b.Name))
 		case gameSortLastPlayed:
 			fallthrough
 		default:
@@ -450,7 +468,7 @@ func (ui *GameSelectorUI) sortedGames() []*game.Game {
 			if !at.Equal(bt) {
 				return at.After(bt)
 			}
-			return strings.ToLower(strings.TrimSpace(a.Name)) < strings.ToLower(strings.TrimSpace(b.Name))
+			return naturalLess(strings.TrimSpace(a.Name), strings.TrimSpace(b.Name))
 		}
 	})
 	return out
@@ -625,4 +643,56 @@ func formatPlaytime(d time.Duration) string {
 		return strconv.Itoa(hours) + "h"
 	}
 	return strconv.Itoa(hours) + "h " + strconv.Itoa(minutes) + "m"
+}
+
+func normalizeSelectorSort(sortKey string) string {
+	switch sortKey {
+	case gameSortLastPlayed, gameSortNewest, gameSortName:
+		return sortKey
+	default:
+		return gameSortLastPlayed
+	}
+}
+
+func naturalLess(a, b string) bool {
+	a = strings.ToLower(strings.TrimSpace(a))
+	b = strings.ToLower(strings.TrimSpace(b))
+	ai, bi := 0, 0
+	for ai < len(a) && bi < len(b) {
+		ac, bc := a[ai], b[bi]
+		if isASCIIDigit(ac) && isASCIIDigit(bc) {
+			an, nextA := readNaturalNumber(a, ai)
+			bn, nextB := readNaturalNumber(b, bi)
+			if an != bn {
+				return an < bn
+			}
+			if consumedA, consumedB := nextA-ai, nextB-bi; consumedA != consumedB {
+				return consumedA < consumedB
+			}
+			ai, bi = nextA, nextB
+			continue
+		}
+		if ac != bc {
+			return ac < bc
+		}
+		ai++
+		bi++
+	}
+	return len(a) < len(b)
+}
+
+func readNaturalNumber(value string, start int) (int64, int) {
+	var n int64
+	i := start
+	for i < len(value) && isASCIIDigit(value[i]) {
+		if n < 1<<60 {
+			n = n*10 + int64(value[i]-'0')
+		}
+		i++
+	}
+	return n, i
+}
+
+func isASCIIDigit(b byte) bool {
+	return b >= '0' && b <= '9'
 }

@@ -170,6 +170,10 @@ func New(initialSource string) *App {
 		}).WithPinned(true),
 	)
 	appTabs.SwitchToID(appPrefs.StartupTab)
+	ui.Games.WithSortPreference(appPrefs.GameSort, func(sortKey string) {
+		appPrefs.GameSort = normalizeGameSort(sortKey)
+		_ = saveAppPreferences(appPrefs)
+	})
 	ui.Games.WithConfigUI(ui.Game)
 	ui.Games.WithAddGameUI(ui.AddGame)
 	ui.Games.WithPlayAction(func(g *game.Game) {
