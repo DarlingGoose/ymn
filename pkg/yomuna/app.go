@@ -150,9 +150,6 @@ func New(initialSource string) *App {
 		tabs.NewTabFunc("games", "Games", "lucide:layout-grid", func(gtx layout.Context) layout.Dimensions {
 			return ui.Games.Layout(gtx, ui.Overlay)
 		}),
-		tabs.NewTabFunc("translation", "Translation", "lucide:languages", func(gtx layout.Context) layout.Dimensions {
-			return ui.Translation.Layout(gtx, ui.ctx)
-		}),
 		tabs.NewTabFunc("transcript", "Transcript", "lucide:file-text", func(gtx layout.Context) layout.Dimensions {
 			return ui.Transcript.Layout(gtx, ui.ctx)
 		}),
@@ -161,9 +158,6 @@ func New(initialSource string) *App {
 		}),
 		tabs.NewTabFunc("game", "Game Config", "lucide:gamepad-2", func(gtx layout.Context) layout.Dimensions {
 			return ui.Game.Layout(gtx, ui.Overlay)
-		}),
-		tabs.NewTabFunc("add-game", "Add Game", "lucide:plus", func(gtx layout.Context) layout.Dimensions {
-			return ui.AddGame.Layout(gtx, ui.Overlay)
 		}),
 		tabs.NewTabFunc("settings", "Settings", "lucide:settings", func(gtx layout.Context) layout.Dimensions {
 			return ui.Settings.Layout(gtx, ui.Overlay)
