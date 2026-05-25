@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/DarlingGoose/gr"
 	"github.com/DarlingGoose/gr/autorunner"
@@ -31,11 +32,14 @@ import (
 var _ Backend = &LiveBackend{}
 
 type LiveBackend struct {
-	gameMu     sync.RWMutex
-	games      []*game.Game
-	config     TranscriptConfig
-	current    *game.Game
-	currentRun *gr.Process
+	gameMu            sync.RWMutex
+	games             []*game.Game
+	config            TranscriptConfig
+	current           *game.Game
+	currentRun        *gr.Process
+	currentRunStarted time.Time
+	activityMu        sync.Mutex
+	activity          map[string]gameActivityEntry
 
 	engineSelector *auto.EngineSelectorV2
 	translatorMu   sync.Mutex
@@ -121,6 +125,9 @@ func newOllamaTranslator(cfg TranslatorConfig) translate.Translate {
 }
 
 func (b *LiveBackend) IsGameRunning() bool {
+	b.finalizeStoppedRunIfNeeded()
+	b.gameMu.RLock()
+	defer b.gameMu.RUnlock()
 	return b.currentRun != nil
 }
 
@@ -222,14 +229,17 @@ func (b *LiveBackend) InstallGameWithInstaller(ctx context.Context, installerPat
 	if err := b.ReloadGames(); err != nil {
 		return nil, err
 	}
+	startedAt := time.Now()
 	b.gameMu.Lock()
 	b.current = findGameByName(b.games, g.Name)
 	if b.current == nil {
 		b.current = g
 	}
 	b.currentRun = proc
+	b.currentRunStarted = startedAt
 	b.config.SelectGameName = g.Name
 	b.gameMu.Unlock()
+	b.recordGameStarted(g.Name, startedAt)
 
 	return b.CurrentGame(), nil
 }
@@ -273,11 +283,14 @@ func (b *LiveBackend) RunGame(ctx context.Context, g *game.Game) (*gr.Process, e
 		return nil, err
 	}
 
+	startedAt := time.Now()
 	b.gameMu.Lock()
 	b.current = g
 	b.currentRun = proc
+	b.currentRunStarted = startedAt
 	b.config.SelectGameName = g.Name
 	b.gameMu.Unlock()
+	b.recordGameStarted(g.Name, startedAt)
 	return proc, nil
 }
 
@@ -917,6 +930,7 @@ func (b *LiveBackend) StopCurrentGame() {
 	b.gameMu.RLock()
 	g := b.current
 	proc := b.currentRun
+	startedAt := b.currentRunStarted
 	b.gameMu.RUnlock()
 	if g == nil {
 		return
@@ -933,8 +947,10 @@ func (b *LiveBackend) StopCurrentGame() {
 	b.gameMu.Lock()
 	if b.currentRun == proc {
 		b.currentRun = nil
+		b.currentRunStarted = time.Time{}
 	}
 	b.gameMu.Unlock()
+	b.recordGameStopped(g.Name, startedAt, time.Now())
 }
 
 func (b *LiveBackend) SearchTerm(search jpndict.Search) (*jpndict.Response, error) {

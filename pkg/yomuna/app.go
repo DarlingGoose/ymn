@@ -10,6 +10,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
+	"github.com/DarlingGoose/vntext/pkg/game"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/tabs"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/iconify"
@@ -40,6 +41,7 @@ type App struct {
 	Translation *yomunapages.TranslationUI
 	Flashcards  *yomunapages.FlashcardsUI
 	Transcript  *transcript.TranscriptUI
+	Games       *gamepage.GameSelectorUI
 	Game        *gamepage.GameUI
 	AddGame     *gamepage.AddGameUI
 	Settings    *pages.SettingsUI
@@ -62,6 +64,7 @@ func New(initialSource string) *App {
 		Transcript:    transcript.NewTranscriptUI(th, tc, b),
 		Translation:   yomunapages.NewTranslationUI(th, tc).WithSource(initialSource),
 		Flashcards:    yomunapages.NewFlashcardsUI(th, tc, b),
+		Games:         gamepage.NewGameSelectorUI(th, tc, b),
 		Game:          gamepage.NewGameUI(th, tc, b),
 		AddGame:       gamepage.NewAddGameUI(th, tc, b),
 		Settings:      pages.NewSettingsUI(tc),
@@ -120,6 +123,22 @@ func New(initialSource string) *App {
 			return nil
 		},
 	})
+	ui.Settings.WithAppSettings(&pages.AppSettings{
+		StartupPage: func() string {
+			return appPrefs.StartupTab
+		},
+		SetStartupPage: func(page string) {
+			appPrefs.StartupTab = normalizeStartupTab(page)
+		},
+		Save: func() error {
+			appPrefs.StartupTab = normalizeStartupTab(appPrefs.StartupTab)
+			if err := saveAppPreferences(appPrefs); err != nil {
+				return err
+			}
+			appPrefs = loadAppPreferences()
+			return nil
+		},
+	})
 
 	menuIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:panel-left-close")
 	ui.ToggleButton = components.NewIconButton("Toggle", nil, menuIcon).WithThemeClient(tc)
@@ -128,16 +147,19 @@ func New(initialSource string) *App {
 	ui.ToggleButton.IconSize = unit.Dp(20)
 
 	appTabs := tabs.New(
+		tabs.NewTabFunc("games", "Games", "lucide:layout-grid", func(gtx layout.Context) layout.Dimensions {
+			return ui.Games.Layout(gtx, ui.Overlay)
+		}),
+		tabs.NewTabFunc("translation", "Translation", "lucide:languages", func(gtx layout.Context) layout.Dimensions {
+			return ui.Translation.Layout(gtx, ui.ctx)
+		}),
 		tabs.NewTabFunc("transcript", "Transcript", "lucide:file-text", func(gtx layout.Context) layout.Dimensions {
 			return ui.Transcript.Layout(gtx, ui.ctx)
 		}),
-		//tabs.NewTabFunc("translation", "Translation", "lucide:languages", func(gtx layout.Context) layout.Dimensions {
-		//	return ui.Translation.Layout(gtx, ui.ctx)
-		//}),
 		tabs.NewTabFunc("flashcards", "Flashcards", "lucide:library", func(gtx layout.Context) layout.Dimensions {
 			return ui.Flashcards.Layout(gtx, ui.Overlay)
 		}),
-		tabs.NewTabFunc("game", "Game", "lucide:gamepad-2", func(gtx layout.Context) layout.Dimensions {
+		tabs.NewTabFunc("game", "Game Config", "lucide:gamepad-2", func(gtx layout.Context) layout.Dimensions {
 			return ui.Game.Layout(gtx, ui.Overlay)
 		}),
 		tabs.NewTabFunc("add-game", "Add Game", "lucide:plus", func(gtx layout.Context) layout.Dimensions {
@@ -147,6 +169,20 @@ func New(initialSource string) *App {
 			return ui.Settings.Layout(gtx, ui.Overlay)
 		}).WithPinned(true),
 	)
+	appTabs.SwitchToID(appPrefs.StartupTab)
+	ui.Games.WithSortPreference(appPrefs.GameSort, func(sortKey string) {
+		appPrefs.GameSort = normalizeGameSort(sortKey)
+		_ = saveAppPreferences(appPrefs)
+	})
+	ui.Games.WithConfigUI(ui.Game)
+	ui.Games.WithAddGameUI(ui.AddGame)
+	ui.Games.WithPlayAction(func(g *game.Game) {
+		if g != nil {
+			b.SelectGame(g)
+			ui.Transcript.SelectGameByName(g.Name)
+		}
+		appTabs.SwitchToID("transcript")
+	})
 
 	ui.Sidebar = sidebar.NewCollapsibleSidebar(appTabs).
 		WithThemeClient(tc).

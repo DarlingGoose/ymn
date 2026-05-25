@@ -3,11 +3,16 @@ package gamepage
 import (
 	"context"
 	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -19,6 +24,7 @@ import (
 	"github.com/DarlingGoose/gr/wine"
 	"github.com/DarlingGoose/vntext/pkg/engine"
 	"github.com/DarlingGoose/vntext/pkg/game"
+	apputil "github.com/DarlingGoose/ymn/pkg/util"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/backend/media"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components"
 	"github.com/DarlingGoose/ymn/pkg/v2/gui/core/components/dropdowns"
@@ -54,6 +60,7 @@ type GameUI struct {
 	nameInput       *input.TextInput
 	iconInput       *input.TextInput
 	imageInput      *input.TextInput
+	coverURLInput   *input.TextInput
 	runnerPathInput *input.TextInput
 	prefixInput     *input.TextInput
 	winetrickInput  *input.TextInput
@@ -69,6 +76,7 @@ type GameUI struct {
 	refreshButton            *components.IconButton
 	iconBrowse               *components.IconButton
 	imageBrowse              *components.IconButton
+	coverDownloadButton      *components.IconButton
 	runnerBrowse             *components.IconButton
 	prefixBrowse             *components.IconButton
 	addWinetrickClick        widget.Clickable
@@ -93,12 +101,20 @@ type GameUI struct {
 	scalingSection  collapsibleSection
 	advancedSection collapsibleSection
 
-	draft        *game.Game
-	previousName string
-	loadedGame   string
-	gamesKey     string
-	dirty        bool
-	status       string
+	draft             *game.Game
+	previousName      string
+	loadedGame        string
+	gamesKey          string
+	dirty             bool
+	status            string
+	coverDownloading  bool
+	coverDownloadChan chan coverDownloadResult
+	hideGameDropdown  bool
+}
+
+type coverDownloadResult struct {
+	path string
+	err  error
 }
 
 type collapsibleSection struct {
@@ -133,6 +149,7 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 	deleteConfigIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:file-x-2")
 	refreshIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:refresh-cw")
 	folderIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:folder-open")
+	downloadIcon, _ := iconify.DefaultIconify.Icon(context.Background(), "lucide:download")
 
 	ui := &GameUI{
 		th:      th,
@@ -161,6 +178,7 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 		nameInput:       input.NewTextInput("Name", "Game name").WithMaterialTheme(th).WithThemeClient(tc),
 		iconInput:       input.NewPathInput("Icon", "/path/to/icon.png").WithMaterialTheme(th).WithThemeClient(tc),
 		imageInput:      input.NewPathInput("Picture", "/path/to/image.png").WithMaterialTheme(th).WithThemeClient(tc),
+		coverURLInput:   input.NewTextInput("Cover image URL", "https://...").WithMaterialTheme(th).WithThemeClient(tc),
 		runnerPathInput: input.NewPathInput("Runner path", "Optional runner executable").WithMaterialTheme(th).WithThemeClient(tc),
 		prefixInput:     input.NewPathInput("Wine prefix", "Optional Wine prefix").WithMaterialTheme(th).WithThemeClient(tc),
 		winetrickInput:  input.NewTextInput("Winetricks verb", "fakejapanese").WithMaterialTheme(th).WithThemeClient(tc),
@@ -173,9 +191,11 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 		refreshButton:            components.NewIconButton("Refresh", nil, refreshIcon).WithThemeClient(tc),
 		iconBrowse:               components.NewIconButton("Browse", nil, folderIcon).WithThemeClient(tc),
 		imageBrowse:              components.NewIconButton("Browse", nil, folderIcon).WithThemeClient(tc),
+		coverDownloadButton:      components.NewIconButton("Download & Use", nil, downloadIcon).WithThemeClient(tc),
 		runnerBrowse:             components.NewIconButton("Browse", nil, folderIcon).WithThemeClient(tc),
 		prefixBrowse:             components.NewIconButton("Browse", nil, folderIcon).WithThemeClient(tc),
 		coverPreview:             media.NewView(media.DefaultRegistry).WithImageFit(widget.Contain),
+		coverDownloadChan:        make(chan coverDownloadResult, 1),
 		winetrickCommonClicks:    map[string]*widget.Clickable{},
 		winetrickRemoveClicks:    map[string]*widget.Clickable{},
 		pluginInstallClicks:      map[string]*widget.Clickable{},
@@ -241,8 +261,12 @@ func NewGameUI(th *material.Theme, tc *theme.Client, b backend.Backend) *GameUI 
 	ui.refreshButton.FillWidth = false
 	ui.configureBrowseButton(ui.iconBrowse)
 	ui.configureBrowseButton(ui.imageBrowse)
+	ui.configureBrowseButton(ui.coverDownloadButton)
 	ui.configureBrowseButton(ui.runnerBrowse)
 	ui.configureBrowseButton(ui.prefixBrowse)
+	ui.coverDownloadButton.TextCollapseMode = components.TextCollapseWhenNarrow
+	ui.coverDownloadButton.CollapseTextBelow = unit.Dp(220)
+	ui.coverDownloadButton.MinWidth = unit.Dp(44)
 
 	ui.configureMainInputs()
 
@@ -288,11 +312,15 @@ func (ui *GameUI) configureMainInputs() {
 	configure(ui.nameInput, "Required")
 	configure(ui.iconInput, "Optional file path")
 	configure(ui.imageInput, "Optional file path")
+	configure(ui.coverURLInput, "Paste an http or https image URL")
 	configure(ui.runnerPathInput, "Leave empty to use the selected runner default")
 	configure(ui.prefixInput, "Leave empty to use the game or runner default")
 	configure(ui.winetrickInput, "Winetricks verb, for example fakejapanese")
 	if ui.winetrickInput != nil {
 		ui.winetrickInput.OnChange = nil
+	}
+	if ui.coverURLInput != nil {
+		ui.coverURLInput.OnChange = nil
 	}
 	if ui.imageInput != nil {
 		ui.imageInput.OnChange = func(path string) {
@@ -327,6 +355,10 @@ func (ui *GameUI) Layout(gtx layout.Context, layer *overlay.Overlay) layout.Dime
 		return layout.Dimensions{}
 	}
 	ui.activeLayer = layer
+	ui.consumeCoverDownload(gtx)
+	if ui.coverDownloading {
+		gtx.Execute(op.InvalidateCmd{})
+	}
 	ui.syncGames()
 
 	dims := layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -632,6 +664,9 @@ func (ui *GameUI) layoutHeaderDetails(gtx layout.Context, layer *overlay.Overlay
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if ui.hideGameDropdown {
+				return layout.Dimensions{}
+			}
 			return ui.layoutField(gtx, "Editing", "Choose which installed game config to edit.", func(gtx layout.Context) layout.Dimensions {
 				if ui.gameDropdown == nil {
 					return layout.Dimensions{}
@@ -639,7 +674,12 @@ func (ui *GameUI) layoutHeaderDetails(gtx layout.Context, layer *overlay.Overlay
 				return ui.gameDropdown.Layout(gtx, layer)
 			})
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if ui.hideGameDropdown {
+				return layout.Dimensions{}
+			}
+			return layout.Spacer{Height: unit.Dp(12)}.Layout(gtx)
+		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Min.Y = 0
 			return ui.layoutActions(gtx)
@@ -723,6 +763,10 @@ func (ui *GameUI) layoutGameFields(gtx layout.Context) layout.Dimensions {
 			layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutPathInputField(gtx, ui.imageInput, ui.imageBrowse, "Cover image", "Larger picture used when the game needs artwork.")
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutCoverURLField(gtx)
 			}),
 		)
 	}
@@ -1663,6 +1707,227 @@ func (ui *GameUI) layoutPathInputField(gtx layout.Context, in *input.TextInput, 
 			}),
 		)
 	})
+}
+
+func (ui *GameUI) layoutCoverURLField(gtx layout.Context) layout.Dimensions {
+	if ui.coverURLInput == nil {
+		return layout.Dimensions{}
+	}
+	return ui.layoutField(gtx, "Download cover", "Paste a direct image URL to save a local cover file for this game.", func(gtx layout.Context) layout.Dimensions {
+		if gtx.Constraints.Max.X < gtx.Dp(unit.Dp(560)) {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					oldLabel := ui.coverURLInput.Label
+					ui.coverURLInput.Label = ""
+					dims := ui.coverURLInput.Layout(gtx)
+					ui.coverURLInput.Label = oldLabel
+					return dims
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutCoverDownloadButton(gtx)
+				}),
+			)
+		}
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				oldLabel := ui.coverURLInput.Label
+				ui.coverURLInput.Label = ""
+				dims := ui.coverURLInput.Layout(gtx)
+				ui.coverURLInput.Label = oldLabel
+				return dims
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutCoverDownloadButton(gtx)
+			}),
+		)
+	})
+}
+
+func (ui *GameUI) layoutCoverDownloadButton(gtx layout.Context) layout.Dimensions {
+	if ui.coverDownloadButton == nil {
+		return layout.Dimensions{}
+	}
+	ui.coverDownloadButton.Disabled = ui.draft == nil || ui.coverDownloading || strings.TrimSpace(ui.coverURLInput.Text()) == ""
+	ui.coverDownloadButton.SetLoading(ui.coverDownloading)
+	if ui.coverDownloadButton.Clicked(gtx) {
+		ui.downloadCoverFromURL(gtx)
+	}
+	return ui.coverDownloadButton.Layout(gtx)
+}
+
+func (ui *GameUI) consumeCoverDownload(gtx layout.Context) {
+	for {
+		select {
+		case result := <-ui.coverDownloadChan:
+			ui.coverDownloading = false
+			if ui.coverDownloadButton != nil {
+				ui.coverDownloadButton.SetLoading(false)
+			}
+			if result.err != nil {
+				ui.status = "Cover download failed: " + result.err.Error()
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
+			if ui.imageInput != nil {
+				ui.imageInput.SetText(result.path)
+			}
+			if ui.draft != nil {
+				ui.draft.ImagePath = result.path
+			}
+			ui.loadCoverPreview(result.path)
+			ui.markDirty()
+			ui.status = "Cover downloaded"
+			gtx.Execute(op.InvalidateCmd{})
+		default:
+			return
+		}
+	}
+}
+
+func (ui *GameUI) downloadCoverFromURL(gtx layout.Context) {
+	if ui == nil || ui.draft == nil || ui.coverURLInput == nil || ui.coverDownloading {
+		return
+	}
+	rawURL := strings.TrimSpace(ui.coverURLInput.Text())
+	if rawURL == "" {
+		ui.status = "Cover image URL is required"
+		gtx.Execute(op.InvalidateCmd{})
+		return
+	}
+	gameName := strings.TrimSpace(ui.draft.Name)
+	if gameName == "" && ui.nameInput != nil {
+		gameName = strings.TrimSpace(ui.nameInput.Text())
+	}
+	if gameName == "" {
+		gameName = "game"
+	}
+
+	ui.coverDownloading = true
+	ui.status = "Downloading cover..."
+	if ui.coverDownloadButton != nil {
+		ui.coverDownloadButton.SetLoading(true)
+	}
+	gtx.Execute(op.InvalidateCmd{})
+
+	go func() {
+		path, err := downloadCoverImage(context.Background(), rawURL, gameName)
+		ui.coverDownloadChan <- coverDownloadResult{path: path, err: err}
+	}()
+}
+
+func downloadCoverImage(ctx context.Context, rawURL, gameName string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("URL must start with http or https")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("server returned %s", resp.Status)
+	}
+
+	const maxCoverBytes = 20 << 20
+	if resp.ContentLength > maxCoverBytes {
+		return "", fmt.Errorf("image is larger than 20 MB")
+	}
+
+	ext, err := coverImageExtension(resp.Header.Get("Content-Type"), parsed.Path)
+	if err != nil {
+		return "", err
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxCoverBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > maxCoverBytes {
+		return "", fmt.Errorf("image is larger than 20 MB")
+	}
+
+	dir := filepath.Join(apputil.ConfigBaseDir(), "covers")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create cover dir: %w", err)
+	}
+	path := filepath.Join(dir, safeCoverFileName(gameName)+ext)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return "", fmt.Errorf("write cover image: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("save cover image: %w", err)
+	}
+	return path, nil
+}
+
+func coverImageExtension(contentType, urlPath string) (string, error) {
+	mediaType, _, _ := mime.ParseMediaType(contentType)
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	if strings.HasPrefix(mediaType, "image/") {
+		switch mediaType {
+		case "image/jpeg":
+			return ".jpg", nil
+		case "image/png":
+			return ".png", nil
+		case "image/webp":
+			return ".webp", nil
+		case "image/gif":
+			return ".gif", nil
+		case "image/bmp":
+			return ".bmp", nil
+		case "image/tiff":
+			return ".tiff", nil
+		}
+		if exts, err := mime.ExtensionsByType(mediaType); err == nil && len(exts) > 0 {
+			return exts[0], nil
+		}
+	}
+
+	ext := strings.ToLower(filepath.Ext(urlPath))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff":
+		if ext == ".jpeg" {
+			return ".jpg", nil
+		}
+		return ext, nil
+	default:
+		return "", fmt.Errorf("URL did not resolve to a supported image type")
+	}
+}
+
+func safeCoverFileName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_':
+			b.WriteRune(r)
+		case r == ' ' || r == '.':
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-_")
+	if out == "" {
+		return "cover"
+	}
+	return out
 }
 
 func (ui *GameUI) layoutMutedText(gtx layout.Context, text string) layout.Dimensions {

@@ -59,6 +59,11 @@ type SettingsUI struct {
 	saveNotifications    widget.Clickable
 	notificationStatus   string
 
+	appSettings     *AppSettings
+	startupDropdown *dropdowns.Dropdown
+	saveApp         widget.Clickable
+	appStatus       string
+
 	theme    *theme.Client
 	rowCache map[string]*row.Row
 
@@ -110,6 +115,12 @@ type NotificationSettings struct {
 	Save     func() error
 }
 
+type AppSettings struct {
+	StartupPage    func() string
+	SetStartupPage func(string)
+	Save           func() error
+}
+
 func NewSettingsUI(tc *theme.Client) *SettingsUI {
 	if tc == nil {
 		tc = theme.DefaultThemeClient
@@ -132,6 +143,9 @@ func NewSettingsUI(tc *theme.Client) *SettingsUI {
 			WithThemeClient(tc).
 			WithRole(theme.TextRoleLabel).
 			WithMenuAbove(),
+		startupDropdown: dropdowns.NewDropdown(startupPageItems()).
+			WithThemeClient(tc).
+			WithRole(theme.TextRoleLabel),
 		targetLanguageDropdown: dropdowns.NewDropdown(translationLanguageItems()).
 			WithThemeClient(tc).
 			WithRole(theme.TextRoleLabel),
@@ -140,6 +154,26 @@ func NewSettingsUI(tc *theme.Client) *SettingsUI {
 	ui.ollamaBaseURLInput.LeadingIcon = "lucide:server"
 	ui.ollamaBaseURLInput.Normalize = func(text string) string {
 		return strings.TrimRight(strings.TrimSpace(text), "/")
+	}
+	return ui
+}
+
+func (ui *SettingsUI) WithAppSettings(settings *AppSettings) *SettingsUI {
+	if ui == nil {
+		return ui
+	}
+	ui.appSettings = settings
+	ui.syncStartupSelection()
+	if ui.startupDropdown != nil {
+		ui.startupDropdown.SelectItemEvent(func(item dropdowns.DropdownItem, valid bool) {
+			if !valid {
+				return
+			}
+			if ui.appSettings != nil && ui.appSettings.SetStartupPage != nil {
+				ui.appSettings.SetStartupPage(item.Value)
+			}
+			ui.appStatus = "Unsaved application changes"
+		})
 	}
 	return ui
 }
@@ -240,6 +274,9 @@ func (ui *SettingsUI) Layout(gtx layout.Context, layer *overlay.Overlay) layout.
 			return ui.ThemeDropdown.Layout(gtx, layer)
 		},
 		func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutAppSettings(gtx, layer)
+		},
+		func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutTranscriptSettings(gtx, layer)
 		},
 		ui.layoutTranslatorSettings,
@@ -299,6 +336,19 @@ func (ui *SettingsUI) syncNotificationSelection() {
 	ui.notificationDropdown.SelectItem(notifications.LevelValue(level))
 }
 
+func (ui *SettingsUI) syncStartupSelection() {
+	if ui == nil || ui.startupDropdown == nil {
+		return
+	}
+	page := "games"
+	if ui.appSettings != nil && ui.appSettings.StartupPage != nil {
+		if value := strings.TrimSpace(ui.appSettings.StartupPage()); value != "" {
+			page = value
+		}
+	}
+	ui.startupDropdown.SelectItem(page)
+}
+
 func (ui *SettingsUI) syncTargetLanguageSelection() {
 	if ui == nil || ui.targetLanguageDropdown == nil {
 		return
@@ -310,6 +360,31 @@ func (ui *SettingsUI) syncTargetLanguageSelection() {
 		}
 	}
 	ui.targetLanguageDropdown.SelectItem(language)
+}
+
+func (ui *SettingsUI) layoutAppSettings(gtx layout.Context, layer *overlay.Overlay) layout.Dimensions {
+	if ui.appSettings == nil {
+		return layout.Dimensions{}
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleH4, theme.ThemeColorTextPrimary, "Application")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.settingsRow("Startup page", "Page opened when Yomuna starts.").Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if ui.startupDropdown == nil {
+					return layout.Dimensions{}
+				}
+				ui.startupDropdown.Width = unit.Dp(240)
+				return ui.startupDropdown.Layout(gtx, layer)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSaveAppSettings(gtx)
+		}),
+	)
 }
 
 func (ui *SettingsUI) layoutTranscriptSettings(gtx layout.Context, layer *overlay.Overlay) layout.Dimensions {
@@ -651,6 +726,32 @@ func (ui *SettingsUI) layoutSaveNotificationSettings(gtx layout.Context) layout.
 	)
 }
 
+func (ui *SettingsUI) layoutSaveAppSettings(gtx layout.Context) layout.Dimensions {
+	if ui.appSettings == nil || ui.appSettings.Save == nil {
+		return layout.Dimensions{}
+	}
+	for ui.saveApp.Clicked(gtx) {
+		if err := ui.appSettings.Save(); err != nil {
+			ui.appStatus = "Save failed"
+		} else {
+			ui.appStatus = "Application settings saved"
+		}
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutPrimaryButton(gtx, &ui.saveApp, "Save Application Settings")
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if ui.appStatus == "" {
+				return layout.Dimensions{}
+			}
+			return theme.ThemedLabel(gtx, ui.th, ui.theme, theme.TextRoleCaption, theme.ThemeColorTextMuted, ui.appStatus)
+		}),
+	)
+}
+
 func (ui *SettingsUI) layoutFontSizeRow(gtx layout.Context, label, description string, get func() unit.Sp, set func(unit.Sp), down, up *widget.Clickable) layout.Dimensions {
 	return ui.settingsRow(label, description).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		size := unit.Sp(0)
@@ -704,6 +805,18 @@ func notificationLevelItems() []dropdowns.DropdownItem {
 		})
 	}
 	return items
+}
+
+func startupPageItems() []dropdowns.DropdownItem {
+	return []dropdowns.DropdownItem{
+		{Label: "Games", Value: "games"},
+		{Label: "Translation", Value: "translation"},
+		{Label: "Transcript", Value: "transcript"},
+		{Label: "Flashcards", Value: "flashcards"},
+		{Label: "Game Config", Value: "game"},
+		{Label: "Add Game", Value: "add-game"},
+		{Label: "Settings", Value: "settings"},
+	}
 }
 
 func translationLanguageItems() []dropdowns.DropdownItem {
