@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"time"
 
 	"gioui.org/unit"
 	"github.com/DarlingGoose/gr"
@@ -26,6 +27,8 @@ type Backend interface {
 type GameLogic interface {
 	ReloadGames() error
 	GetGames() []*game.Game
+	GameLastPlayed(name string) time.Time
+	GamePlaytime(name string) time.Duration
 	InstallGameConfig(ctx context.Context, inputPath string, installHook bool) (*game.Game, error)
 	InstallGameWithInstaller(ctx context.Context, installerPath, gamePath string, installHook bool) (*game.Game, error)
 	RunGame(ctx context.Context, g *game.Game) (*gr.Process, error)

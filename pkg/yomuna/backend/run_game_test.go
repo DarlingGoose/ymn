@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/DarlingGoose/gr"
 	"github.com/DarlingGoose/gr/gamescope"
@@ -181,6 +182,46 @@ func TestLatestGameForRunPrefersReloadedSavedConfig(t *testing.T) {
 	}
 	if got.GamescopeConfig == nil || got.GamescopeConfig.Width != 480 {
 		t.Fatalf("Width = %v, want 480", got.GamescopeConfig)
+	}
+}
+
+func TestGamePlaytimeIncludesPersistedAndActiveRun(t *testing.T) {
+	startedAt := time.Now().Add(-10 * time.Minute)
+	b := &LiveBackend{
+		current:           &game.Game{Name: "test-game"},
+		currentRun:        &gr.Process{Status: gr.StatusRunning},
+		currentRunStarted: startedAt,
+		activity: map[string]gameActivityEntry{
+			"test-game": {PlaytimeSeconds: int64((2 * time.Hour) / time.Second)},
+		},
+	}
+
+	got := b.GamePlaytime("test-game")
+	if got < 2*time.Hour+9*time.Minute || got > 2*time.Hour+11*time.Minute {
+		t.Fatalf("GamePlaytime() = %v, want roughly 2h10m", got)
+	}
+}
+
+func TestFinalizeStoppedRunAddsPlaytimeOnce(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	startedAt := time.Now().Add(-5 * time.Minute)
+	b := &LiveBackend{
+		current:           &game.Game{Name: "test-game"},
+		currentRun:        &gr.Process{Status: gr.StatusExited},
+		currentRunStarted: startedAt,
+		activity:          map[string]gameActivityEntry{},
+	}
+
+	if b.IsGameRunning() {
+		t.Fatal("IsGameRunning() = true, want false for exited process")
+	}
+	first := b.GamePlaytime("test-game")
+	second := b.GamePlaytime("test-game")
+	if first < 4*time.Minute || first > 6*time.Minute {
+		t.Fatalf("first GamePlaytime() = %v, want roughly 5m", first)
+	}
+	if second != first {
+		t.Fatalf("second GamePlaytime() = %v, want %v", second, first)
 	}
 }
 

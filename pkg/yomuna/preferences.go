@@ -12,11 +12,13 @@ import (
 
 type appPreferences struct {
 	NotificationLevel string `json:"notification_level,omitempty"`
+	StartupTab        string `json:"startup_tab,omitempty"`
 }
 
 func defaultAppPreferences() appPreferences {
 	return appPreferences{
 		NotificationLevel: notifications.LevelValue(notifications.NotificationTypeInfo),
+		StartupTab:        "games",
 	}
 }
 
@@ -58,6 +60,7 @@ func (p *appPreferences) normalize() {
 		level = notifications.NotificationTypeInfo
 	}
 	p.NotificationLevel = notifications.LevelValue(level)
+	p.StartupTab = normalizeStartupTab(p.StartupTab)
 }
 
 func (p appPreferences) notificationLevel() notifications.NotificationType {
@@ -66,4 +69,13 @@ func (p appPreferences) notificationLevel() notifications.NotificationType {
 		return notifications.NotificationTypeInfo
 	}
 	return level
+}
+
+func normalizeStartupTab(tab string) string {
+	switch tab {
+	case "games", "translation", "transcript", "flashcards", "game", "add-game", "settings":
+		return tab
+	default:
+		return "games"
+	}
 }

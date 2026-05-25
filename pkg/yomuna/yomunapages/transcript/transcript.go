@@ -404,6 +404,16 @@ func (ui *TranscriptUI) SelectedGameName() string {
 	return strings.TrimSpace(ui.selectedGameName)
 }
 
+func (ui *TranscriptUI) SelectGameByName(name string) {
+	if ui == nil {
+		return
+	}
+	if ui.gameByName == nil || len(ui.gameByName) == 0 {
+		ui.ReloadGames()
+	}
+	ui.applyGameSelection(name, false, true)
+}
+
 func (ui *TranscriptUI) AutoTranslate() bool {
 	if ui == nil || ui.autoTranslateToggle == nil {
 		return false
