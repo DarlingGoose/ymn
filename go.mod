@@ -4,10 +4,10 @@ go 1.26.2
 
 require (
 	gioui.org v0.10.0
-	github.com/DarlingGoose/gr v0.0.23
+	github.com/DarlingGoose/gr v0.0.24
 	github.com/DarlingGoose/jpndict v0.0.12
 	github.com/DarlingGoose/tr v0.0.3
-	github.com/DarlingGoose/vntext v0.0.31
+	github.com/DarlingGoose/vntext v0.0.33
 	github.com/faiface/beep v1.1.0
 	github.com/google/uuid v1.6.0
 	github.com/ikawaha/kagome-dict/ipa v1.2.6
@@ -34,9 +34,9 @@ require (
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	golang.org/x/exp v0.0.0-20260508232706-74f9aab9d74a // indirect
-	golang.org/x/exp/shiny v0.0.0-20260508232706-74f9aab9d74a // indirect
-	golang.org/x/mobile v0.0.0-20260520154334-0e4426e1883d // indirect
+	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
+	golang.org/x/exp/shiny v0.0.0-20260529124908-c761662dc8c9 // indirect
+	golang.org/x/mobile v0.0.0-20260529142300-ecb4cd65260a // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 )
